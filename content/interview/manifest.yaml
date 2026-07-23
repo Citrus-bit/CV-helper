@@ -1,0 +1,85 @@
+schema_version: "1.0.0"
+package:
+  id: interview-core-bilingual
+  version: "0.1.0"
+  title: 简历分析助手双语面试核心题库
+  locales: [zh-CN, en]
+  source: resume-assistant-editorial
+  license: LicenseRef-ResumeAssistant-Original
+  total_questions: 60
+  reviewed_at: "2026-07-22"
+governance:
+  execution_policy: content-only
+  minimum_status: editorial-review
+  generated_followups_must_reference_source_ids: true
+  max_followups_per_main_question: 2
+  prohibited_assessments: [accent, gender, voice_timbre, emotion, personality]
+distribution:
+  general_behavior: 10
+  software_data: 10
+  product_operations: 10
+  marketing_sales: 10
+  finance_accounting: 10
+  manufacturing_supply_chain: 10
+questions:
+  - { id: beh-001, path: questions/beh-001-conflicting-priorities.md }
+  - { id: beh-002, path: questions/beh-002-feedback-change.md }
+  - { id: beh-003, path: questions/beh-003-ambiguous-ownership.md }
+  - { id: beh-004, path: questions/beh-004-failure-recovery.md }
+  - { id: beh-005, path: questions/beh-005-stakeholder-disagreement.md }
+  - { id: beh-006, path: questions/beh-006-learn-quickly.md }
+  - { id: beh-007, path: questions/beh-007-ethical-pressure.md }
+  - { id: beh-008, path: questions/beh-008-process-improvement.md }
+  - { id: beh-009, path: questions/beh-009-influence-without-authority.md }
+  - { id: beh-010, path: questions/beh-010-knowledge-handover.md }
+  - { id: sd-001, path: questions/sd-001-production-incident.md }
+  - { id: sd-002, path: questions/sd-002-api-tradeoff.md }
+  - { id: sd-003, path: questions/sd-003-data-quality.md }
+  - { id: sd-004, path: questions/sd-004-legacy-refactor.md }
+  - { id: sd-005, path: questions/sd-005-performance.md }
+  - { id: sd-006, path: questions/sd-006-experiment-causality.md }
+  - { id: sd-007, path: questions/sd-007-security-privacy.md }
+  - { id: sd-008, path: questions/sd-008-model-drift.md }
+  - { id: sd-009, path: questions/sd-009-requirements-architecture.md }
+  - { id: sd-010, path: questions/sd-010-code-review.md }
+  - { id: po-001, path: questions/po-001-success-metric.md }
+  - { id: po-002, path: questions/po-002-prioritization.md }
+  - { id: po-003, path: questions/po-003-low-adoption.md }
+  - { id: po-004, path: questions/po-004-launch-decision.md }
+  - { id: po-005, path: questions/po-005-scale-sop.md }
+  - { id: po-006, path: questions/po-006-research-conflict.md }
+  - { id: po-007, path: questions/po-007-funnel-drop.md }
+  - { id: po-008, path: questions/po-008-cross-functional-launch.md }
+  - { id: po-009, path: questions/po-009-incident-communication.md }
+  - { id: po-010, path: questions/po-010-stop-feature.md }
+  - { id: ms-001, path: questions/ms-001-segment-channel.md }
+  - { id: ms-002, path: questions/ms-002-campaign-failure.md }
+  - { id: ms-003, path: questions/ms-003-enterprise-objection.md }
+  - { id: ms-004, path: questions/ms-004-pipeline-forecast.md }
+  - { id: ms-005, path: questions/ms-005-brand-performance.md }
+  - { id: ms-006, path: questions/ms-006-pricing-negotiation.md }
+  - { id: ms-007, path: questions/ms-007-lead-quality.md }
+  - { id: ms-008, path: questions/ms-008-churn-signal.md }
+  - { id: ms-009, path: questions/ms-009-market-entry.md }
+  - { id: ms-010, path: questions/ms-010-attribution.md }
+  - { id: fin-001, path: questions/fin-001-forecast-variance.md }
+  - { id: fin-002, path: questions/fin-002-close-control.md }
+  - { id: fin-003, path: questions/fin-003-investment-analysis.md }
+  - { id: fin-004, path: questions/fin-004-cash-flow.md }
+  - { id: fin-005, path: questions/fin-005-audit-finding.md }
+  - { id: fin-006, path: questions/fin-006-data-reconciliation.md }
+  - { id: fin-007, path: questions/fin-007-fraud-controls.md }
+  - { id: fin-008, path: questions/fin-008-working-capital.md }
+  - { id: fin-009, path: questions/fin-009-business-partnering.md }
+  - { id: fin-010, path: questions/fin-010-regulatory-ambiguity.md }
+  - { id: mfg-001, path: questions/mfg-001-defect-root-cause.md }
+  - { id: mfg-002, path: questions/mfg-002-supplier-delay.md }
+  - { id: mfg-003, path: questions/mfg-003-capacity-bottleneck.md }
+  - { id: mfg-004, path: questions/mfg-004-safety-stop.md }
+  - { id: mfg-005, path: questions/mfg-005-inventory-balance.md }
+  - { id: mfg-006, path: questions/mfg-006-lean-improvement.md }
+  - { id: mfg-007, path: questions/mfg-007-line-ramp.md }
+  - { id: mfg-008, path: questions/mfg-008-sop-conflict.md }
+  - { id: mfg-009, path: questions/mfg-009-traceability.md }
+  - { id: mfg-010, path: questions/mfg-010-engineering-change.md }
+

@@ -1,0 +1,11 @@
+.git
+.tools
+.data
+.next
+coverage
+node_modules
+tmp
+services/document-worker/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache

@@ -1,0 +1,15 @@
+node_modules/
+.next/
+coverage/
+.data/
+.env
+.env.local
+.DS_Store
+*.log
+*.tsbuildinfo
+.tools/typst/typst
+.tools/typst/typst.tar.xz
+.tools/tesseract/
+services/document-worker/.venv/
+services/document-worker/__pycache__/
+tmp/

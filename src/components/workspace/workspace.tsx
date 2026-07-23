@@ -1,0 +1,272 @@
+"use client";
+
+import {
+  ArrowLeft,
+  BriefcaseBusiness,
+  FileCheck2,
+  FileSearch,
+  Mic2,
+  RotateCcw,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
+import * as Dialog from "@radix-ui/react-dialog";
+import * as Tooltip from "@radix-ui/react-tooltip";
+import { useEffect, useRef, useState } from "react";
+import { useAppStore, type WorkspaceModule } from "@/lib/client/store";
+import { ResumeWorkspace } from "./resume-workspace";
+import { JobWorkspace } from "./job-workspace";
+import { InterviewWorkspace } from "./interview-workspace";
+
+const navigation: Array<{
+  id: WorkspaceModule;
+  label: string;
+  icon: typeof FileCheck2;
+}> = [
+  { id: "resume", label: "简历优化", icon: FileCheck2 },
+  { id: "job", label: "岗位匹配", icon: BriefcaseBusiness },
+  { id: "interview", label: "模拟面试", icon: Mic2 },
+];
+
+function Navigation() {
+  const activeModule = useAppStore((state) => state.module);
+  const setModule = useAppStore((state) => state.setModule);
+  return (
+    <nav aria-label="工作台导航" className="space-y-1">
+      {navigation.map((item) => {
+        const Icon = item.icon;
+        const active = activeModule === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            aria-current={active ? "page" : undefined}
+            onClick={() => setModule(item.id)}
+            className={`flex min-h-12 w-full items-center gap-2 rounded-[8px] px-3 text-sm font-medium transition-colors ${
+              active
+                ? "bg-[#edf5ff] text-brand"
+                : "text-muted hover:bg-[#f0f1f3] hover:text-ink"
+            }`}
+          >
+            <Icon aria-hidden="true" size={19} />
+            <span>{item.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+export function Workspace() {
+  const activeModule = useAppStore((state) => state.module);
+  const analysis = useAppStore((state) => state.analysis)!;
+  const undoStack = useAppStore((state) => state.undoStack);
+  const undo = useAppStore((state) => state.undo);
+  const goHome = useAppStore((state) => state.goHome);
+  const deleteRecentSession = useAppStore((state) => state.deleteRecentSession);
+  const reset = useAppStore((state) => state.reset);
+  const homeNavigationPending = useAppStore(
+    (state) => state.homeNavigationPending,
+  );
+  const workspaceContentRef = useRef<HTMLDivElement>(null);
+  const previousModuleRef = useRef(activeModule);
+  const [deletingCurrent, setDeletingCurrent] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function deleteCurrentSession() {
+    setDeletingCurrent(true);
+    setDeleteError(null);
+    try {
+      await deleteRecentSession(analysis.resume.id);
+      reset();
+    } catch (error) {
+      setDeleteError(
+        error instanceof Error
+          ? `删除失败：${error.message}`
+          : "删除失败，请重试。",
+      );
+    } finally {
+      setDeletingCurrent(false);
+    }
+  }
+
+  useEffect(() => {
+    if (previousModuleRef.current === activeModule) return;
+    previousModuleRef.current = activeModule;
+    const frame = window.requestAnimationFrame(() => {
+      workspaceContentRef.current
+        ?.querySelector<HTMLElement>("[data-module-heading]")
+        ?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeModule]);
+
+  return (
+    <main
+      className="min-h-dvh bg-canvas"
+      aria-busy={homeNavigationPending}
+    >
+      <a
+        href="#workspace-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:bg-white focus:p-3"
+      >
+        跳到主要内容
+      </a>
+
+      <aside className="fixed inset-y-0 left-0 z-20 flex w-[216px] flex-col border-r border-line bg-surface px-4 py-5">
+        <Tooltip.Root>
+          <Tooltip.Trigger asChild>
+            <button
+              type="button"
+              aria-label="返回首页并保存当前分析"
+              disabled={homeNavigationPending}
+              onClick={() => void goHome()}
+              className="flex min-h-12 w-full items-center gap-3 rounded-[8px] px-2 text-left transition-colors hover:bg-[#f0f1f3]"
+            >
+              <span className="grid size-10 shrink-0 place-items-center rounded-[8px] bg-ink text-white">
+                <FileSearch aria-hidden="true" size={20} />
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate font-semibold">
+                  简历分析助手
+                </span>
+                <span className="block truncate text-xs text-muted">
+                  证据驱动工作台
+                </span>
+              </span>
+            </button>
+          </Tooltip.Trigger>
+          <Tooltip.Portal>
+            <Tooltip.Content
+              side="right"
+              sideOffset={8}
+              className="z-50 rounded-[6px] bg-ink px-2.5 py-1.5 text-xs text-white shadow-panel"
+            >
+              返回首页（自动保存）
+            </Tooltip.Content>
+          </Tooltip.Portal>
+        </Tooltip.Root>
+        <div className="mt-8">
+          <Navigation />
+        </div>
+        <div className="mt-auto border-t border-line pt-4">
+          <div className="flex items-start gap-2 px-2 text-xs leading-5 text-muted">
+            <ShieldCheck
+              aria-hidden="true"
+              size={16}
+              className="mt-0.5 shrink-0 text-success"
+            />
+            当前会话将在 24 小时内自动清理
+          </div>
+        </div>
+      </aside>
+
+      <div className="pl-[216px]">
+        <header className="sticky top-0 z-10 flex min-h-16 items-center justify-between border-b border-line bg-white/90 px-6 backdrop-blur-xl">
+          <div className="flex min-w-0 items-center gap-2">
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
+                <button
+                  type="button"
+                  onClick={() => void goHome()}
+                  aria-label="返回首页并保存当前分析"
+                  disabled={homeNavigationPending}
+                  className="grid size-11 shrink-0 place-items-center rounded-[8px] text-muted transition-colors hover:bg-[#f0f1f3] hover:text-ink"
+                >
+                  <ArrowLeft aria-hidden="true" size={19} />
+                </button>
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                <Tooltip.Content
+                  side="bottom"
+                  sideOffset={6}
+                  className="z-50 rounded-[6px] bg-ink px-2.5 py-1.5 text-xs text-white shadow-panel"
+                >
+                  返回首页（自动保存）
+                </Tooltip.Content>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">
+                {analysis.resume.originalFileName}
+              </p>
+              <p className="text-xs text-muted">
+                版本 {analysis.resume.revision + 1} ·{" "}
+                {analysis.resume.pageCount} 页
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={undoStack.length === 0}
+              onClick={undo}
+              title="撤销上一次修改"
+              aria-label="撤销上一次修改"
+              className="grid size-11 place-items-center rounded-[8px] text-muted transition-colors hover:bg-[#f0f1f3] hover:text-ink disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              <RotateCcw aria-hidden="true" size={19} />
+            </button>
+            <Dialog.Root>
+              <Dialog.Trigger asChild>
+                <button
+                  type="button"
+                  title="删除当前会话"
+                  aria-label="删除当前会话"
+                  className="grid size-11 place-items-center rounded-[8px] text-muted transition-colors hover:bg-[#fff0ef] hover:text-danger"
+                >
+                  <Trash2 aria-hidden="true" size={19} />
+                </button>
+              </Dialog.Trigger>
+              <Dialog.Portal>
+                <Dialog.Overlay className="fixed inset-0 z-40 bg-black/45" />
+                <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-32px)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-[8px] bg-white p-6 shadow-panel">
+                  <Dialog.Title className="text-lg font-semibold">
+                    删除当前会话？
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-2 text-sm leading-6 text-muted">
+                    简历、分析结果和面试记录将从此设备清除。
+                  </Dialog.Description>
+                  <div className="mt-6 flex justify-end gap-2">
+                    <Dialog.Close className="min-h-11 rounded-[8px] px-4 text-sm font-medium text-muted hover:bg-[#f0f1f3]">
+                      取消
+                    </Dialog.Close>
+                    <button
+                      type="button"
+                      disabled={deletingCurrent}
+                      onClick={() => void deleteCurrentSession()}
+                      className="min-h-11 rounded-[8px] bg-danger px-4 text-sm font-medium text-white hover:bg-[#a82b26]"
+                    >
+                      {deletingCurrent ? "正在删除" : "删除"}
+                    </button>
+                  </div>
+                  {deleteError ? (
+                    <p className="mt-3 text-sm text-danger" role="alert">
+                      {deleteError}
+                    </p>
+                  ) : null}
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root>
+          </div>
+        </header>
+
+        <div ref={workspaceContentRef} id="workspace-content" tabIndex={-1}>
+          {activeModule === "resume" ? <ResumeWorkspace /> : null}
+          {activeModule === "job" ? <JobWorkspace /> : null}
+          {activeModule === "interview" ? <InterviewWorkspace /> : null}
+        </div>
+      </div>
+      {homeNavigationPending ? (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-white/55 backdrop-blur-[2px]"
+          role="status"
+        >
+          <span className="rounded-[8px] bg-white px-4 py-3 text-sm font-medium shadow-panel">
+            正在保存当前会话
+          </span>
+        </div>
+      ) : null}
+    </main>
+  );
+}

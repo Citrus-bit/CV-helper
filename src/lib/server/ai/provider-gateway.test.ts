@@ -1,0 +1,745 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+
+import type { CapabilityContext } from "@/lib/capabilities";
+import { ResumeDocumentSchema, ScorecardSchema } from "@/lib/domain";
+import { createServerCapabilityRegistry } from "@/lib/server/capability-runtime";
+
+import {
+  loadProviderGatewayConfig,
+  OpenAiCompatibleGateway,
+  ProviderGatewayConfigurationError,
+  type ProviderGatewayLogEvent,
+} from "./provider-gateway";
+
+const providerEnvironment = {
+  AI_PROVIDER: "provider_gateway",
+  AI_API_BASE: "https://yunwu.ai/v1",
+  AI_API_KEY: "test-secret-key",
+  AI_MODEL: "test-model",
+} as const;
+
+const resume = ResumeDocumentSchema.parse({
+  id: "resume-ai",
+  revision: 3,
+  originalFileName: "alice-private-resume.pdf",
+  mimeType: "application/pdf",
+  locale: "zh-CN",
+  pageCount: 1,
+  parseMethod: "native",
+  sourceBlocks: [
+    {
+      id: "block-contact",
+      pageIndex: 0,
+      order: 0,
+      text: "Alice Zhang alice@example.com +86 138 0000 0000 https://example.com/alice",
+      bbox: { x: 0.1, y: 0.1, width: 0.8, height: 0.05 },
+      source: "native",
+      confidence: 1,
+      role: "contact",
+    },
+    {
+      id: "block-result",
+      pageIndex: 0,
+      order: 1,
+      text: "负责上线流程，将交付周期缩短 20%.",
+      bbox: { x: 0.1, y: 0.2, width: 0.8, height: 0.05 },
+      source: "native",
+      confidence: 1,
+      role: "list-item",
+    },
+  ],
+  ast: {
+    schemaVersion: "1.0",
+    locale: "zh-CN",
+    contact: {
+      name: "Alice Zhang",
+      email: "alice@example.com",
+      phone: "+86 138 0000 0000",
+      links: [{ label: "site", url: "https://example.com/alice" }],
+    },
+    sections: [
+      {
+        id: "experience",
+        type: "experience",
+        title: "工作经历",
+        sourceBlockIds: ["block-result"],
+        entries: [
+          {
+            id: "entry-1",
+            title: "产品经理",
+            current: true,
+            bullets: ["负责上线流程，将交付周期缩短 20%."],
+            keywords: ["交付"],
+            sourceBlockIds: ["block-result"],
+          },
+        ],
+      },
+    ],
+  },
+  parsingWarnings: [],
+});
+
+const claims = [
+  {
+    id: "claim-result",
+    text: "负责上线流程，将交付周期缩短 20%.",
+    sourceBlockIds: ["block-result"],
+    evidenceAssetIds: ["private-evidence-not-sent"],
+    status: "supported" as const,
+    confidence: 0.9,
+    missingInformation: [],
+  },
+];
+
+function context(signal?: AbortSignal): CapabilityContext {
+  return {
+    sessionId: "session-provider-test",
+    locale: "zh-CN",
+    grantedDataScopes: ["resume_ast", "evidence_graph"],
+    traceId: "trace-provider-test",
+    deadlineAt: new Date(Date.now() + 5_000).toISOString(),
+    signal,
+  };
+}
+
+function scoreOutput() {
+  return ScorecardSchema.parse({
+    resumeId: resume.id,
+    resumeRevision: resume.revision,
+    total: 80,
+    dimensions: [
+      { id: "impact", label: "成果", score: 20, maxScore: 25, evidence: ["交付周期缩短 20%"], deductions: [] },
+      { id: "completeness", label: "完整", score: 12, maxScore: 15, evidence: [], deductions: [] },
+      { id: "clarity", label: "清晰", score: 12, maxScore: 15, evidence: [], deductions: [] },
+      { id: "structure", label: "结构", score: 12, maxScore: 15, evidence: [], deductions: [] },
+      { id: "ats", label: "ATS", score: 12, maxScore: 15, evidence: [], deductions: [] },
+      { id: "language", label: "语言", score: 12, maxScore: 15, evidence: [], deductions: [] },
+    ],
+    summary: "内容基础扎实，建议继续补充可核实影响。",
+  });
+}
+
+function completionResponse(data: unknown, status = 200): Response {
+  return new Response(
+    JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(data) } }],
+      usage: { prompt_tokens: 120, completion_tokens: 60 },
+    }),
+    { status, headers: { "content-type": "application/json" } },
+  );
+}
+
+describe("OpenAI-compatible provider gateway", () => {
+  it("uses the default HTTPS allowlist and rejects unapproved bases without echoing them", () => {
+    expect(loadProviderGatewayConfig({})).toBeNull();
+    expect(loadProviderGatewayConfig({ AI_PROVIDER: "baseline" })).toBeNull();
+    expect(() => loadProviderGatewayConfig({ AI_PROVIDER: "typo-provider" })).toThrow(
+      expect.objectContaining({ code: "INVALID_PROVIDER" }),
+    );
+    expect(loadProviderGatewayConfig(providerEnvironment)).toMatchObject({
+      baseUrl: "https://yunwu.ai/v1",
+      model: "test-model",
+    });
+    let error: unknown;
+    try {
+      loadProviderGatewayConfig({ ...providerEnvironment, AI_API_BASE: "https://unapproved.example/v1" });
+    } catch (candidate) {
+      error = candidate;
+    }
+    expect(error).toBeInstanceOf(ProviderGatewayConfigurationError);
+    expect(error).toMatchObject({ code: "NOT_ALLOWLISTED" });
+    expect(String(error)).not.toContain("unapproved.example");
+    expect(() => loadProviderGatewayConfig({
+      ...providerEnvironment,
+      AI_API_BASE: "https://private-gateway.example/v1",
+      AI_API_ALLOWLIST: "https://private-gateway.example/v1",
+    })).toThrow(expect.objectContaining({ code: "NOT_ALLOWLISTED" }));
+  });
+
+  it("authenticates only to /chat/completions and sends a PII-minimized structured DTO", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(completionResponse(scoreOutput()));
+    const logs: ProviderGatewayLogEvent[] = [];
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: (event) => logs.push(event),
+    });
+
+    const result = await registry.invoke("resume.score", { resume, claims }, context());
+
+    expect(result.usedFallback).toBe(false);
+    expect(result.sourceVersion).toBe("resume.score@2.0.0");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://yunwu.ai/v1/chat/completions");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer test-secret-key");
+    const requestBody = JSON.parse(String(init.body));
+    expect(requestBody.response_format).toMatchObject({ type: "json_schema", json_schema: { strict: true } });
+    expect(requestBody.max_tokens).toBe(4_096);
+    const projected = requestBody.messages[1].content as string;
+    expect(projected).toContain("block-result");
+    expect(projected).toContain("claim-result");
+    expect(projected).not.toContain("Alice Zhang");
+    expect(projected).not.toContain("alice@example.com");
+    expect(projected).not.toContain("138 0000 0000");
+    expect(projected).not.toContain("example.com/alice");
+    expect(projected).not.toContain("alice-private-resume.pdf");
+    expect(projected).not.toContain("private-evidence-not-sent");
+    expect(JSON.stringify(logs)).not.toContain("test-secret-key");
+    expect(JSON.stringify(logs)).not.toContain("交付周期");
+    expect(logs).toEqual([
+      expect.objectContaining({
+        capabilityId: "resume.score",
+        capabilityVersion: "2.0.0",
+        resultCode: "OK",
+        usage: { inputUnits: 120, outputUnits: 60 },
+      }),
+    ]);
+  });
+
+  it("redacts known name variants and addresses from every projected resume string", async () => {
+    const piiResume = structuredClone(resume);
+    piiResume.ast.contact.location = "上海市浦东新区世纪大道 100 号";
+    piiResume.ast.sections[0].entries[0].summary =
+      "A L I C E   Z H A N G，地址：上海市浦东新区世纪大道 100 号";
+    const fetchMock = vi.fn().mockResolvedValue(completionResponse(scoreOutput()));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    const result = await registry.invoke("resume.score", { resume: piiResume, claims }, context());
+    expect(result.usedFallback).toBe(false);
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const projected = requestBody.messages[1].content as string;
+    expect(projected).toContain("[NAME]");
+    expect(projected).toContain("[ADDRESS]");
+    expect(projected).not.toMatch(/a\s*l\s*i\s*c\s*e/i);
+    expect(projected).not.toContain("世纪大道");
+  });
+
+  it("rejects provider output that reintroduces a known name in another case or spacing", async () => {
+    const unsafeScore = scoreOutput();
+    unsafeScore.summary = "A L I C E   Z H A N G has a strong resume.";
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(unsafeScore)),
+      logger: () => undefined,
+    });
+
+    await expect(registry.invoke("resume.score", { resume, claims }, context())).resolves.toMatchObject({
+      usedFallback: true,
+      sourceVersion: "resume.score@1.0.0",
+    });
+  });
+
+  it("redacts conservatively labeled names in JD, claim, and answer projections", async () => {
+    const captures: string[] = [];
+    const captureAndThrottle = vi.fn((_url: string, init?: RequestInit) => {
+      const requestBody = JSON.parse(String(init?.body));
+      captures.push(requestBody.messages[1].content as string);
+      return Promise.resolve(new Response("rate limited", { status: 429 }));
+    });
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: captureAndThrottle as typeof fetch,
+      logger: () => undefined,
+    });
+    const jdText = "产品经理\n联系人姓名：张三\n要求熟悉 SQL 和用户研究";
+    await registry.invoke("jd.parse", { text: jdText, locale: "zh-CN" }, {
+      ...context(),
+      grantedDataScopes: ["job_description"],
+    });
+    await registry.invoke("job.match", {
+      requirements: [{
+        id: "requirement-name-projection",
+        jobPostingId: "job-name-projection",
+        category: "skill",
+        text: "要求熟悉 Kubernetes",
+        keywords: ["kubernetes"],
+        importance: 1,
+      }],
+      claims: [{
+        ...claims[0],
+        text: "姓名：李四，熟悉 Kubernetes",
+      }],
+      evidenceAssets: [],
+    }, {
+      ...context(),
+      grantedDataScopes: ["job_description", "evidence_graph"],
+    });
+    const question = {
+      id: "question-name-projection",
+      locale: "en-US" as const,
+      prompt: "Introduce yourself and describe a delivery result.",
+      category: "behavioral" as const,
+      difficulty: "introductory" as const,
+      roleFamilies: [],
+      skills: ["delivery"],
+      followUps: [],
+      scoringAnchors: [],
+      source: "test",
+      generated: false,
+      referenceQuestionIds: [],
+    };
+    await registry.invoke("answer.evaluate", {
+      question,
+      answer: "My name is John Doe. I improved delivery quality through weekly reviews.",
+      expectedKeywords: [],
+    }, {
+      ...context(),
+      locale: "en-US",
+      grantedDataScopes: ["interview_content", "evidence_graph"],
+    });
+
+    expect(captures).toHaveLength(3);
+    expect(captures.every((projected) => projected.includes("[NAME]"))).toBe(true);
+    expect(captures.join("\n")).not.toMatch(/张三|李四|John\s+Doe/i);
+  });
+
+  it("retries exactly once with json_object only when JSON Schema is explicitly unsupported", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: { message: "response_format json_schema is not supported" } }),
+          { status: 400 },
+        ),
+      )
+      .mockResolvedValueOnce(completionResponse({ ok: true }));
+    const config = loadProviderGatewayConfig(providerEnvironment)!;
+    const gateway = new OpenAiCompatibleGateway(config, fetchMock, () => undefined);
+
+    const result = await gateway.complete({
+      capabilityId: "resume.score",
+      context: context(),
+      dto: { safe: "input" },
+      outputSchema: z.object({ ok: z.boolean() }),
+      instruction: "Return the fixture.",
+    });
+
+    expect(result.data).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).response_format.type).toBe("json_schema");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).response_format.type).toBe("json_object");
+  });
+
+  it("cancels an unbounded response stream as soon as it exceeds two megabytes", async () => {
+    let cancelled = false;
+    const chunk = new Uint8Array(1024 * 1024);
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(chunk);
+          controller.enqueue(chunk);
+          controller.enqueue(new Uint8Array([1]));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { status: 200 },
+    );
+    expect(response.headers.get("content-length")).toBeNull();
+    const gateway = new OpenAiCompatibleGateway(
+      loadProviderGatewayConfig(providerEnvironment)!,
+      vi.fn().mockResolvedValue(response),
+      () => undefined,
+    );
+
+    await expect(
+      gateway.complete({
+        capabilityId: "resume.score",
+        context: context(),
+        dto: { safe: "input" },
+        outputSchema: z.object({ ok: z.boolean() }),
+        instruction: "Return the fixture.",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    expect(cancelled).toBe(true);
+  });
+
+  it("falls back to the baseline for 429 and Zod-valid but fact-unsafe suggestions", async () => {
+    const throttledRegistry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(new Response("rate limited", { status: 429 })),
+      logger: () => undefined,
+    });
+    const throttled = await throttledRegistry.invoke("resume.score", { resume, claims }, context());
+    expect(throttled.usedFallback).toBe(true);
+    expect(throttled.sourceVersion).toBe("resume.score@1.0.0");
+
+    const unsafeSuggestion = {
+      suggestions: [
+        {
+          id: "provider-suggestion",
+          resumeRevision: resume.revision,
+          sourceBlockIds: ["block-result"],
+          claimIds: ["claim-result"],
+          kind: "rewrite",
+          status: "pending",
+          originalText: "负责上线流程，将交付周期缩短 20%.",
+          proposedText: "负责上线流程，将交付周期缩短 99%.",
+          rationale: "强化结果表达。",
+          beforeHash: "provider-hash",
+          patches: [
+            {
+              operation: "replace",
+              path: "/sections/0/entries/0/bullets/0",
+              value: "负责上线流程，将交付周期缩短 99%.",
+            },
+          ],
+          affectedDimensions: ["impact"],
+          factRisk: "low",
+          interviewRisk: "high",
+        },
+      ],
+    };
+    const unsafeRegistry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(unsafeSuggestion)),
+      logger: () => undefined,
+    });
+    const unsafe = await unsafeRegistry.invoke("resume.suggest", { resume, claims }, context());
+    expect(unsafe.usedFallback).toBe(true);
+    expect(unsafe.sourceVersion).toBe("resume.suggest@1.0.0");
+    expect(unsafe.warnings[0].code).toBe("EXTENSION_EXECUTION_FAILED");
+  });
+
+  it("does not let a claim from another block support facts added to the target block", async () => {
+    const crossBlockResume = structuredClone(resume);
+    crossBlockResume.sourceBlocks.push({
+      id: "block-other",
+      pageIndex: 0,
+      order: 2,
+      text: "另一个项目实现成本降低 30%.",
+      bbox: { x: 0.1, y: 0.3, width: 0.8, height: 0.05 },
+      source: "native",
+      confidence: 1,
+      role: "list-item",
+    });
+    crossBlockResume.ast.sections.push({
+      id: "projects",
+      type: "projects",
+      title: "项目经历",
+      sourceBlockIds: ["block-other"],
+      entries: [],
+    });
+    const crossClaims = [
+      ...claims,
+      {
+        id: "claim-other",
+        text: "另一个项目实现成本降低 30%.",
+        sourceBlockIds: ["block-other"],
+        evidenceAssetIds: [],
+        status: "supported" as const,
+        confidence: 0.9,
+        missingInformation: [],
+      },
+    ];
+    const response = {
+      suggestions: [
+        {
+          id: "provider-cross-block",
+          resumeRevision: resume.revision,
+          sourceBlockIds: ["block-result"],
+          claimIds: ["claim-other"],
+          kind: "rewrite",
+          status: "pending",
+          originalText: "负责上线流程，将交付周期缩短 20%.",
+          proposedText: "负责上线流程，将交付周期缩短 20%，并降低成本 30%.",
+          rationale: "增加结果。",
+          beforeHash: "provider-hash",
+          patches: [{
+            operation: "replace",
+            path: "/sections/0/entries/0/bullets/0",
+            value: "负责上线流程，将交付周期缩短 20%，并降低成本 30%.",
+          }],
+          affectedDimensions: ["impact"],
+          factRisk: "low",
+          interviewRisk: "high",
+        },
+      ],
+    };
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(response)),
+      logger: () => undefined,
+    });
+
+    await expect(
+      registry.invoke("resume.suggest", { resume: crossBlockResume, claims: crossClaims }, context()),
+    ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "resume.suggest@1.0.0" });
+  });
+
+  it("rejects ungrounded score evidence and scores above their dimension maximum", async () => {
+    const invalidScore = scoreOutput();
+    invalidScore.dimensions[0].score = 26;
+    invalidScore.dimensions[0].evidence = ["从未出现在简历中的亿元营收成果"];
+    invalidScore.total = 86;
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(invalidScore)),
+      logger: () => undefined,
+    });
+
+    await expect(registry.invoke("resume.score", { resume, claims }, context())).resolves.toMatchObject({
+      usedFallback: true,
+      sourceVersion: "resume.score@1.0.0",
+    });
+  });
+
+  it("rejects a score summary that asserts a new number absent from the resume", async () => {
+    const invalidScore = scoreOutput();
+    invalidScore.summary = "候选人曾直接管理 999 人团队。";
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(invalidScore)),
+      logger: () => undefined,
+    });
+
+    await expect(registry.invoke("resume.score", { resume, claims }, context())).resolves.toMatchObject({
+      usedFallback: true,
+      sourceVersion: "resume.score@1.0.0",
+    });
+  });
+
+  it("requires JD requirements to be excerpts of the supplied posting", async () => {
+    const jdText = "产品经理\n负责产品交付流程\n要求熟悉 SQL 和数据分析";
+    const providerOutput = {
+      jobPosting: {
+        id: "job-provider",
+        title: "产品经理",
+        locale: "zh-CN",
+        rawText: jdText,
+      },
+      requirements: [
+        {
+          id: "requirement-provider",
+          jobPostingId: "job-provider",
+          category: "must_have",
+          text: "必须精通火星语言",
+          keywords: ["火星语言"],
+          importance: 1,
+        },
+      ],
+    };
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(providerOutput)),
+      logger: () => undefined,
+    });
+
+    await expect(
+      registry.invoke("jd.parse", { text: jdText, locale: "zh-CN" }, {
+        ...context(),
+        grantedDataScopes: ["job_description"],
+      }),
+    ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "jd.parse@1.0.0" });
+  });
+
+  it("recomputes job mappings only from cited claims that are valid and relevant", async () => {
+    const requirements = [{
+      id: "requirement-kubernetes",
+      jobPostingId: "job-kubernetes",
+      category: "must_have" as const,
+      text: "要求熟悉 Kubernetes 集群运维",
+      keywords: ["kubernetes", "集群运维"],
+      importance: 1,
+    }];
+    const providerOutput = {
+      evidenceCoverageRate: 100,
+      maps: [{
+        requirementId: "requirement-kubernetes",
+        status: "met",
+        claimIds: ["claim-result"],
+        evidenceAssetIds: [],
+        explanation: "完全匹配。",
+        confidence: 0.99,
+      }],
+      disclaimer: "match",
+    };
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(providerOutput)),
+      logger: () => undefined,
+    });
+
+    await expect(
+      registry.invoke("job.match", { requirements, claims, evidenceAssets: [] }, {
+        ...context(),
+        grantedDataScopes: ["job_description", "evidence_graph"],
+      }),
+    ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "job.match@1.0.0" });
+  });
+
+  it("hard-rejects inconsistent answer scores and unsafe coaching output", async () => {
+    const question = {
+      id: "question-provider",
+      locale: "zh-CN" as const,
+      prompt: "请说明一次你改善交付流程的经历。",
+      category: "behavioral" as const,
+      difficulty: "intermediate" as const,
+      roleFamilies: [],
+      skills: ["交付"],
+      followUps: ["结果如何核实？"],
+      scoringAnchors: [],
+      source: "test",
+      generated: false,
+      referenceQuestionIds: [],
+    };
+    const answer = "我负责梳理交付流程，并通过复盘降低等待时间，最终按期上线。";
+    const inconsistentEvaluation = {
+      questionId: question.id,
+      overallScore: 99,
+      dimensions: { relevance: 10, structure: 10, evidence: 10, roleCompetency: 10, clarity: 10 },
+      strengths: [],
+      improvements: [],
+      citedAnswerFragments: ["按期上线"],
+      followUpQuestion: "结果如何核实？",
+    };
+    const evaluationRegistry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(inconsistentEvaluation)),
+      logger: () => undefined,
+    });
+    await expect(
+      evaluationRegistry.invoke("answer.evaluate", { question, answer, expectedKeywords: [] }, {
+        ...context(),
+        grantedDataScopes: ["interview_content", "evidence_graph"],
+      }),
+    ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "answer.evaluate@1.0.0" });
+
+    const emptyCitationRegistry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse({
+        ...inconsistentEvaluation,
+        overallScore: 50,
+        citedAnswerFragments: [""],
+      })),
+      logger: () => undefined,
+    });
+    await expect(
+      emptyCitationRegistry.invoke("answer.evaluate", { question, answer, expectedKeywords: [] }, {
+        ...context(),
+        grantedDataScopes: ["interview_content", "evidence_graph"],
+      }),
+    ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "answer.evaluate@1.0.0" });
+
+    const validEvaluation = { ...inconsistentEvaluation, overallScore: 50 };
+    const unsafeCoaching = {
+      headline: "建议安排 30 天强化训练",
+      actions: ["补充清晰行动"],
+      improvedOutline: ["说明背景", "说明结果"],
+      factSafetyReminder: "只使用真实且可核实的信息。",
+    };
+    const coachingRegistry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(unsafeCoaching)),
+      logger: () => undefined,
+    });
+    await expect(
+      coachingRegistry.invoke("answer.coach", { question, answer, evaluation: validEvaluation }, {
+        ...context(),
+        grantedDataScopes: ["interview_content", "evidence_graph"],
+      }),
+    ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "answer.coach@1.0.0" });
+  });
+
+  it("falls back to the baseline when the provider exceeds its capability timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const registry = createServerCapabilityRegistry({
+        environment: providerEnvironment,
+        fetchImpl: vi.fn(() => new Promise<Response>(() => undefined)),
+        logger: () => undefined,
+      });
+      const invocation = registry.invoke(
+        "resume.score",
+        { resume, claims },
+        {
+          ...context(),
+          deadlineAt: new Date(Date.now() + 15_000).toISOString(),
+        },
+      );
+      await vi.advanceTimersByTimeAsync(13_001);
+
+      await expect(invocation).resolves.toMatchObject({
+        usedFallback: true,
+        sourceVersion: "resume.score@1.0.0",
+        warnings: [{ code: "EXTENSION_TIMEOUT" }],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("propagates user cancellation without invoking the baseline fallback", async () => {
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      markStarted();
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("The operation was aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    });
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock as typeof fetch,
+      logger: () => undefined,
+    });
+    const controller = new AbortController();
+    const invocation = registry.invoke("resume.score", { resume, claims }, context(controller.signal));
+    await started;
+    controller.abort();
+
+    await expect(invocation).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes only generic availability and keeps secrets out of client modules", async () => {
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn(),
+      logger: () => undefined,
+    });
+    expect(registry.getFeatureAvailability().find((item) => item.id === "resume.score")).toMatchObject({
+      mode: "enhanced",
+      available: true,
+      fallbackAvailable: true,
+    });
+    expect(registry.getFeatureAvailability().find((item) => item.id === "resume.atsAudit")).toMatchObject({
+      mode: "baseline",
+    });
+    expect(registry.getFeatureAvailability().find((item) => item.id === "copy.rewrite.zh")).toMatchObject({
+      mode: "baseline",
+    });
+    expect(registry.getFeatureAvailability().find((item) => item.id === "copy.rewrite.en")).toMatchObject({
+      mode: "baseline",
+    });
+    expect(JSON.stringify(registry.getFeatureAvailability())).not.toMatch(/yunwu|test-model|test-secret-key/i);
+
+    const clientFiles = [
+      "src/lib/client/api.ts",
+      "src/lib/client/store.ts",
+      "src/components/app.tsx",
+    ];
+    const clientSource = (
+      await Promise.all(clientFiles.map((file) => readFile(path.join(process.cwd(), file), "utf8")))
+    ).join("\n");
+    expect(clientSource).not.toContain("AI_API_KEY");
+    expect(clientSource).not.toContain("provider-gateway");
+    expect(clientSource).not.toContain("capability-runtime");
+  });
+});

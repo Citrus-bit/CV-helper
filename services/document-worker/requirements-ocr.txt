@@ -1,0 +1,4 @@
+-r requirements.txt
+numpy==2.2.6
+paddleocr==3.1.0
+paddlepaddle==3.1.0

@@ -1,0 +1,5 @@
+**
+!services/document-worker/app/**
+!services/document-worker/requirements.lock
+!services/document-worker/requirements-ocr.lock
+!templates/typst/**
