@@ -1,6 +1,7 @@
 import { createCanvas } from "@napi-rs/canvas";
 
 import { getOfflineTesseractOptions } from "@/lib/server/ocr";
+import { loadPdfJs } from "@/lib/server/pdfjs";
 
 export const MAX_PDF_BYTES = 10 * 1024 * 1024;
 export const MAX_PDF_PAGES = 5;
@@ -95,7 +96,15 @@ function throwIfAborted(signal?: AbortSignal) {
 }
 
 async function renderPage(
-  page: Awaited<ReturnType<Awaited<ReturnType<typeof import("pdfjs-dist/legacy/build/pdf.mjs")["getDocument"]>["promise"]>["getPage"]>>,
+  page: Awaited<
+    ReturnType<
+      Awaited<
+        ReturnType<
+          (typeof import("pdfjs-dist/legacy/build/pdf.mjs"))["getDocument"]
+        >["promise"]
+      >["getPage"]
+    >
+  >,
   maxWidth = 1120,
   signal?: AbortSignal,
 ) {
@@ -138,7 +147,11 @@ async function renderPage(
 
 async function runOcr(previewDataUrl: string) {
   const { recognize } = await import("tesseract.js");
-  const result = await recognize(previewDataUrl, "chi_sim+eng", getOfflineTesseractOptions());
+  const result = await recognize(
+    previewDataUrl,
+    "chi_sim+eng",
+    getOfflineTesseractOptions(),
+  );
   return {
     text: normalizeText(result.data.text),
     confidence: Math.max(0, Math.min(1, result.data.confidence / 100)),
@@ -152,7 +165,7 @@ export async function parsePdf(
 ): Promise<ParsedPdfResult> {
   throwIfAborted(options.signal);
   assertPdfBytes(bytes);
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfjs = await loadPdfJs();
   let document: Awaited<ReturnType<typeof pdfjs.getDocument>["promise"]>;
   let loadingTask: ReturnType<typeof pdfjs.getDocument>;
 
@@ -199,7 +212,10 @@ export async function parsePdf(
         viewport.height <= 0 ||
         Math.max(viewport.width, viewport.height) > MAX_PDF_PAGE_EDGE_POINTS
       ) {
-        throw new PdfInputError(`第 ${pageNumber} 页尺寸超出安全限制。`, "PAGE_TOO_LARGE");
+        throw new PdfInputError(
+          `第 ${pageNumber} 页尺寸超出安全限制。`,
+          "PAGE_TOO_LARGE",
+        );
       }
       const textContent = await page.getTextContent();
       let order = 0;
@@ -210,7 +226,9 @@ export async function parsePdf(
         const text = normalizeText(item.str);
         if (!text) continue;
         if (nativeCharacters + text.length > MAX_PDF_CHARACTERS_PER_PAGE) {
-          warnings.push(`第 ${pageNumber} 页文字对象超过安全上限，已截断额外内容。`);
+          warnings.push(
+            `第 ${pageNumber} 页文字对象超过安全上限，已截断额外内容。`,
+          );
           break;
         }
         nativeCharacters += text.length;
@@ -234,7 +252,9 @@ export async function parsePdf(
         order += 1;
       }
 
-      const pageBlocks = blocks.filter((block) => block.pageIndex === pageNumber - 1);
+      const pageBlocks = blocks.filter(
+        (block) => block.pageIndex === pageNumber - 1,
+      );
       const nativeText = pageBlocks.map((block) => block.text).join(" ");
       const nativeCharacterCount = nativeText.replace(/\s/g, "").length;
       const source = pageKind(nativeCharacterCount);
@@ -266,10 +286,14 @@ export async function parsePdf(
               bbox: { x: 0, y: 0, width: 1, height: 1 },
             });
           } else {
-            warnings.push(`第 ${pageNumber} 页 OCR 未识别出有效文本，请人工补充。`);
+            warnings.push(
+              `第 ${pageNumber} 页 OCR 未识别出有效文本，请人工补充。`,
+            );
           }
         } catch {
-          warnings.push(`第 ${pageNumber} 页 OCR 暂时不可用，原始页面仍可预览。`);
+          warnings.push(
+            `第 ${pageNumber} 页 OCR 暂时不可用，原始页面仍可预览。`,
+          );
         }
       }
 

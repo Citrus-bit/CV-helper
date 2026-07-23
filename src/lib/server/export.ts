@@ -16,6 +16,7 @@ import {
 } from "@/lib/pdf-visual-audit";
 import { createCanvas } from "@napi-rs/canvas";
 import { createHash } from "node:crypto";
+import { loadPdfJs } from "@/lib/server/pdfjs";
 
 type RenderAuditMeta = {
   resumeId: string;
@@ -144,9 +145,7 @@ function textRenderIsVisible(
   let edgePixels = 0;
   let scannedPixels = 0;
   const columnMaskPixels = new Uint32Array(Math.max(0, right - left));
-  const columnContributingPixels = new Uint32Array(
-    Math.max(0, right - left),
-  );
+  const columnContributingPixels = new Uint32Array(Math.max(0, right - left));
   for (let y = top; y < bottom; y += 1) {
     for (let x = left; x < right; x += 1) {
       scannedPixels += 1;
@@ -226,10 +225,7 @@ function textRenderIsVisible(
     if (columnMaskPixels[column] === 0) continue;
     bandMask += columnMaskPixels[column];
     bandContributing += columnContributingPixels[column];
-    if (
-      bands.length < bandCount - 1 &&
-      bandMask >= targetInkPerBand
-    ) {
+    if (bands.length < bandCount - 1 && bandMask >= targetInkPerBand) {
       bands.push({ mask: bandMask, contributing: bandContributing });
       bandMask = 0;
       bandContributing = 0;
@@ -242,8 +238,7 @@ function textRenderIsVisible(
   const bandsAreVisible = bands.every(
     (band) =>
       band.mask < MINIMUM_MASK_PIXELS_PER_TEXT_BAND ||
-      band.contributing / band.mask >=
-        MINIMUM_LOCAL_TEXT_CONTRIBUTION_RATIO,
+      band.contributing / band.mask >= MINIMUM_LOCAL_TEXT_CONTRIBUTION_RATIO,
   );
   if (!bandsAreVisible) return false;
 
@@ -263,11 +258,7 @@ function textRenderIsVisible(
 
   const lastWindowStart = Math.max(0, columnMaskPixels.length - windowWidth);
   const windowStarts = new Set<number>();
-  for (
-    let start = 0;
-    start <= lastWindowStart;
-    start += windowStep
-  ) {
+  for (let start = 0; start <= lastWindowStart; start += windowStep) {
     windowStarts.add(start);
   }
   windowStarts.add(lastWindowStart);
@@ -487,7 +478,7 @@ export async function auditRenderedPdf(
     overlapComparisons: 0,
   };
 
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfjs = await loadPdfJs();
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(pdf),
     useSystemFonts: true,

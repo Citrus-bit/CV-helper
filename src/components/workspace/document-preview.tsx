@@ -121,7 +121,7 @@ export function DocumentPreview() {
         </div>
       </div>
 
-      <div className="min-h-[520px] flex-1 overflow-auto p-6">
+      <div className="min-h-0 flex-1 overflow-auto p-6">
         {mode === "compare" ? (
           originalPdf && currentPdf && render ? (
             <div

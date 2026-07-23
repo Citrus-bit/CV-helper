@@ -13,8 +13,11 @@ import {
 import { clearRecentAnalyses } from "./recent-analysis";
 import { API_RATE_LIMIT_SESSION_KEY } from "./privacy";
 import {
+  disposeRegisteredClientRuntimeActivities,
   registerClientCacheCleaner,
+  registerClientRuntimeDisposer,
   trackObjectUrl,
+  trackedFetch,
   trackedObjectUrlCountForTests,
 } from "./runtime-resources";
 import {
@@ -118,9 +121,11 @@ beforeEach(async () => {
   useAppStore.getState().reset();
   window.sessionStorage.clear();
   await clearRecentAnalyses();
+  useAppStore.setState({ recentAnalyses: [], error: null });
 });
 
 afterEach(async () => {
+  disposeRegisteredClientRuntimeActivities();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   useAppStore.getState().reset();
@@ -134,9 +139,12 @@ describe("recent session store actions", () => {
     const pdfBlob = storedPdf("pdf-bytes");
     useAppStore.getState().setAnalysis(analysis, pdfBlob);
     useAppStore.getState().setModule("job");
+    const stopActivity = vi.fn();
+    registerClientRuntimeDisposer(stopActivity);
 
     await useAppStore.getState().goHome();
 
+    expect(stopActivity).toHaveBeenCalledOnce();
     expect(useAppStore.getState()).toMatchObject({
       stage: "upload",
       module: "job",
@@ -168,11 +176,39 @@ describe("recent session store actions", () => {
     useAppStore.getState().setAnalysis(analysisFixture(), storedPdf("pdf"));
     await useAppStore.getState().goHome();
 
+    const stopActivity = vi.fn();
+    const cacheCleaner = vi.fn();
+    registerClientRuntimeDisposer(stopActivity);
+    const unregisterCacheCleaner = registerClientCacheCleaner(cacheCleaner);
+    const analysisRequest = beginAnalysisRequest();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("Aborted", "AbortError")),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    const apiRequest = trackedFetch("/api/slow-delete");
+    const apiRequestAborted = expect(apiRequest).rejects.toMatchObject({
+      name: "AbortError",
+    });
+
     await useAppStore.getState().deleteRecentSession("resume-history");
+    await apiRequestAborted;
 
     expect(useAppStore.getState().recentAnalyses).toEqual([]);
     expect(useAppStore.getState().analysis).toBeNull();
     expect(useAppStore.getState().stage).toBe("upload");
+    expect(analysisRequest.signal.aborted).toBe(true);
+    expect(stopActivity).toHaveBeenCalledOnce();
+    expect(cacheCleaner).toHaveBeenCalledOnce();
+    unregisterCacheCleaner();
   });
 
   it("archives a hydrated active session when recent records are refreshed", async () => {
@@ -233,8 +269,8 @@ describe("recent session store actions", () => {
   });
 
   it("keeps the workspace open when IndexedDB cannot save or delete", async () => {
-    useAppStore.getState().setAnalysis(analysisFixture());
     vi.stubGlobal("indexedDB", undefined);
+    useAppStore.getState().setAnalysis(analysisFixture());
 
     await useAppStore.getState().goHome();
 
@@ -244,6 +280,14 @@ describe("recent session store actions", () => {
       analysis: { resume: { id: "resume-history" } },
     });
     expect(useAppStore.getState().error).toContain("无法安全保存当前会话");
+
+    useAppStore.getState().goHomeWithoutArchive();
+    expect(useAppStore.getState()).toMatchObject({
+      stage: "upload",
+      analysis: { resume: { id: "resume-history" } },
+      recentAnalyses: [],
+      error: null,
+    });
 
     await expect(
       useAppStore.getState().deleteRecentSession("resume-history"),
@@ -319,6 +363,7 @@ describe("v2 to v3 session migration", () => {
 
   it("keeps the migrated undo stack through the actual persist merge", () => {
     const analysis = analysisFixture();
+    analysis.resume.createdAt = new Date(Date.now() - 60_000).toISOString();
     const snapshot = {
       resume: analysis.resume,
       suggestions: analysis.suggestions,
@@ -335,6 +380,41 @@ describe("v2 to v3 session migration", () => {
 
     expect(merged.undoStack).toEqual([snapshot]);
     expect(merged.stage).toBe("workspace");
+  });
+
+  it("normalizes a legacy missing deadline from the original analysis creation time", () => {
+    const createdAt = Date.now() - 6 * 60 * 60 * 1000;
+    const analysis = analysisFixture();
+    analysis.resume.createdAt = new Date(createdAt).toISOString();
+
+    const merged = mergePersistedSessionState(
+      { stage: "workspace", analysis, expiresAt: "invalid" },
+      useAppStore.getState(),
+    );
+
+    expect(merged.expiresAt).toBe(
+      new Date(createdAt + 24 * 60 * 60 * 1000).toISOString(),
+    );
+  });
+
+  it("clears rehydrated analysis when neither its deadline nor creation time is trustworthy", async () => {
+    const analysis = analysisFixture();
+    analysis.resume.createdAt = undefined;
+    window.sessionStorage.setItem(
+      SESSION_STORAGE_KEY_V3,
+      JSON.stringify({
+        state: { stage: "workspace", analysis, expiresAt: "invalid" },
+        version: 3,
+      }),
+    );
+
+    await useAppStore.persist.rehydrate();
+
+    expect(useAppStore.getState()).toMatchObject({
+      stage: "upload",
+      analysis: null,
+      expiresAt: null,
+    });
   });
 
   it("moves the v2 storage value to the v3 key and removes the old copy", () => {

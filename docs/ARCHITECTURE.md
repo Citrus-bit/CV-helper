@@ -26,7 +26,7 @@ Next.js Node runtime
   ├─ PDF.js native extraction + page PNG rendering
   ├─ offline Tesseract.js for scan/mixed pages
   ├─ static Capability Registry + deterministic baselines
-  ├─ optional provider gateway for nine allowlisted capabilities
+  ├─ optional provider gateway for seven allowlisted capabilities
   └─ local Typst compilation
        └─ .tools/typst/typst (0.15.1)
 ```
@@ -49,13 +49,15 @@ Next.js Web/API
             └─ normalized parse response  native/OCR blocks + PNG previews
 ```
 
-配置 `DOCUMENT_WORKER_URL` 后，`parseWithDocumentWorker` 使用 180 秒请求预算调用 `/parse`，以 Zod 校验响应并映射到 `DocumentParseOutput`，随后沿用 TypeScript 的分段、AST、证据、评分和建议流程。未配置时该 adapter 返回 `null` 并调用 2.1 的 baseline；配置后 worker 连接或 Schema 失败会返回受控错误，不会静默把简历发送给其他服务。Web 的 `/api/render` 同样优先调用 worker `/render-preview`，远端渲染失败时再回退项目内 Typst；二者产物进入同一审计与确认链。
+配置 `DOCUMENT_WORKER_URL` 后，`parseWithDocumentWorker` 使用 180 秒请求预算调用 `/parse`，以 Zod 校验响应并映射到 `DocumentParseOutput`，随后沿用 TypeScript 的分段、AST、证据、评分和建议流程。未配置时该 adapter 返回 `null` 并调用 2.1 的 baseline；配置后 worker 连接或 Schema 失败会返回受控错误，不会静默把简历发送给其他服务。Web 的 `/api/render` 同样优先调用 worker `/render-preview`，远端渲染失败时再回退 Web 本地 Typst；二者产物进入同一审计与确认链。`infra/web.Dockerfile` 按架构校验下载 Typst `0.15.1`，在运行镜像安装 `font-noto-cjk` 并复制 `templates/typst` 三套模板，因此容器内 fallback 不依赖宿主机工具。
 
 worker、镜像和 Compose 默认 `OCR_PROVIDER=tesseract`、`TESSERACT_LANGUAGE=chi_sim+eng`。PaddleOCR 只有在显式构建 OCR 依赖、设置 `OCR_PROVIDER=paddleocr` 并预置本地检测/识别模型目录后才启用；`PADDLEOCR_ALLOW_MODEL_DOWNLOAD=false`，不是默认路径。
 
+Node 侧 `AbortSignal` 能停止等待 worker 响应并阻止陈旧结果提交，但无法立即终止 Python 已经进入 `run_in_threadpool` 的同步 OCR/渲染函数。断开连接后仍在执行的计算由 worker deadline、OCR 子进程 timeout、并发、内存、CPU、进程和文件大小限制约束；在改为可协作取消的进程模型前，这是明确保留的本地运行风险。
+
 ### 2.3 后续生产基础设施目标
 
-Compose 默认只启动 Web、隔离 worker 和仅发布到宿主 `127.0.0.1` 的受限 loopback proxy；proxy 设 5 秒上游连接超时、240 秒整体空闲超时和默认 32 个并发连接上限。PostgreSQL、Redis 和 MinIO 放在 `future-infra` profile，当前业务状态仍在 sessionStorage/IndexedDB，队列和对象存储 adapter 尚未接入。Compose 自动读取被 Git 忽略的 `.env`；`pnpm dev` 则读取 `.env.local`，两个私有文件都只能保存轮换后的本地 Secret。当前本地版不实施 Vercel 或云对象存储；embedding 与服务端 ASR provider 也未接入。当前与目标的边界如下：
+Compose 默认只启动 Web、隔离 worker 和仅发布到宿主 `127.0.0.1` 的受限 loopback proxy；proxy 设 5 秒上游连接超时、240 秒整体空闲超时和默认 32 个并发连接上限。PostgreSQL、Redis 和 MinIO 放在 `future-infra` profile，当前业务状态仍在 sessionStorage/IndexedDB，队列和对象存储 adapter 尚未接入。Compose 自动读取被 Git 忽略的 `.env`；`pnpm dev` 则读取 `.env.local`，两个私有文件都只能保存轮换后的本地 Secret。当前本地版不实施 Vercel、Private Blob、Hosted 模式或其他云对象存储/部署路径；embedding 与服务端 ASR provider 也未接入。当前与目标的边界如下：
 
 | Concern        | Local baseline                | Production adapter                                |
 | -------------- | ----------------------------- | ------------------------------------------------- |
@@ -172,7 +174,7 @@ type CapabilityResult<T> = {
 ### 4.2 调用与回退
 
 1. 未配置 AI 时 Registry 只选择内置 baseline；受信本地扩展仅在显式评测模式启用，且必须使用 canonical Schema、禁网并保留 baseline。
-2. `provider_gateway` 只增强 `resume.score`、`resume.suggest`、`copy.rewrite.zh/en`、`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate` 和 `answer.coach`；其余能力只能调用确定性 baseline。
+2. `provider_gateway` 只增强七项能力：`resume.score`、`resume.suggest`、`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate` 和 `answer.coach`。`copy.rewrite.zh/en` 继续注册为版本化 baseline 接口，不通过 provider gateway；其余能力也只能调用确定性 baseline。
 3. Gateway 在 Next.js 服务端完成字段投影与 PII 清理，只从环境变量注入 URL、Key 和模型。前端 bundle、FeatureAvailability、日志与响应不包含供应商细节。
    Base URL 还必须命中代码内静态批准列表；系统不读取可配置的 `AI_API_ALLOWLIST`，避免部署者通过环境变量无审查扩权。
 4. 首次请求使用 JSON Schema；供应商明确不支持时只重试一次 `json_object`。返回值随后通过 canonical Zod Schema、引用、JSON Pointer、数字新增和事实证据检查。
@@ -187,6 +189,7 @@ type CapabilityResult<T> = {
 当前 Next.js 应用实际提供以下 API；二进制和会话状态仍由请求、响应及浏览器会话承载，没有对象存储键、资源式 resume ID 路由或 SSE 队列：
 
 - `GET /api/capabilities`：返回静态白名单能力的 `FeatureAvailability`。
+- `GET /api/health`：返回本地运行所需的抽象健康状态；`document`、`ai`、`storage` 仅包含 `ready | degraded` 与 `baseline | isolated | enhanced | client_local`，不返回 URL、供应商、模型、密钥、容器名或错误正文。
 - `GET /api/demo`：生成并分析内置真实 PDF 示例。
 - `POST /api/analyze`：接收 multipart PDF；配置 `DOCUMENT_WORKER_URL` 时由隔离 worker 完成解析/必要 OCR，否则使用 TypeScript baseline，随后在请求内完成分块、评分与建议。
 - `POST /api/job-match`：接收 Resume/Evidence/JD DTO，返回要求到证据矩阵。
@@ -197,7 +200,9 @@ type CapabilityResult<T> = {
 - `POST /api/interview/transcribe`：只标准化浏览器已识别的文字，不接收或保存音频。
 - `POST /api/interview/evaluate`：评审回答并执行简历口径检查。
 
-当前 API 通过 Zod 校验输入并把 `request.signal` 传入 CapabilityContext；隔离文档响应另经 Zod 校验。九项生成式 capability 可调用已接线的 provider gateway，但默认配置只运行 baseline；当前不声称已经完成真实供应商质量验收、持久化幂等键、资源所有权或队列 worker 恢复。
+当前 API 通过 Zod 校验输入并把 `request.signal` 传入 CapabilityContext；隔离文档响应另经 Zod 校验。上述七项生成式 capability 可调用已接线的 provider gateway，`copy.rewrite.zh/en` 仅使用 baseline；默认配置仍只运行 baseline。当前不声称已经完成真实供应商质量验收、持久化幂等键、资源所有权或队列 worker 恢复。
+
+健康端点采用 `no-store` 响应并以本地可用性为准：未配置 worker 或 provider 时，document/AI baseline 与 `client_local` storage 都是 `ready`，不会因为未启用增强依赖而误报降级；只有显式配置隔离文档或增强 AI 且该配置不可用时，对应组件及整体状态才为 `degraded`。该端点不执行真实 AI 内容请求，也不改变 Vercel、Private Blob 与 Hosted 模式仍延期的边界。
 
 上传 multipart 在 `formData()` 前按流限制为 10 MB PDF 加固定表单开销；导出下载 JSON 即使缺少 `Content-Length` 也会在 16 MB 处取消流并返回 `413`，不会先完整缓冲。`export.audit` 同时消费请求取消信号和 deadline。
 
@@ -251,7 +256,7 @@ baseline 检索先按语言、领域、岗位族、级别、题型和技能过�
 - 文件：当前 API 与 worker 验证 PDF 魔数/MIME、10 MB/5 页和页面尺寸/像素/字符资源上限，并拒绝无法解析、加密或损坏文件。worker 另限制 OCR 区域、并发、字符/单词/图片框、像素、输出和 deadline；导出审计限制 PDF、页数、文字项、operator、总像素、采样、比较和执行时间。Compose worker 已实测为无外网、非 root、只读根文件系统和受 CPU/内存/进程限制；Web runtime 显式监听 `0.0.0.0`，通过 edge 网络暴露宿主端口并通过 internal backend 访问 worker。这些容器控制不反向描述未配置 worker 时的 Next.js Node baseline。
 - Prompt：系统指令与简历/JD/题库分通道；不可信文本先经 guard，不能产生工具或权限请求。
 - 权限：Capability 使用声明式最小 scope；安全文本能力只获 `selected_text`，题库检索只获匿名角色/技能元数据。默认 Registry 拒绝任意 extension，provider 模式另受固定能力名单约束。
-- PII：provider DTO 删除姓名、电话、邮箱、链接、原 PDF、页面图片和无关证据正文；日志、指标和 eval 样本不保存正文。
+- PII：provider DTO 删除姓名、电话、邮箱、链接、原 PDF、页面图片和无关证据正文；本地投影同时识别普通叙述中的姓名及无标签中英文地址。投影完成后会重新扫描最小 DTO，任何残留疑似 PII 都 fail closed，阻断 provider 调用并回退 baseline；日志、指标和 eval 样本不保存正文。
 - 数据生命周期：MVP Web Speech 不向应用产生或保存音频 Blob；转写文字仅存于设备会话。活动状态使用 `sessionStorage`，最近分析及可选原 PDF 使用 IndexedDB；最多 10 条/50 MB并在 24 小时内过期。生产 ASR 若接收音频，必须在转写后删除并记录无正文删除回执。
 - 供应链：依赖锁定，候选 Skill 审查许可证和依赖；生产镜像固定 digest，禁止运行时下载代码。
 
@@ -269,6 +274,7 @@ baseline 检索先按语言、领域、岗位族、级别、题型和技能过�
 
 阶段 6 改动后的最终 `typecheck`、lint、Vitest、document-worker pytest、生产构建和 Compose smoke 数量待本轮全量验证填写，不沿用上一版统计作为当前结论。已完成的浏览器回归为：1024/1280/1440/1920px 首页与工作区无横向滚动；375/768/1023px 只显示设备提示且不挂载工作台；返回、历史恢复、当前/单条删除及清空取消/确认均通过，控制台无应用 error/warn。本地 worker health 已确认 Typst/Tesseract 可用，未配置新 Key 的 capability 全部为 baseline。该结论仅覆盖固定 fixture、构建与 smoke，不等同生产 OCR 准确率、第三方安全认证或外部 AI 质量。
 
+- 安全健康端点：4 项 Vitest 覆盖自包含 baseline 不发起 worker 探测、可用 isolated/enhanced 仅返回抽象字段、显式配置失效时 fail closed，以及 HTTP 响应为 `no-store` 且通过 Schema。当前本地 Docker 路径可用；Vercel 验证仍延期。
 - 契约：30 个 Capability 的 Zod/JSON Schema、权限、超时、取消、非法输出和 fallback 测试。
 - 文档：至少 40 份合成/脱敏 PDF；数字文本、扫描 OCR、双栏顺序、旋转、混合页和恶意文件。
 - 事实安全：数字、日期、角色、团队成果、`needs_proof` 和 revision 冲突 fixture。

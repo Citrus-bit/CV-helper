@@ -49,11 +49,13 @@ import { clearApiSessionId } from "./privacy";
 import {
   cancelAllClientRequests,
   clearRegisteredClientCaches,
+  disposeRegisteredClientRuntimeActivities,
   revokeAllTrackedObjectUrls,
 } from "./runtime-resources";
 
 export const SESSION_STORAGE_KEY_V2 = "resume-assistant-session-v2";
 export const SESSION_STORAGE_KEY_V3 = "resume-assistant-session-v3";
+const LOCAL_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 export type WorkspaceModule = "resume" | "job" | "interview";
 export type WorkspaceStage = "upload" | "analyzing" | "workspace";
@@ -107,6 +109,7 @@ export type AppState = {
   refreshRecentSessions: () => Promise<void>;
   enforceLocalExpiry: (now?: number) => Promise<void>;
   goHome: () => Promise<void>;
+  goHomeWithoutArchive: () => void;
   openRecentSession: (id: string) => Promise<boolean>;
   deleteRecentSession: (id: string) => Promise<void>;
   clearAllLocalData: () => Promise<void>;
@@ -143,6 +146,7 @@ function emptySessionState(
 function cancelWorkspaceActivity() {
   cancelAnalysisRequest();
   cancelAllClientRequests();
+  disposeRegisteredClientRuntimeActivities();
 }
 
 function clearRuntimeResources() {
@@ -327,20 +331,42 @@ function confirmedReplacePatch(
   return [{ operation: "replace", path: scoped[0].path, value }];
 }
 
-function sessionExpiry(analysis: AnalysisBundle) {
-  const maximum = Date.now() + 24 * 60 * 60 * 1000;
-  const declared = analysis.resume.expiresAt
-    ? Date.parse(analysis.resume.expiresAt)
-    : Number.NaN;
-  return new Date(
-    Number.isFinite(declared) ? Math.min(declared, maximum) : maximum,
-  ).toISOString();
+export function normalizePersistedSessionExpiry(
+  expiresAt: unknown,
+  analysis: AnalysisBundle | null | undefined,
+  now = Date.now(),
+): string | null {
+  if (!analysis) return null;
+
+  const declared =
+    typeof expiresAt === "string" ? Date.parse(expiresAt) : Number.NaN;
+  const createdAt = analysis.resume?.createdAt;
+  const created =
+    typeof createdAt === "string" ? Date.parse(createdAt) : Number.NaN;
+  const trustedCreated =
+    Number.isFinite(created) && created <= now ? created : null;
+
+  if (Number.isFinite(declared)) {
+    const maximum = (trustedCreated ?? now) + LOCAL_SESSION_TTL_MS;
+    return new Date(Math.min(declared, maximum)).toISOString();
+  }
+  if (trustedCreated === null) return null;
+  return new Date(trustedCreated + LOCAL_SESSION_TTL_MS).toISOString();
 }
 
-export function hasSessionExpired(expiresAt: string | null, now = Date.now()) {
-  if (!expiresAt) return false;
-  const expires = Date.parse(expiresAt);
-  return Number.isFinite(expires) && expires <= now;
+function sessionExpiry(analysis: AnalysisBundle) {
+  return (
+    normalizePersistedSessionExpiry(analysis.resume.expiresAt, analysis) ??
+    new Date(Date.now() + LOCAL_SESSION_TTL_MS).toISOString()
+  );
+}
+
+export function hasSessionExpired(
+  expiresAt: string | null | undefined,
+  now = Date.now(),
+) {
+  const expires = typeof expiresAt === "string" ? Date.parse(expiresAt) : NaN;
+  return !Number.isFinite(expires) || expires <= now;
 }
 
 export function isRenderForAnalysis(
@@ -475,6 +501,10 @@ export function migratePersistedSessionState(
   const { history, ...current } = legacy;
   return {
     ...current,
+    expiresAt: normalizePersistedSessionExpiry(
+      current.expiresAt,
+      current.analysis,
+    ),
     undoStack: Array.isArray(current.undoStack)
       ? current.undoStack
       : Array.isArray(history)
@@ -512,11 +542,7 @@ export function mergePersistedSessionState(
   const evaluations = interviewPlan
     ? merged.evaluations
         .filter((evaluation) =>
-          isEvaluationForState(
-            merged.analysis,
-            interviewPlan,
-            evaluation,
-          ),
+          isEvaluationForState(merged.analysis, interviewPlan, evaluation),
         )
         .map(normalizeEvaluation)
     : [];
@@ -892,9 +918,7 @@ export const useAppStore = create<AppState>()(
           state.homeNavigationPending ? state : { selectedTemplate },
         ),
       setPreviewMode: (previewMode) =>
-        set((state) =>
-          state.homeNavigationPending ? state : { previewMode },
-        ),
+        set((state) => (state.homeNavigationPending ? state : { previewMode })),
       markRenderPreviewed: (sha256) =>
         set((state) => {
           if (state.homeNavigationPending) return state;
@@ -930,15 +954,15 @@ export const useAppStore = create<AppState>()(
           set({
             recentAnalysesLoading: false,
             error:
-              error instanceof Error
-                ? error.message
-                : "无法读取本机最近记录。",
+              error instanceof Error ? error.message : "无法读取本机最近记录。",
           });
         }
       },
       enforceLocalExpiry: async (now = Date.now()) => {
         const state = get();
-        const currentExpired = hasSessionExpired(state.expiresAt, now);
+        const currentExpired = Boolean(
+          state.analysis && hasSessionExpired(state.expiresAt, now),
+        );
         const summariesExpired = state.recentAnalyses.some((record) =>
           hasSessionExpired(record.expiresAt, now),
         );
@@ -992,6 +1016,14 @@ export const useAppStore = create<AppState>()(
                 : "无法安全保存当前会话，请重试。",
           });
         }
+      },
+      goHomeWithoutArchive: () => {
+        cancelWorkspaceActivity();
+        set({
+          stage: "upload",
+          homeNavigationPending: false,
+          error: null,
+        });
       },
       openRecentSession: async (id) => {
         const record = await getRecentAnalysis(id);
@@ -1086,9 +1118,10 @@ export const useAppStore = create<AppState>()(
         return true;
       },
       deleteRecentSession: async (id) => {
+        if (get().analysis?.resume.id === id) clearRuntimeResources();
         const recentAnalyses = await deleteRecentAnalysis(id);
         set((state) =>
-          state.stage === "upload" && state.analysis?.resume.id === id
+          state.analysis?.resume.id === id
             ? {
                 stage: "upload",
                 module: "resume",
@@ -1207,7 +1240,7 @@ export const useAppStore = create<AppState>()(
       merge: mergePersistedSessionState,
       onRehydrateStorage: () => (state) => {
         if (!state) return;
-        if (hasSessionExpired(state.expiresAt)) {
+        if (state.analysis && hasSessionExpired(state.expiresAt)) {
           state.reset();
           return;
         }
@@ -1237,16 +1270,13 @@ export function handleRecentAnalysisInvalidation(
 
   if (
     event.kind === "generation" ||
-    (event.kind === "delete" &&
-      event.recordId === state.analysis?.resume.id)
+    (event.kind === "delete" && event.recordId === state.analysis?.resume.id)
   ) {
     cancelWorkspaceActivity();
     useAppStore.setState({
       ...emptySessionState(
         state,
-        state.recentAnalyses.filter(
-          (record) => record.id !== event.recordId,
-        ),
+        state.recentAnalyses.filter((record) => record.id !== event.recordId),
       ),
       error:
         event.kind === "delete"

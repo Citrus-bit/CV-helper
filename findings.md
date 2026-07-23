@@ -8,9 +8,16 @@
 - 对话中暴露的 API Key 不得进入代码、日志、测试、文档或任何请求；Base URL 和模型可以作为非秘密默认示例，本地启用必须使用轮换后的新 Secret。
 - 本轮浏览器验收改为 1024/1280/1440/1920 桌面工作台，以及 375/768/1023 仅显示电脑访问提示；不再验证或维护手机工作台。
 - 用户已暂停 Vercel 部署，本轮只保留本地 multipart 上传和本地隔离 document worker；Private Blob、Hosted API、签名下载和 Vercel 配置均推迟。
+- 2026-07-23 对当前树及唯一 Git 历史提交执行文件名与内容模式扫描，没有发现常见云厂商/API token、私钥或带值 Secret。已跟踪的 6 个 `output/pdf` 文件为合成简历，使用 `example.com` 和占位电话号码；另有 5 个 `infra/**/__pycache__/*.pyc` 生成物。它们不构成已识别的敏感信息泄漏，但应在后续提交从版本控制移除。
+- 独立复核确认旧 API Key 未进入当前树、唯一远端提交、Next 客户端静态包、运行容器日志/环境或 Web 镜像。唯一提交的 Git 作者邮箱为真实个人邮箱，且一个已跟踪 `.pyc` 含本机绝对路径；若仓库未来转公开，应先改为 GitHub noreply 并在备份后重写该单提交。Web Docker 专用 ignore 已改成源码 allowlist，防止未来 `.env`、凭据和用户文件进入 build context。
 - Docker 的 internal backend 不直接发布 worker 到宿主；本地版用只读、非 root、低资源的 loopback TCP proxy 暴露 `127.0.0.1:8001`，worker 本身仍无外网出口。数字 PDF 已走 native，扫描 PDF 已走本地 Tesseract OCR。
 - 全仓敏感串扫描未发现用户暴露的旧 Key；`.env.example` 不声明或保存 API Key。
 - Provider Base URL 使用代码内静态批准列表，禁止通过 `AI_API_ALLOWLIST` 等环境变量扩张网络权限。
+- 最新本地 Web 镜像为 `sha256:b0353ce369df9bfbb8efa9711b51d4bae5dc45a0e2e7efd9884f097439419e03`。镜像内置 Typst 0.15.1、Noto CJK 字体和三套 Typst 模板；首页、能力接口、示例接口及健康接口已通过容器 smoke。
+- 服务端 PDF.js 改由统一 loader 显式导入 Node fake worker，避免 `outputFileTracingIncludes` 重复复制同一依赖；修复后的本地生产构建完成 7/7 页面并消除 standalone `ENOTDIR` tracing warning。
+- 安全 `/api/health` 只返回 document、AI、storage 的 `ready/degraded` 与 mode；4 项路由测试通过，Docker production build 已包含该路由。本地 GET 200，三者依次为 `isolated/ready`、`baseline/ready`、`client_local/ready`。
+- 阶段 6 最终验证为：TypeScript、ESLint、33 个文件 / 179 项 Web 测试、32 项 document-worker pytest、3 项 loopback proxy pytest 与 `git diff --check` 全部通过。
+- 桌面浏览器在 1024×768、1280×720、1440×900、1920×1080 均无横向滚动，首页三段保持同一 `max-w-5xl` 轴线；375×812、768×900、1023×768 仅显示电脑浏览器提示且不渲染首页或工作台。
 - Compose 默认只需 Web、worker 与 loopback；PostgreSQL、Redis、MinIO 进入 `future-infra` profile，不再阻塞当前本地版启动。
 - Loopback proxy 使用 5 秒上游连接超时、240 秒整体空闲超时和默认 32 连接上限；空闲值覆盖 Web 对文档 worker 的 180 秒请求预算，同时防止无期限占用本地端口。
 
@@ -57,7 +64,7 @@
 - 自动导出审计同时读取文字层、文本 bbox 和服务器逐页栅格画面，覆盖内容完整性、搜索性、非白/强对比像素、预期文字区域可见度、文本越界/重叠/边距/最小高度、替代字符、字体嵌入信号、ATS 顺序和 SHA；它可以阻断纯白与白字白底，但不是完整视觉或审美审计，真实 PDF 并排人工预览仍是最终门槛。当前没有自动密度重试。
 - 新版 PDF 的“已预览”不再依赖 iframe `onLoad`：客户端 PDF.js 必须完成第一页 canvas 绘制，并对完整画布检查非白像素、强对比像素和亮度变化，失败时阻断确认/下载并提供重试。这是可见内容门槛，不是完整视觉版面审计。
 - `toRenderableResume` 会同时保留 `section.text` 与 `entries`；审计始终比较完整 AST fragments，并有回归样本。
-- 当前 30 项 baseline 的 `networkPolicy` 都为 `none`；provider gateway 只为九项静态生成式能力注册受控 extension，默认 `AI_PROVIDER=baseline` 时不会发生服务端模型外发。`trusted_local` 仅供 canonical Schema、禁网且有 baseline 的受控评测使用。
+- 当前 30 项 baseline 的 `networkPolicy` 都为 `none`；provider gateway 只为七项静态生成式能力注册受控 extension，两项 copy rewrite 保持 baseline，默认 `AI_PROVIDER=baseline` 时不会发生服务端模型外发。`trusted_local` 仅供 canonical Schema、禁网且有 baseline 的受控评测使用。
 - PII/guard 已对简历、JD、问题和回答执行最小字段投影；已接线的 provider 只能接收结构化、脱敏、guard 后 DTO，并在超时、限流、非法输出或事实检查失败时回退 baseline。
 - 敏感状态已从 localStorage 改为 sessionStorage，并增加定时、focus、visibility 与 rehydrate 过期检查；旧版持久键在工作台挂载时删除。Web Speech 不保存音频 Blob，失败、超时和离开页面会停止。
 
@@ -77,6 +84,12 @@
 - OCR 模型：`.tools/tesseract/{chi_sim,eng}.traineddata.gz`，bootstrap 会按固定 SHA-256 下载；二者分别约 1.6 MB/2.8 MB。
 
 ## 视觉/浏览器发现
+
+- 用户截图确认工作台存在页面级纵向滚动：三栏内容在页面滚动后整体离开视口，固定侧栏和 sticky 顶栏仍保留，导致视口下半部显示大块空白。根因是 `Workspace` 仅使用 `min-h-dvh`，主列未形成 `h-dvh` 的 flex 高度约束；`ResumeWorkspace` 又以独立 `calc(100dvh - 64px)`/`min-height` 控制子栏。修复方向是锁定工作台根级页面滚动，让顶栏下的模块容器占满剩余高度，并把滚动归属到模块/栏内部。
+- 第二张截图显示 `排版预览` 激活后，评分和标签栏下方到“排版预览与导出”标题之间出现大段空白。`TemplateExport` 源码本身没有用于制造该间距的 margin/justify 规则，说明空洞来自父级页面/网格高度和滚动坐标错位，而不是模板卡内容；仍需在修复根级高度后用真实 DOM bounding boxes 复核。同时会把导出面板保持为顶部连续信息流、内部滚动和底部下载操作，不允许正文被推离标签栏。
+- 2026-07-23 最终交付审计再次运行 UI/UX 设计系统、UX 与 Next.js 检索。自动设计系统仍误判为单列营销页/夸张极简，不采纳其超大标题、滚动揭示或单 CTA 结构；继续以桌面生产力工作台为准。
+- 本轮采纳的核查项限定为：顺序标题层级、完整键盘操作、跳过导航、固定栏不遮挡内容、异步操作超过 300ms 有状态反馈、按钮防重复提交、动态区域预留尺寸、可见焦点和桌面四档零横向滚动。
+- Next.js 检索的路由级 `loading.tsx` 对当前单页客户端工作台不是直接要求；本轮改为验证上传、分析、保存、渲染和下载各自已有明确的局部加载状态，避免引入无意义的页面级骨架。
 
 - UI/UX Skill 的自动设计系统再次偏向 Newsletter/Exaggerated Minimalism；这不适合高频文档审阅工作台，因此明确拒绝营销结构、超大标题和滚动装饰动效。
 - 2026-07-22 复核设计系统时，即使使用低视觉差异、低动效和中高密度参数，自动推荐仍返回 Newsletter/超大字极简；继续以产品工作台需求覆盖该推荐，仅保留其专业中性色、高对比、单一主操作和轻量状态动效。
@@ -109,12 +122,11 @@
 - `dense-professional.pdf`（2 页）浏览器回归确认 11 条建议中的 `needs_proof` 不能直接接受；补充“延期率 18%→6%，可由复盘记录核对”后仅转为用户确认的待接受 rewrite。接受后版本 1→2；第一次撤销恢复已补证待接受状态，第二次撤销恢复原始 `needs_proof` 且撤销栈清空。
 - JD 浏览器回归把 6 条要求拆为 responsibility/skill/must-have/nice-to-have 并显示证据、缺口和下一步；覆盖率明确标注“不是录取概率”，岗位定制分支绑定版本 2。
 - 面试新会话回归通过：首个计划在提交回答并进入第 2/6 题后更新 JD，重新进入面试会回到设备检查并从第 1/6 题开始，转写与反馈均为空，旧问题/评审状态未串入新计划。
-- 最新桌面浏览器回归覆盖 1024、1280、1440、1920px：首页和工作区均无横向滚动。375、768、1023px 只显示电脑访问提示且未挂载工作台。
-- 示例中顶栏返回按钮与侧栏品牌均可在保存当前分析后回首页；历史恢复、当前会话删除、单条删除、清空取消和清空确认均实测通过，控制台无应用 error/warn。
-- Browser 验收最初误用不存在的 `tab.logs`，改用 `tab.dev.logs` 后成功完成控制台复核。
-- 本地 `127.0.0.1:8001/health` 返回 `typst_available=true`、`ocr_provider=tesseract`、`ocr_available=true`；`127.0.0.1:3001/api/capabilities` 在未配置新 Key 时全部为 baseline。`3000` 仍是旧 Docker Web 镜像，需最终重建。
+- 最新桌面浏览器回归覆盖 1024×768、1280×720、1440×900、1920×1080：首页和工作台均无横向滚动，首页头部、上传区和历史区处于同一 `max-w-5xl` 轴线。375×812、768×900、1023×768 只显示电脑浏览器提示，首页和工作台均不渲染。
+- 体验示例、顶栏返回、历史恢复与侧栏品牌返回均通过；返回首页会保存当前分析，不复用删除动作。
+- 本地 `127.0.0.1:8001/health` 返回 `typst_available=true`、`ocr_provider=tesseract`、`ocr_available=true`；`127.0.0.1:3000/api/capabilities` 在未配置轮换后新 Key 时全部为 baseline，当前 `3000` 已运行最新本地 Web 镜像。
 - 局部遮挡修复后的浏览器终验：Professional、Minimal、Compact 均为 2 页、导出质量 100/100、第一页像素渲染验证通过；Compact 画布为 596x842，1280px 桌面无横向滚动。确认前下载禁用，确认后启用，服务日志确认 `/api/export/download` 返回 200。
-- 最终 Alpine Web 镜像 `sha256:00b57e52ade74b682f8ca7b9dfca3e39fc1c86e028a42aaab2afa2839224c26d` 零 warning 构建；runtime 显式监听 `0.0.0.0`，宿主首页与内部 worker health 均返回 200。正常 render/download 为 200 且 SHA 一致，末尾 10% 遮挡和中段窄数字遮挡均在容器内返回 409 并命中 `text-visibility`。
+- 阶段 6 前的 Alpine Web 基线镜像 `sha256:00b57e52ade74b682f8ca7b9dfca3e39fc1c86e028a42aaab2afa2839224c26d` 曾完成零 warning 构建；runtime 显式监听 `0.0.0.0`，宿主首页与内部 worker health 均返回 200。正常 render/download 为 200 且 SHA 一致，末尾 10% 遮挡和中段窄数字遮挡均在容器内返回 409 并命中 `text-visibility`。
 - 最终 worker 镜像为 `sha256:0f2f0b84e13889dcbed8a2fc5e7adaa1758ca3dffe272e67d3a39aa0b23ca54d`；数字 PDF 仅走 native，扫描 PDF 使用本地 Tesseract OCR，区域、并发和超时预算均通过容器回归。
 - 最终只读代码与交付复核未发现 P0、P1 或 P2 缺陷；剩余风险仅限后续接入外部模型或 Skill 时必须重新执行的权限、安全和质量评测。
 

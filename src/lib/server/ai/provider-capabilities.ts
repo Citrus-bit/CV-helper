@@ -67,8 +67,10 @@ function projectorForInput<K extends ProviderGatewayCapabilityId>(id: K, input: 
 }
 
 function assertNoProjectedPii(value: unknown, projector: PiiProjector): void {
-  if (projector.containsSensitiveValue(JSON.stringify(value))) {
-    throw new ProviderGatewayError("INVALID_RESPONSE");
+  try {
+    projector.assertSafe(value);
+  } catch (cause) {
+    throw new ProviderGatewayError("INVALID_RESPONSE", undefined, { cause });
   }
 }
 
@@ -151,8 +153,11 @@ function resumeGroundingCorpus(
   ].join("\n");
 }
 
-function projectInput<K extends ProviderGatewayCapabilityId>(id: K, input: GatewayInputMap[K]): unknown {
-  const projector = projectorForInput(id, input);
+function projectInput<K extends ProviderGatewayCapabilityId>(
+  id: K,
+  input: GatewayInputMap[K],
+  projector: PiiProjector,
+): unknown {
   const sanitize = (value: string) => projector.redact(value);
   switch (id) {
     case "resume.score":
@@ -233,7 +238,15 @@ function projectInput<K extends ProviderGatewayCapabilityId>(id: K, input: Gatew
           scoringAnchors: coachInput.question.scoringAnchors.map(sanitize),
         },
         answer: sanitize(coachInput.answer),
-        evaluation: coachInput.evaluation,
+        evaluation: {
+          ...coachInput.evaluation,
+          strengths: coachInput.evaluation.strengths.map(sanitize),
+          improvements: coachInput.evaluation.improvements.map(sanitize),
+          citedAnswerFragments: coachInput.evaluation.citedAnswerFragments.map(sanitize),
+          followUpQuestion: coachInput.evaluation.followUpQuestion === undefined
+            ? undefined
+            : sanitize(coachInput.evaluation.followUpQuestion),
+        },
       };
     }
   }
@@ -679,10 +692,17 @@ function providerCapability<K extends ProviderGatewayCapabilityId>(
     inputSchema,
     outputSchema,
     async execute(input: GatewayInputMap[K], context: CapabilityContext) {
+      const projector = projectorForInput(id, input);
+      const dto = projectInput(id, input, projector);
+      try {
+        projector.assertSafe(dto);
+      } catch (cause) {
+        throw new ProviderGatewayError("UNSAFE_INPUT", undefined, { cause });
+      }
       const completion = await gateway.complete({
         capabilityId: id,
         context,
-        dto: projectInput(id, input),
+        dto,
         outputSchema,
         instruction: instructions[id],
       });

@@ -3,6 +3,7 @@
 import {
   ArrowLeft,
   BriefcaseBusiness,
+  CircleAlert,
   FileCheck2,
   FileSearch,
   Mic2,
@@ -63,8 +64,13 @@ export function Workspace() {
   const undoStack = useAppStore((state) => state.undoStack);
   const undo = useAppStore((state) => state.undo);
   const goHome = useAppStore((state) => state.goHome);
+  const goHomeWithoutArchive = useAppStore(
+    (state) => state.goHomeWithoutArchive,
+  );
   const deleteRecentSession = useAppStore((state) => state.deleteRecentSession);
   const reset = useAppStore((state) => state.reset);
+  const error = useAppStore((state) => state.error);
+  const setError = useAppStore((state) => state.setError);
   const homeNavigationPending = useAppStore(
     (state) => state.homeNavigationPending,
   );
@@ -72,6 +78,7 @@ export function Workspace() {
   const previousModuleRef = useRef(activeModule);
   const [deletingCurrent, setDeletingCurrent] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const archiveSaveFailed = error?.startsWith("无法安全保存当前会话");
 
   async function deleteCurrentSession() {
     setDeletingCurrent(true);
@@ -103,7 +110,7 @@ export function Workspace() {
 
   return (
     <main
-      className="min-h-dvh bg-canvas"
+      className="h-dvh overflow-hidden bg-canvas"
       aria-busy={homeNavigationPending}
     >
       <a
@@ -161,8 +168,8 @@ export function Workspace() {
         </div>
       </aside>
 
-      <div className="pl-[216px]">
-        <header className="sticky top-0 z-10 flex min-h-16 items-center justify-between border-b border-line bg-white/90 px-6 backdrop-blur-xl">
+      <div className="flex h-dvh min-h-0 flex-col pl-[216px]">
+        <header className="z-10 flex h-16 min-h-16 shrink-0 items-center justify-between border-b border-line bg-white/90 px-6 backdrop-blur-xl">
           <div className="flex min-w-0 items-center gap-2">
             <Tooltip.Root>
               <Tooltip.Trigger asChild>
@@ -251,7 +258,59 @@ export function Workspace() {
           </div>
         </header>
 
-        <div ref={workspaceContentRef} id="workspace-content" tabIndex={-1}>
+        {error ? (
+          <div
+            className="mx-6 mt-4 flex shrink-0 items-center gap-3 rounded-[8px] border border-[#f0b8b4] bg-[#fff7f6] px-4 py-3 text-sm"
+            role="alert"
+          >
+            <CircleAlert
+              aria-hidden="true"
+              size={19}
+              className="shrink-0 text-danger"
+            />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-ink">
+                {archiveSaveFailed ? "无法保存到最近记录" : "操作未完成"}
+              </p>
+              <p className="mt-0.5 leading-5 text-danger">{error}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {archiveSaveFailed ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void goHome()}
+                    className="min-h-11 rounded-[8px] px-3 text-sm font-medium text-brand transition-colors hover:bg-[#edf5ff]"
+                  >
+                    重试保存
+                  </button>
+                  <button
+                    type="button"
+                    onClick={goHomeWithoutArchive}
+                    className="min-h-11 rounded-[8px] bg-ink px-4 text-sm font-medium text-white transition-colors hover:bg-[#343438]"
+                  >
+                    不归档，返回首页
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setError(null)}
+                  className="min-h-11 rounded-[8px] px-3 text-sm font-medium text-ink transition-colors hover:bg-[#f0f1f3]"
+                >
+                  关闭
+                </button>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        <div
+          ref={workspaceContentRef}
+          id="workspace-content"
+          tabIndex={-1}
+          className="min-h-0 flex-1 overflow-auto overscroll-contain"
+        >
           {activeModule === "resume" ? <ResumeWorkspace /> : null}
           {activeModule === "job" ? <JobWorkspace /> : null}
           {activeModule === "interview" ? <InterviewWorkspace /> : null}

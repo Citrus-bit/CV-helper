@@ -12,12 +12,12 @@ export function ResumeWorkspace() {
   const analysis = useAppStore((state) => state.analysis)!;
 
   return (
-    <div className="grid min-h-[calc(100dvh-64px)] grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)] xl:grid-cols-[minmax(480px,1.25fr)_minmax(390px,0.75fr)]">
+    <div className="grid h-full min-h-0 grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)] xl:grid-cols-[minmax(480px,1.25fr)_minmax(390px,0.75fr)]">
       <h1 data-module-heading tabIndex={-1} className="sr-only">
         简历优化
       </h1>
       <DocumentPreview />
-      <aside className="flex max-h-[calc(100dvh-64px)] min-h-[620px] flex-col border-l border-line bg-white">
+      <aside className="flex h-full min-h-0 flex-col overflow-hidden border-l border-line bg-white">
         <ScorePanel scorecard={analysis.scorecard} />
         <Tabs.Root
           defaultValue="suggestions"
@@ -44,13 +44,13 @@ export function ResumeWorkspace() {
           </Tabs.List>
           <Tabs.Content
             value="suggestions"
-            className="flex min-h-0 flex-1 flex-col outline-none"
+            className="hidden min-h-0 flex-1 flex-col outline-none data-[state=active]:flex"
           >
             <SuggestionReview />
           </Tabs.Content>
           <Tabs.Content
             value="templates"
-            className="flex min-h-0 flex-1 flex-col outline-none"
+            className="hidden min-h-0 flex-1 flex-col outline-none data-[state=active]:flex"
           >
             <TemplateExport />
           </Tabs.Content>

@@ -16,6 +16,7 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 8. MVP 使用浏览器语音识别且应用不采集音频 Blob；浏览器供应商边界必须披露。匿名工作状态与本机最近分析最长保留 24 小时，用户可删除单条或立即清空全部。
 9. 产品工作台只支持宽度不少于 1024px 的电脑浏览器；窄屏仅显示设备提示，不能挂载或运行上传、分析、工作区或录音界面。
 10. “返回首页”只保存并离开当前分析；“删除当前会话”和“清空本机记录”是独立、需明确确认的破坏性动作。
+11. 本轮只交付本地桌面版；Vercel、Private Blob、Hosted 模式和其他云部署路径均已推迟，不属于当前实现或验收承诺。
 
 ## 参考项目边界
 
@@ -43,14 +44,16 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 - 文档解析：配置 `DOCUMENT_WORKER_URL` 后，`/api/analyze` 把 PDF 发送到 `services/document-worker`，由 PDFium/pdfplumber 完成原生提取、页面分类、必要 OCR 和页面预览；返回值经 Zod 转换为同一 `DocumentParseOutput`。未配置时使用上一节的 TypeScript baseline；配置后 worker 不可用会返回受控错误，不会静默切换到其他外部服务。
 - OCR：worker、镜像和 Compose 均默认使用本地 Tesseract CLI，语言为 `chi_sim+eng`；PaddleOCR 仅是通过构建参数、显式 `OCR_PROVIDER=paddleocr` 和预置本地模型启用的可选增强，禁止运行时下载模型。
 - OCR 资源门：worker 每页最多处理 4 个去重区域、每份文档最多 8 个区域，并限制并发、字符、单词、图片框、像素、TSV/文本输出和 block 展开；文档预算默认 45 秒（最大 60 秒），单次 Tesseract 默认 12 秒（最大 20 秒）。超限返回稳定 warning，不丢弃已取得的原生结果。
-- AI：允许的九项生成式能力已接入服务端 OpenAI-compatible provider gateway。网关只接收最小化、脱敏、guard 后 DTO；未配置、超时、限流、5xx 或非法结果自动回退 baseline，用户取消除外。当前默认 `AI_PROVIDER=baseline`，等待轮换后的新密钥再启用增强模式。
-- 渲染：配置 worker 时，Web 优先调用 `/render-preview`；失败时可回退项目内 Typst。两条路径使用同一三模板和质量硬门，worker 内 `/usr/local/bin/typst` 读取只读 `/app/templates/typst` 与固定 `fonts-noto-cjk`。
+- AI：允许的七项生成式能力 `resume.score`、`resume.suggest`、`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate`、`answer.coach` 已接入服务端 OpenAI-compatible provider gateway。`copy.rewrite.zh/en` 继续保留版本化 baseline 接口，不进入 provider gateway。网关只接收最小化、脱敏、guard 后 DTO；未配置、超时、限流、5xx 或非法结果自动回退 baseline，用户取消除外。当前默认 `AI_PROVIDER=baseline`，等待轮换后的新密钥再启用增强模式。
+- 渲染：配置 worker 时，Web 优先调用 `/render-preview`；失败时可回退 Web 本地 Typst。Web 运行镜像固定携带校验过的 Typst `0.15.1`、`font-noto-cjk` 和 `templates/typst` 下三套模板；worker 内 `/usr/local/bin/typst` 读取只读 `/app/templates/typst` 与同类 CJK 字体。两条路径使用同一三模板和质量硬门。
 - 容器边界：Compose 中 Web/worker 均为非 root、只读根文件系统、移除 Linux capabilities 并使用独立临时目录；worker 位于 internal backend 网络且无外网出口，并设置 CPU、内存、进程、文件大小和执行时限。
+- 取消边界：Node 的请求取消会停止等待并阻止陈旧结果提交，但 Python 已进入 `run_in_threadpool` 的同步 OCR/渲染任务不能被该 `AbortSignal` 立即终止；遗留计算仍由 worker deadline、子进程 timeout、并发和资源限额约束。
 - 本地启动：`docker-compose -f infra/docker-compose.yml up --build` 默认只启动 Web、worker 和只绑定 `127.0.0.1` 的受限 loopback proxy。proxy 默认限制 5 秒上游连接、240 秒整体空闲和 32 个并发连接。Compose 自动读取被 Git 忽略的 `.env`；AI Secret 只能放在该文件或进程环境中。
+- 本地健康检查：`GET /api/health` 只返回 `document`、`ai`、`storage` 的抽象状态。组件状态为 `ready | degraded`，模式为 `baseline | isolated | enhanced | client_local`；响应不包含 URL、供应商、模型、密钥、容器名或错误正文。未显式配置外部依赖时，本地 document/AI baseline 和浏览器本地存储均属于 `ready`；只有显式选择隔离文档或增强 AI 但对应配置失效时才返回 `degraded`。
 - 未来基础设施：PostgreSQL、Redis 和 MinIO 仅保留在 `future-infra` Compose profile，当前业务不依赖也不连接这些服务。
 - 切换方式：文档服务和 AI 通过 adapter + 环境配置切换，不改变领域模型或客户端协议。
 
-隔离文档解析、OCR、渲染 adapter 与九项 AI provider gateway 均已接入当前 Web 数据路径；AI 默认关闭且尚未用真实供应商密钥验收。PostgreSQL、Redis/BullMQ、MinIO/S3、服务端 ASR 与任何云部署仍是后续目标，不得描述为已经投入使用。
+隔离文档解析、OCR、渲染 adapter 与七项 AI provider gateway 均已接入当前 Web 数据路径；`copy.rewrite.zh/en` 保持 baseline 接口，AI 默认关闭且尚未用真实供应商密钥验收。PostgreSQL、Redis/BullMQ、MinIO/S3、服务端 ASR、Vercel/Private Blob/Hosted 模式与任何其他云部署仍是后续目标，不得描述为已经投入使用。
 
 ## Skill Extension Registry
 
@@ -58,7 +61,7 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 
 - `status` 仅允许 `baseline | candidate | evaluating | enabled | rejected | deprecated`。
 - 当前所有条目均为 `baseline`；外部 Skill 未经许可证、安全和回归评测不得设为 `enabled`。
-- 生产默认 Registry 的任意扩展执行模式为 `disabled`；`trusted_local` 只用于受控评测且禁止网络、要求 canonical Schema 和已注册 baseline。`provider_gateway` 只允许静态名单内的九项能力通过服务端受控网关执行，不能用于用户上传代码或扩大数据范围。
+- 生产默认 Registry 的任意扩展执行模式为 `disabled`；`trusted_local` 只用于受控评测且禁止网络、要求 canonical Schema 和已注册 baseline。`provider_gateway` 只允许静态名单内的七项能力通过服务端受控网关执行；`copy.rewrite.zh/en` 仍由内置 baseline 提供，不能借该模式访问 provider。该模式不能用于用户上传代码或扩大数据范围。
 - `data scope` 是最大授权，不代表每次调用都会传入全部数据；调用方仍必须执行最小化和 PII 脱敏。
 - `network` 的 `none` 表示 baseline 不需要联网；候选 Skill 若需联网，必须重新审批 manifest。
 - provider gateway 只接受代码内静态批准的供应商 Base URL；不存在可由 `AI_API_ALLOWLIST` 或用户输入扩张的运行时白名单。
@@ -92,7 +95,7 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 | `answer.evaluate`       | rubric 关键词、结构和证据规则评分                                                                                                                                                       | 技术正确性、语义相关性和校准                                       | `interview_content,evidence_graph` / none | `eval.answer.evaluate.v1`       | baseline / `builtin.answer.evaluate@1.0.0`       |
 | `answer.coach`          | 基于评分缺口的模板化改进建议                                                                                                                                                            | 个性化追问、行业教练策略                                           | `interview_content,evidence_graph` / none | `eval.answer.coach.v1`          | baseline / `builtin.answer.coach@1.0.0`          |
 | `resumeInterview.check` | 相关声明的新增数值与待核对状态提示                                                                                                                                                      | 日期、角色、实体、语义口径与误报控制                               | `interview_content,evidence_graph` / none | `eval.consistency.interview.v1` | baseline / `builtin.resumeInterview.check@1.0.0` |
-| `pii.redact`            | 邮箱、电话、证件号、地址和 URL 规则脱敏                                                                                                                                                 | 姓名实体、跨语言和误脱敏控制                                       | `selected_text` / none                    | `eval.security.pii.v1`          | baseline / `builtin.pii.redact@1.0.0`            |
+| `pii.redact`            | 邮箱、电话、证件号、URL、普通语境姓名及无标签中英文地址投影；残留疑似 PII 时 fail closed                                                                                                | 更复杂实体歧义、跨语言与误脱敏控制                                 | `selected_text` / none                    | `eval.security.pii.v1`          | baseline / `builtin.pii.redact@1.0.0`            |
 | `prompt.guard`          | 指令注入模式、数据/指令边界封装                                                                                                                                                         | 变体攻击、多语言和编码绕过                                         | `selected_text` / none                    | `eval.security.prompt.v1`       | baseline / `builtin.prompt.guard@1.0.0`          |
 | `accessibility.audit`   | 结构化 UI fixture 的名称、焦点、对比度、目标尺寸与标题层级规则                                                                                                                          | 真实 DOM axe、屏幕阅读器人工审计、PDF/UA                           | `ui_render_tree` / none                   | `eval.quality.a11y.v1`          | baseline / `builtin.accessibility.audit@1.0.0`   |
 | `security.audit`        | 结构化 fixture 的 worker、隐私与 Skill 边界规则                                                                                                                                         | 实际沙箱逃逸、供应链与渗透测试                                     | `system_metadata` / none                  | `eval.quality.security.v1`      | baseline / `builtin.security.audit@1.0.0`        |
@@ -129,7 +132,7 @@ Registry 运行时按 `Capability ID` 保存一个 baseline 和最多一个 exte
 | `answer.evaluate`       | `src/app/api/routes.test.ts`                                                                                                                                                                                                 | builtin / Proprietary  | 无外部模型                                                        | 回答评审 API 回归通过                                                                  | baseline 保留 / 2026-07-22 |
 | `answer.coach`          | `src/app/api/routes.test.ts`                                                                                                                                                                                                 | builtin / Proprietary  | 无外部模型                                                        | 教练反馈 API 回归通过                                                                  | baseline 保留 / 2026-07-22 |
 | `resumeInterview.check` | `src/app/api/routes.test.ts`                                                                                                                                                                                                 | builtin / Proprietary  | 无外部模型                                                        | 简历口径检查 API 回归通过                                                              | baseline 保留 / 2026-07-22 |
-| `pii.redact`            | `tests/capabilities/baseline.test.ts`、`src/app/api/routes.test.ts`                                                                                                                                                          | builtin / Proprietary  | 无外部 DLP provider                                               | 邮箱/电话/URL fixture 通过                                                             | baseline 保留 / 2026-07-22 |
+| `pii.redact`            | `tests/capabilities/baseline.test.ts`、`src/app/api/routes.test.ts`、`src/lib/server/ai/provider-gateway.test.ts`                                                                                                            | builtin / Proprietary  | 无外部 DLP provider；疑似残留会阻断 provider 调用                 | 联系方式、普通语境姓名、无标签中英文地址与 fail-closed fixture 通过                    | baseline 保留 / 2026-07-23 |
 | `prompt.guard`          | `tests/capabilities/baseline.test.ts`、`src/app/api/routes.test.ts`                                                                                                                                                          | builtin / Proprietary  | 无外部安全 provider                                               | 注入模式 fixture 通过                                                                  | baseline 保留 / 2026-07-22 |
 | `accessibility.audit`   | `tests/capabilities/infrastructure-baseline.test.ts`                                                                                                                                                                         | builtin / Proprietary  | 规则结果不等同人工 WCAG 认证                                      | 结构化 UI fixture 通过                                                                 | baseline 保留 / 2026-07-22 |
 | `security.audit`        | `tests/capabilities/infrastructure-baseline.test.ts`、`services/document-worker/tests/test_security.py`、Compose smoke                                                                                                       | builtin / Proprietary  | 规则与容器 smoke 不等同第三方渗透测试                             | 权限、文件限制、只读根文件系统和 worker 网络隔离通过                                   | baseline 保留 / 2026-07-23 |
@@ -157,4 +160,5 @@ Registry 运行时按 `Capability ID` 保存一个 baseline 和最多一个 exte
 - 浏览器已在 1024、1280、1440、1920px 验证首页与工作区无横向滚动；375、768、1023px 只显示电脑访问提示且不挂载工作台。
 - 示例会话的顶栏返回、侧栏品牌返回、历史恢复、当前会话删除、单条删除及清空取消/确认均通过；控制台没有应用 error/warn。
 - 本地 `127.0.0.1:8001/health` 返回 Typst 与 Tesseract 可用；未配置新 Key 的开发服务 `/api/capabilities` 全部为 baseline。旧 `127.0.0.1:3000` 容器仍需在最终交付前重建。
+- 本地 Docker 路径可用；`GET /api/health` 已有 4 项 Vitest，覆盖无需探测的自包含 baseline、可用的 isolated/enhanced 状态且不泄漏实现细节、显式配置失效时 fail closed，以及 `no-store` 的 Schema 合法响应。Vercel 与其他云部署仍延期。
 - 以上结论只覆盖仓库固定 fixture、构建和 smoke 范围，不代表生产 OCR 准确率、第三方安全认证或外部生成式 AI 质量。

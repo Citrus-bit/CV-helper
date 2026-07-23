@@ -27,7 +27,7 @@ MVP 的主闭环为：
 - 每个被接受的事实性改写都能追溯到原文或用户确认；待补证据内容不能直接接受。
 - 所有可下载 PDF 均通过硬性质量检查，且与用户确认的预览是同一产物。
 - JD 匹配结论能追溯到具体要求和简历证据，并明确不代表录取概率。
-- 本轮只交付本地版本；Vercel、Private Blob、云端 worker 和签名下载不在当前验收范围。
+- 本轮只交付本地桌面版；Vercel、Private Blob、Hosted 模式、云端 worker 和签名下载均已推迟，不在当前实现或验收范围。
 
 ## 2. 信息架构
 
@@ -119,7 +119,7 @@ MVP 的主闭环为：
 - 预览与下载复用同一个不可变二进制对象；选中版本的下载哈希必须与预览哈希一致。
 - 新版只有在浏览器 PDF.js 完成第一页 canvas 绘制，且完整画布达到最低非白像素、强对比像素与亮度变化门槛后，才会标记为“已预览”；纯白/纯透明画布或渲染失败时不能确认或下载，用户可显式重试。
 - 当前 UI 调用 `layout.recommend` 展示推荐模板和依据，默认仍为 `Professional` 并允许用户切换三套模板；质量报告展示实际页数及原版页数变化，最终由用户明确选择并确认。
-- 配置 `DOCUMENT_WORKER_URL` 时，Web 优先调用隔离 worker 的 `/render-preview`；worker 不可用时回退项目内 Typst。无论由哪条路径生成，都必须经过相同导出审计和用户预览确认。
+- 配置 `DOCUMENT_WORKER_URL` 时，Web 优先调用隔离 worker 的 `/render-preview`；worker 不可用时回退 Web 本地 Typst。Web 运行镜像自带校验过的 Typst `0.15.1`、CJK 字体与三套 `templates/typst` 模板。无论由哪条路径生成，都必须经过相同导出审计和用户预览确认。
 
 ### 5.3 “不降级”质量门槛
 
@@ -145,22 +145,23 @@ MVP 的主闭环为：
 
 - 运行时 Capability 契约版本为 `1.0`，MVP 内置实现版本为 `1.0.0`；候选 Skill 必须声明兼容契约及明确回滚目标。
 - 前端只读取 `FeatureAvailability` 的 `available`、`baseline | enhanced | unavailable`、locale 和 fallback 状态，不暴露供应商、密钥或内部实现。
-- 所有核心功能都有内置 baseline。配置本地服务端 provider gateway 后，九项白名单能力可进入增强模式；增强能力超时、异常或输出不合法时回退 baseline，并以 `usedFallback: true` 返回，前端可提示已回退且保留当前操作和 revision。
+- 所有核心功能都有内置 baseline。配置本地服务端 provider gateway 后，七项白名单能力 `resume.score`、`resume.suggest`、`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate`、`answer.coach` 可进入增强模式；增强能力超时、异常或输出不合法时回退 baseline，并以 `usedFallback: true` 返回，前端可提示已回退且保留当前操作和 revision。
 - 用户不能上传或执行任意 Skill。所有运行时 Skill 由服务器白名单、版本锁定和 feature flag 管理。
-- 任意扩展执行仍默认关闭；只有 canonical Schema、禁网且有 baseline 的受信本地候选可进入评测。`provider_gateway` 只允许 `resume.score`、`resume.suggest`、`copy.rewrite.zh/en`、`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate` 和 `answer.coach`，其余能力保持确定性 baseline。
+- 任意扩展执行仍默认关闭；只有 canonical Schema、禁网且有 baseline 的受信本地候选可进入评测。`provider_gateway` 只允许上述七项能力，`copy.rewrite.zh/en` 继续作为可替换的版本化 baseline 接口，其余能力也保持确定性 baseline。
 - Provider Base URL 必须命中代码内静态批准列表，不能通过环境变量或用户输入扩大；本地默认 `AI_PROVIDER=baseline`，只有配置轮换后的新服务端 Key 才能启用增强模式。
 - 新 Skill 不得绕过事实安全、人工确认、隐私、导出质检或“不承诺录取”的产品底线。
 
 ## 8. 隐私、安全与数据生命周期
 
 - 上传前清楚说明处理目的、保留时间和删除入口；只收集完成当前功能所需的数据。
-- 联系方式等无关 PII 在发送给模型或外部 Skill 前脱敏，并向用户披露供应商和用途。
+- 联系方式等无关 PII 在发送给模型或外部 Skill 前脱敏，并向用户披露供应商和用途。投影规则覆盖普通叙述中的姓名以及未带“地址”标签的中英文地址；投影后仍命中疑似 PII 时必须 fail closed，拒绝 provider 请求并回退 baseline。
 - 简历与 JD 以不可信数据边界封装，内容中的指令不能改变系统规则或获得工具权限。
-- 配置 `DOCUMENT_WORKER_URL` 时，解析/OCR 运行在禁网、非 root、只读根文件系统且受 CPU/内存/进程/时限约束的本地 Python worker；OCR 另有每页/文档区域、并发、字符、像素、输出和 deadline 上限。未配置时仍使用 Next.js TypeScript baseline。浏览器中的原稿比较使用 IndexedDB/当前会话内的本地 PDF。
+- 配置 `DOCUMENT_WORKER_URL` 时，解析/OCR 运行在禁网、非 root、只读根文件系统且受 CPU/内存/进程/时限约束的本地 Python worker；OCR 另有每页/文档区域、并发、字符、像素、输出和 deadline 上限。未配置时仍使用 Next.js TypeScript baseline。Node 请求取消会停止等待，但不能立即终止 Python 已进入 `run_in_threadpool` 的同步 OCR/渲染任务；该残留计算继续受 worker deadline、子进程 timeout 和资源限额约束。浏览器中的原稿比较使用 IndexedDB/当前会话内的本地 PDF。
 - Provider gateway 只接收脱敏、最小化结构 DTO，不接收姓名、电话、邮箱、链接、原 PDF、页面图片或无关证据正文；API Key 只从 Next.js 服务端环境变量读取。
 - 日志只保存 trace、能力版本、阶段、耗时、错误码和用量，不保存简历正文、JD、录音、转写全文或完整提示。
 - MVP 不创建应用侧音频文件；活动状态存于 `sessionStorage`，最近分析存于 IndexedDB。两者通过定时、focus、visibility、rehydrate 和读取时清理保证最长 24 小时，用户可删除单条或立即清空本机记录。
 - `pnpm dev` 的私有配置放在 `.env.local`，Docker Compose 的私有配置放在 `.env`；两者均被 Git 忽略。`.env.example`、客户端 bundle、日志和文档均不得包含 API Key。
+- 本地 `GET /api/health` 只披露 `document`、`ai`、`storage` 的抽象健康状态：`ready | degraded` 和 `baseline | isolated | enhanced | client_local`。不得返回 URL、供应商、模型、密钥、容器名或错误正文；未启用增强依赖时，本地 baseline 视为 `ready`，只有显式配置失效才标记 `degraded`。
 
 ## 9. 非功能要求
 
@@ -176,6 +177,8 @@ MVP 的主闭环为：
 
 当前浏览器验收已覆盖 1024、1280、1440、1920px 首页与工作区，无横向滚动；375、768、1023px 只显示电脑访问提示且不挂载工作台。示例会话的顶栏返回、侧栏品牌返回、历史恢复、当前会话删除、单条删除、清空取消与确认均通过，控制台无应用 error/warn。本地 worker health 确认 Typst 与 Tesseract 可用；未配置轮换后新 Key 时，AI capability 保持 baseline。
 
+本地 Docker 路径可用；安全健康端点已有 4 项 Vitest，覆盖 baseline `ready`、isolated/enhanced `ready` 且无实现细节泄漏、显式配置失效时 `degraded`，以及 `no-store` 的 Schema 合法响应。Vercel、Private Blob 与 Hosted 模式仍延期，不属于本轮发布验收。
+
 这些结果只代表已登记 fixture、构建和 smoke 范围。Provider gateway 已接线但默认关闭且未使用真实新密钥验收，不得把确定性 baseline 描述成已经具有外部大模型质量。下列生产级门槛仍需完成，包括 40 份文档样本、OCR 召回率、Safari/屏幕阅读器、持久化幂等与对象所有权：
 
 - 至少 40 份脱敏/合成样本覆盖中英文、单双栏、数字、扫描、混合、旋转和异常 PDF。
@@ -188,4 +191,4 @@ MVP 的主闭环为：
 
 ## 11. MVP 之外
 
-Vercel/云端部署、账号与付费、长期历史、多 JD 短名单、多岗位版本库、投递跟踪、团队协作、实时双向语音、AI 语音播报、创意作品集排版、30 天补强计划和 offer 概率预测均不在本地首版范围。
+Vercel、Private Blob、Hosted 模式及其他云端部署，以及账号与付费、长期历史、多 JD 短名单、多岗位版本库、投递跟踪、团队协作、实时双向语音、AI 语音播报、创意作品集排版、30 天补强计划和 offer 概率预测均不在本地首版范围。

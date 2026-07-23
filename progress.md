@@ -1,27 +1,64 @@
 # 进度日志
 
+## 会话：2026-07-23（阶段 7 最终交付审计）
+
+### 阶段 7：最终交付审计与完整作品封装
+
+- **状态：** in_progress
+- 已恢复并复核 `task_plan.md`、`progress.md`、`findings.md`，不沿用“已有测试全绿即完成”的假设。
+- 已建立五步终验：需求证据矩阵、缺口实现、核心全流程、视觉/无障碍/安全回归、可提交作品封装。
+- 已运行 UI/UX 设计系统、UX 与 Next.js 专项检索；拒绝不适合工作台的营销结构，仅采用可验证的无障碍、异步反馈与稳定布局规则。
+- 收到用户高视口截图，确认简历工作台可发生页面级滚动并在内容区域下方留下大块空白；已定位到根工作区未锁定视口高度和子栏各自计算高度的冲突，列为阶段 7 首个必须修复项。
+- 收到第二张右栏截图，确认排版预览内容在父级高度/滚动错位时被推到面板底部；源码没有主动大间距，先修父级视口模型，再对导出面板顺序、滚动和底部操作逐项量测。
+- 已修改工作台为视口锁定的 flex shell、模块内滚动，并让 Radix 未激活页签使用 `hidden`/激活态 `flex`，同时移除文档预览滚动区的强制最小高度。TypeScript 与 ESLint 通过；首次页签单测因 jsdom 低层 click 未触发 Radix 状态切换，改用 `userEvent` 重试。
+
 ## 会话：2026-07-23（本地桌面导航、历史与 AI）
 
 ### 阶段 6：本地桌面导航、设备历史与 AI 适配
 
-- **状态：** in_progress
+- **状态：** complete
 - **开始时间：** 2026-07-23
 - 已确认阶段 6 前的工程基线通过；其测试数量不复用为当前最终结果。
 - 已将工作拆分为桌面 UI/IndexedDB、AI provider gateway、本地 document worker 三条并行实现线。
 - 已完成增量结构审计并实施：移动端工作台已移除；AI provider gateway 已接入分析、JD 与面试能力，未配置新 Key 时仍运行 baseline。
 - 用户随后暂停 Vercel 部署准备；已停止 Hosted/Blob 实现并要求清除本轮 Vercel 专属依赖，只保留本地运行路径。
 - 已完成一次全仓旧 Key 泄漏扫描（无命中）。
-- 已同步三份长期文档中的本地版边界：1024px 桌面门、IndexedDB 24 小时历史、九项 AI 静态能力名单与确定性安全硬门。
-- 已清除 `@vercel/blob`，本轮不实施 Vercel；`8001` OCR/Typst worker health 正常，`3000` 仍是待最终重建的旧 Docker Web 镜像。
+- 已同步三份长期文档中的本地版边界：1024px 桌面门、IndexedDB 24 小时历史、七项 AI provider 能力、两项 baseline 改写接口与确定性安全硬门。
+- 已清除 `@vercel/blob`，本轮不实施 Vercel；本地 Web 已重建为镜像 `sha256:b0353ce369df9bfbb8efa9711b51d4bae5dc45a0e2e7efd9884f097439419e03`，当前运行于 `127.0.0.1:3000`。
 - 当前并行合并态已通过一次 `pnpm typecheck`；最近记录已补显式 AI/规则摘要来源和无长度变化时的 PDF 剥离持久化。
 - 桌面边界/历史/客户端会话 4 个新增测试文件共 15 项通过，覆盖恢复、删除、清空、v2→v3、请求取消、PDF 重新附加和窄屏不挂载；全仓 ESLint 通过。
 - 安全约束：不使用、不测试、不写入对话中暴露的旧 API Key；只接受后续配置的新服务端 Secret。
 - Compose 已改为默认只启动 Web/worker/loopback，PostgreSQL、Redis、MinIO 放入 `future-infra` profile；AI 环境变量已透传且默认 `baseline`，没有运行时 allowlist 扩权入口。
-- 浏览器已在 1024/1280/1440/1920px 验证首页与工作区无横向滚动；375/768/1023px 只显示电脑提示且不挂载工作台。
-- 示例中顶栏与侧栏品牌返回均保存历史；历史恢复、当前会话删除、单条删除、清空取消/确认均实测通过，控制台无应用 error/warn。
-- 本地 `8001/health` 返回 Typst/Tesseract 可用；`3001/api/capabilities` 在无新 Key 时全部 baseline。
+- 已检查当前工作树与全部本地 Git 历史：常见 API Key、私钥、GitHub/AWS/Google/Slack token 和带值 Secret 赋值均无命中；`.env.example` 不包含 API Key。`.gitignore` 已扩展到私有环境文件、证书、数据库、用户 PDF/录音、测试输出与 Python 缓存。
+- 初始已推送提交中存在 6 个合成简历 PDF 和 5 个 Python 字节码生成物；PDF 内容为 `example.com`/占位号码测试资料，未发现真实用户资料。忽略规则不会自动移除已跟踪文件，最终交付将明确这一边界。
+- 已在首页加入未归档当前分析的恢复入口；仅当内存/sessionStorage 有分析而 IndexedDB 最近记录不存在时显示，并可直接返回工作台。
+- 工作台现会以 `role="alert"` 显示自动归档错误，并提供“重试保存”与“不归档，返回首页”；后一条路径保留当前分析。相关归档恢复、语音 dispose、删除清理和 TTL 迁移 6 个文件 / 25 项聚焦测试通过。
+- 浏览器已在 1024×768、1280×720、1440×900、1920×1080 验证首页与工作台均无横向滚动；首页头部、上传区和历史区保持同一 `max-w-5xl` 内容轴线。
+- 375×812、768×900、1023×768 仅显示电脑浏览器提示，不渲染首页或工作台。
+- 体验示例、顶栏返回、历史恢复和侧栏品牌返回均通过；返回操作与删除会话保持独立。
+- 本地产品页 `browser dev logs` 返回空数组 `[]`，未发现 console error 或 warning。
+- 新增统一服务端 PDF.js loader，显式加载 Node fake worker 并移除重复 tracing include；修复后的生产构建通过，7/7 页面生成且不再出现 `pdfjs-dist` standalone tracing warning。
+- Web 镜像内置 Typst 0.15.1、Noto CJK 字体和 Professional/Minimal/Compact 三套模板；隔离 Web fallback 已生成有效 PDF，文档 worker health 同时报告 Typst 与中英 Tesseract 可用。
+- 本地 `8001/health` 返回 Typst/Tesseract 可用；`3000/api/capabilities` 在无轮换后新 Key 时全部 baseline。首页、能力接口和示例接口均返回 200。
+- 新增安全的 `/api/health`：响应只包含 document、AI、storage 的 `ready/degraded` 与 mode，不暴露配置细节；4 项路由测试通过，生产构建已包含该路由。
+- 本地 `/api/health` GET 返回 200：document 为 `isolated/ready`、AI 为 `baseline/ready`、storage 为 `client_local/ready`。
 - Compose 默认服务精确验证为 `worker,web,worker-loopback`，`future-infra` profile 配置也可解析；loopback 的参数边界、转发/空闲关闭和超额连接拒绝共 3 项测试通过。
-- 待完成：全量测试、本地生产构建、Compose 重建与最终测试数量回填。
+- 最终全量验证通过：`pnpm typecheck`、`pnpm lint`、33 个文件 / 179 项 Web 测试、32 项 document-worker pytest、3 项 loopback proxy pytest 和 `git diff --check` 全部通过。
+
+#### 阶段 6 最终验证
+
+| 验证项          | 结果                             | 状态 |
+| --------------- | -------------------------------- | ---- |
+| TypeScript      | `pnpm typecheck` 通过            | 通过 |
+| ESLint          | `pnpm lint` 通过                 | 通过 |
+| Web 测试        | 33 个文件、179 项测试通过        | 通过 |
+| 健康路由        | 4 项测试及本地 GET 200           | 通过 |
+| document-worker | 32 项 pytest 通过                | 通过 |
+| loopback proxy  | 3 项 pytest 通过                 | 通过 |
+| 工作树检查      | `git diff --check` 通过          | 通过 |
+| 桌面布局        | 四档视口无横向滚动，轴线统一     | 通过 |
+| 窄屏边界        | 三档视口仅渲染电脑浏览器提示     | 通过 |
+| 返回与恢复      | 示例、两种返回入口及历史恢复通过 | 通过 |
 
 ## 会话：2026-07-22
 
@@ -104,7 +141,7 @@
 | 2026-07-22 | 语音多文件补丁因 API 测试标题不匹配而整体拒绝                                          | 1        | 拆为契约/API、UI 和测试三段逐一应用                                                                                   |
 | 2026-07-22 | 浏览器点击“体验示例”后 `/api/demo` 返回 `CORRUPT`                                      | 2        | 定位为 Turbopack 打包后找不到 `pdf.worker.mjs`；将 `pdfjs-dist` 设为服务端 external，端点恢复 200                     |
 | 2026-07-22 | `pnpm dlx tsx -e` 顶层 `await` 不受 CJS 输出支持                                       | 1        | 改用 async IIFE 运行独立 PDF 生成与解析诊断                                                                           |
-| 2026-07-22 | 分析骨架屏出现重复 React key `85`                                                      | 1        | key 改为稳定的 `index-width` 组合，并加入控制台零错误验收                                                             |
+| 2026-07-22 | 分析骨架屏出现重复 React key `85`                                                      | 1        | key 改为稳定的 `index-width` 组合，并补充 React key 回归测试                                                          |
 | 2026-07-22 | Web 文档把 mixed OCR 误写成区域裁剪                                                    | 1        | 按实际实现修正为整页 OCR 后过滤原生覆盖区域和重复块，并与 Python worker 区域能力分开描述                              |
 | 2026-07-23 | 浏览器 locator 不提供 `setInputFiles`                                                  | 1        | 改用 `waitForEvent("filechooser")` 后由 chooser `setFiles` 上传真实 PDF                                               |
 | 2026-07-23 | worker 镜像默认 `OCR_PROVIDER=paddleocr`，但默认构建不安装 PaddleOCR                   | 1        | 将镜像默认统一为已内置中英模型的 Tesseract；PaddleOCR 继续作为显式可选增强                                            |
@@ -121,20 +158,24 @@
 | 2026-07-23 | 导出审计和 OCR worker 缺少完整资源预算                                                 | 1        | 导出增加页/项/字符/operator/像素/比较/deadline/cancel；OCR 增加区域/并发/字符/像素/输出/Tesseract timeout 上限        |
 | 2026-07-23 | Markdown 格式检查发现项目约定与三份进度文件表格未对齐                                  | 1        | 使用仓库 Prettier 机械格式化后重新检查                                                                                |
 | 2026-07-23 | Next standalone 在双网络容器中按容器 hostname 只监听单个网卡，宿主端口连接无响应       | 1        | 在 Web runtime 镜像固定 `HOSTNAME=0.0.0.0`，重建后宿主首页和容器内 worker health 均返回 200                           |
-| 2026-07-23 | Browser 首次调用不存在的 `tab.logs`                                                    | 1        | 改用 `tab.dev.logs`，成功完成控制台 error/warn 复核                                                                   |
+| 2026-07-23 | Browser 首次调用不存在的 `tab.logs`                                                    | 1        | 改用 `tab.dev.logs` 完成日志工具调用诊断                                                                              |
 | 2026-07-23 | 系统 Python 3.14 未安装 pytest                                                         | 1        | 不再重复使用系统解释器，改用 document-worker 已锁定的项目虚拟环境                                                     |
 | 2026-07-23 | Prettier 无法为 `.env.example` 推断 parser                                             | 1        | 环境样例改用内容检查，其余 Markdown/YAML 由仓库 Prettier 格式化                                                       |
 | 2026-07-23 | 代理测试通过 `importlib` 装载时未登记模块                                              | 1        | 执行前写入 `sys.modules`，使 `dataclass` 正确解析模块命名空间                                                         |
 | 2026-07-23 | Compose 默认服务断言误计命令替换的结尾换行                                             | 1        | 改用逗号归一化后的服务列表断言，不再依赖 shell 保留尾部换行                                                           |
 | 2026-07-23 | 多文件 patch 复用了格式化前的 Markdown 上下文                                          | 2        | 拆分代码与文档 patch，并按 Prettier 后的实际表格行重新应用                                                            |
 | 2026-07-23 | 环境样例严格检查发现注释仍出现密钥变量名                                               | 1        | 删除该注释；密钥配置方式只在文档中指向被 Git 忽略的私有文件                                                           |
+| 2026-07-23 | 新组件测试使用 `.test.tsx`，未命中仓库只包含 `.test.ts` 的 Vitest 规则                 | 1        | 两个测试无 JSX，改名为 `.test.ts` 并用显式文件列表复跑                                                                |
+| 2026-07-23 | Store 测试的产品级 `reset()` 会保留首页历史摘要，导致下一用例看到上一条记录            | 1        | 测试 `beforeEach` 在清 IndexedDB 后同步清空 `recentAnalyses`，恢复完整隔离                                            |
+| 2026-07-23 | Next standalone 重复复制 `pdfjs-dist`；直接移除 include 后又漏掉 Node fake worker      | 2        | 新增统一 PDF.js loader 显式导入 worker，并补子路径类型声明；不再使用重复 tracing include                              |
+| 2026-07-23 | Prettier 无法为 Git/Docker ignore 文件推断 parser                                      | 1        | 保持人工审阅，改用 Docker build、`git check-ignore` 与 `git diff --check` 验证                                        |
 
 ## 五问重启检查
 
 | 问题           | 答案                                           |
 | -------------- | ---------------------------------------------- |
-| 我在哪里？     | 阶段 6：本地桌面导航、历史与 AI 适配           |
-| 我要去哪里？   | 完成全量验证、容器重建和当前测试结果回填       |
+| 我在哪里？     | 阶段 6 已完成                                  |
+| 我要去哪里？   | 交付本地桌面版并保留后续 Skill 扩展入口        |
 | 目标是什么？   | 交付可运行、可扩展、证据约束的简历分析助手 MVP |
 | 我学到了什么？ | 见 `findings.md`                               |
 | 我做了什么？   | 见上方记录                                     |

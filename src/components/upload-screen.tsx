@@ -55,6 +55,7 @@ export function UploadScreen() {
   const [clearing, setClearing] = useState(false);
   const setStage = useAppStore((state) => state.setStage);
   const setAnalysis = useAppStore((state) => state.setAnalysis);
+  const analysis = useAppStore((state) => state.analysis);
   const recentAnalyses = useAppStore((state) => state.recentAnalyses);
   const recentAnalysesLoading = useAppStore(
     (state) => state.recentAnalysesLoading,
@@ -67,6 +68,11 @@ export function UploadScreen() {
   const clearAllLocalData = useAppStore((state) => state.clearAllLocalData);
   const error = useAppStore((state) => state.error);
   const setError = useAppStore((state) => state.setError);
+  const hasUnarchivedCurrentAnalysis = Boolean(
+    analysis &&
+    !recentAnalysesLoading &&
+    !recentAnalyses.some((record) => record.id === analysis.resume.id),
+  );
 
   useEffect(() => {
     void refreshRecentSessions();
@@ -289,6 +295,37 @@ export function UploadScreen() {
           >
             {error}
           </div>
+        ) : null}
+
+        {hasUnarchivedCurrentAnalysis && analysis ? (
+          <aside
+            className="mt-4 flex min-h-20 items-center justify-between gap-6 rounded-[8px] border border-[#b9d4f4] bg-[#f5f9ff] px-5 py-4"
+            aria-labelledby="current-analysis-heading"
+          >
+            <div className="min-w-0">
+              <p
+                id="current-analysis-heading"
+                className="text-sm font-semibold text-ink"
+              >
+                当前分析仍可继续
+              </p>
+              <p className="mt-1 truncate text-sm text-muted">
+                {analysis.resume.originalFileName} · 质量分{" "}
+                {Math.round(analysis.scorecard.total)}· 尚未写入最近记录
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setStage("workspace");
+              }}
+              className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-[#075bbf]"
+            >
+              继续当前分析
+              <ArrowRight aria-hidden="true" size={16} />
+            </button>
+          </aside>
         ) : null}
 
         <div className="mt-5 grid grid-cols-3 gap-3 text-sm text-muted">

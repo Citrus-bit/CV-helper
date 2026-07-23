@@ -8,6 +8,7 @@ import {
   type CapabilityId,
 } from "@/lib/capabilities";
 import type { AuditCheck, SourceBlock } from "@/lib/domain";
+import { loadPdfJs } from "@/lib/server/pdfjs";
 
 import {
   DocumentOcrInputSchema,
@@ -58,7 +59,7 @@ async function sha256(bytes: Uint8Array): Promise<string> {
 }
 
 async function pdfPageCount(bytes: Uint8Array): Promise<number> {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfjs = await loadPdfJs();
   const loadingTask = pdfjs.getDocument({
     data: Uint8Array.from(bytes),
     useSystemFonts: true,

@@ -4,6 +4,8 @@ import { z } from "zod";
 
 import type { CapabilityContext, ProviderGatewayCapabilityId } from "@/lib/capabilities";
 
+import { PiiProjector } from "./pii-projection";
+
 const DEFAULT_PROVIDER_ALLOWLIST = ["https://yunwu.ai/v1"] as const;
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_PROVIDER_INPUT_BYTES = 256 * 1024;
@@ -41,7 +43,7 @@ export class ProviderGatewayConfigurationError extends Error {
 
 export class ProviderGatewayError extends Error {
   constructor(
-    readonly code: "HTTP_ERROR" | "INVALID_RESPONSE" | "NETWORK_ERROR" | "INPUT_TOO_LARGE",
+    readonly code: "HTTP_ERROR" | "INVALID_RESPONSE" | "NETWORK_ERROR" | "INPUT_TOO_LARGE" | "UNSAFE_INPUT",
     readonly status?: number,
     options?: ErrorOptions,
   ) {
@@ -217,6 +219,11 @@ export class OpenAiCompatibleGateway {
     outputSchema: z.ZodType<T>;
     instruction: string;
   }): Promise<ProviderCompletion<T>> {
+    try {
+      new PiiProjector().assertSafe(input.dto);
+    } catch (cause) {
+      throw new ProviderGatewayError("UNSAFE_INPUT", undefined, { cause });
+    }
     const serializedDto = JSON.stringify(input.dto);
     if (Buffer.byteLength(serializedDto, "utf8") > MAX_PROVIDER_INPUT_BYTES) {
       throw new ProviderGatewayError("INPUT_TOO_LARGE");

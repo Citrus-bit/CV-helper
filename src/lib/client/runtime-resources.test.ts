@@ -6,7 +6,10 @@ import {
   activeClientRequestCountForTests,
   cancelAllClientRequests,
   clearRegisteredClientCaches,
+  disposeRegisteredClientRuntimeActivities,
+  registeredClientRuntimeDisposerCountForTests,
   registerClientCacheCleaner,
+  registerClientRuntimeDisposer,
   revokeAllTrackedObjectUrls,
   trackObjectUrl,
   trackedFetch,
@@ -15,6 +18,7 @@ import {
 
 afterEach(() => {
   cancelAllClientRequests();
+  disposeRegisteredClientRuntimeActivities();
   revokeAllTrackedObjectUrls();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -59,5 +63,26 @@ describe("client runtime resource registry", () => {
     expect(revoke).toHaveBeenCalledTimes(2);
     expect(trackedObjectUrlCountForTests()).toBe(0);
     unregister();
+  });
+
+  it("runs registered activity disposers once and isolates disposer failures", () => {
+    const first = vi.fn(() => {
+      throw new Error("browser API already closed");
+    });
+    const second = vi.fn();
+    const removed = vi.fn();
+    registerClientRuntimeDisposer(first);
+    registerClientRuntimeDisposer(second);
+    const unregisterRemoved = registerClientRuntimeDisposer(removed);
+    unregisterRemoved();
+
+    expect(registeredClientRuntimeDisposerCountForTests()).toBe(2);
+    disposeRegisteredClientRuntimeActivities();
+    disposeRegisteredClientRuntimeActivities();
+
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+    expect(removed).not.toHaveBeenCalled();
+    expect(registeredClientRuntimeDisposerCountForTests()).toBe(0);
   });
 });

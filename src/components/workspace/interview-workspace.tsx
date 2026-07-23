@@ -20,6 +20,7 @@ import {
   evaluateAnswer,
   transcribeBrowserSpeech,
 } from "@/lib/client/api";
+import { registerClientRuntimeDisposer } from "@/lib/client/runtime-resources";
 import { useAppStore } from "@/lib/client/store";
 
 type AnswerSubmission = {
@@ -33,6 +34,14 @@ type AnswerSubmission = {
 function formatTime(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function abortSpeechRecognition(recognition: SpeechRecognitionLike | null) {
+  try {
+    recognition?.abort();
+  } catch {
+    // Browser recognition can already be closed when navigation races onend.
+  }
 }
 
 export function InterviewWorkspace() {
@@ -82,6 +91,7 @@ function InterviewWorkspaceSession({
   );
   const speechConfidenceRef = useRef<number | undefined>(undefined);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const unregisterRecognitionDisposerRef = useRef<(() => void) | null>(null);
   const submittingQuestionIdRef = useRef<string | null>(null);
   const sessionActiveRef = useRef(true);
   const sessionResumeId = analysis.resume.id;
@@ -173,6 +183,11 @@ function InterviewWorkspaceSession({
       return;
     }
     try {
+      const previousRecognition = recognitionRef.current;
+      recognitionRef.current = null;
+      unregisterRecognitionDisposerRef.current?.();
+      unregisterRecognitionDisposerRef.current = null;
+      abortSpeechRecognition(previousRecognition);
       const recognition = new Recognition();
       recognition.lang = analysis.resume.locale === "en-US" ? "en-US" : "zh-CN";
       recognition.continuous = true;
@@ -202,23 +217,41 @@ function InterviewWorkspaceSession({
         }
       };
       recognition.onerror = () => {
-        recognition.abort();
+        if (recognitionRef.current !== recognition) return;
         recognitionRef.current = null;
+        unregisterRecognitionDisposerRef.current?.();
+        unregisterRecognitionDisposerRef.current = null;
         setRecording(false);
+        abortSpeechRecognition(recognition);
         setPermissionError(
           "实时转写已停止，请检查浏览器权限，或直接输入文字回答。",
         );
       };
       recognition.onend = () => {
+        if (recognitionRef.current !== recognition) return;
         recognitionRef.current = null;
+        unregisterRecognitionDisposerRef.current?.();
+        unregisterRecognitionDisposerRef.current = null;
         setRecording(false);
       };
       recognitionRef.current = recognition;
+      unregisterRecognitionDisposerRef.current = registerClientRuntimeDisposer(
+        () => {
+          if (recognitionRef.current !== recognition) return;
+          recognitionRef.current = null;
+          unregisterRecognitionDisposerRef.current = null;
+          setRecording(false);
+          abortSpeechRecognition(recognition);
+        },
+      );
       recognition.start();
     } catch {
-      recognitionRef.current?.abort();
+      const recognition = recognitionRef.current;
       recognitionRef.current = null;
+      unregisterRecognitionDisposerRef.current?.();
+      unregisterRecognitionDisposerRef.current = null;
       setRecording(false);
+      abortSpeechRecognition(recognition);
       setPermissionError(
         "无法使用麦克风。请检查浏览器权限，或直接输入文字回答。",
       );
@@ -234,7 +267,11 @@ function InterviewWorkspaceSession({
     sessionActiveRef.current = true;
     return () => {
       sessionActiveRef.current = false;
-      recognitionRef.current?.abort();
+      const recognition = recognitionRef.current;
+      recognitionRef.current = null;
+      unregisterRecognitionDisposerRef.current?.();
+      unregisterRecognitionDisposerRef.current = null;
+      abortSpeechRecognition(recognition);
     };
   }, [sessionIdentity]);
 

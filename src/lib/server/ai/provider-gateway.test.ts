@@ -205,7 +205,7 @@ describe("OpenAI-compatible provider gateway", () => {
     const piiResume = structuredClone(resume);
     piiResume.ast.contact.location = "上海市浦东新区世纪大道 100 号";
     piiResume.ast.sections[0].entries[0].summary =
-      "A L I C E   Z H A N G，地址：上海市浦东新区世纪大道 100 号";
+      "A L I C E   Z H A N G，ZHANG, ALICE，地址：上海市浦东新区世纪大道 100 号";
     const fetchMock = vi.fn().mockResolvedValue(completionResponse(scoreOutput()));
     const registry = createServerCapabilityRegistry({
       environment: providerEnvironment,
@@ -220,12 +220,167 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(projected).toContain("[NAME]");
     expect(projected).toContain("[ADDRESS]");
     expect(projected).not.toMatch(/a\s*l\s*i\s*c\s*e/i);
+    expect(projected).not.toMatch(/zhang\s*,\s*alice/i);
     expect(projected).not.toContain("世纪大道");
+  });
+
+  it("never sends contextual Chinese names or unlabeled administrative addresses in resume, job, or answer DTOs", async () => {
+    const captures: string[] = [];
+    const captureAndThrottle = vi.fn((_url: string, init?: RequestInit) => {
+      const requestBody = JSON.parse(String(init?.body));
+      captures.push(requestBody.messages[1].content as string);
+      return Promise.resolve(new Response("rate limited", { status: 429 }));
+    });
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: captureAndThrottle as typeof fetch,
+      logger: () => undefined,
+    });
+    const privateSentence = "我与张三在北京市朝阳区合作";
+    const resumeWithPrivateSentence = structuredClone(resume);
+    resumeWithPrivateSentence.ast.sections[0].entries[0].summary = privateSentence;
+
+    await registry.invoke("resume.score", { resume: resumeWithPrivateSentence, claims }, context());
+    await registry.invoke("job.match", {
+      requirements: [{
+        id: "requirement-private-context",
+        jobPostingId: "job-private-context",
+        category: "responsibility",
+        text: privateSentence,
+        keywords: ["合作"],
+        importance: 1,
+      }],
+      claims,
+      evidenceAssets: [],
+    }, {
+      ...context(),
+      grantedDataScopes: ["job_description", "evidence_graph"],
+    });
+    const question = {
+      id: "question-private-context",
+      locale: "zh-CN" as const,
+      prompt: "请说明一次合作经历。",
+      category: "behavioral" as const,
+      difficulty: "introductory" as const,
+      roleFamilies: [],
+      skills: ["合作"],
+      followUps: [],
+      scoringAnchors: [],
+      source: "test",
+      generated: false,
+      referenceQuestionIds: [],
+    };
+    await registry.invoke("answer.evaluate", {
+      question,
+      answer: `${privateSentence}，并按期完成交付。`,
+      expectedKeywords: ["合作"],
+    }, {
+      ...context(),
+      grantedDataScopes: ["interview_content", "evidence_graph"],
+    });
+
+    expect(captures).toHaveLength(3);
+    expect(captures.every((projected) => projected.includes("[NAME]") && projected.includes("[ADDRESS]"))).toBe(true);
+    expect(captures.join("\n")).not.toMatch(/张三|北京市|朝阳区/);
+  });
+
+  it("redacts reasonable unlabeled English names and street addresses", async () => {
+    const privateResume = structuredClone(resume);
+    privateResume.ast.sections[0].entries[0].summary =
+      "I worked with John Doe at 123 Main Street, Seattle, WA 98101.";
+    const fetchMock = vi.fn().mockResolvedValue(completionResponse(scoreOutput()));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    const result = await registry.invoke("resume.score", { resume: privateResume, claims }, {
+      ...context(),
+      locale: "en-US",
+    });
+
+    expect(result.usedFallback).toBe(false);
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const projected = requestBody.messages[1].content as string;
+    expect(projected).toContain("[NAME]");
+    expect(projected).toContain("[ADDRESS]");
+    expect(projected).not.toMatch(/John\s+Doe|Main Street|98101/i);
+  });
+
+  it("fails closed before fetch when a contextual name cannot be safely projected", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(completionResponse({}));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+    const question = {
+      id: "question-ambiguous-name",
+      locale: "zh-CN" as const,
+      prompt: "请说明一次合作经历。",
+      category: "behavioral" as const,
+      difficulty: "introductory" as const,
+      roleFamilies: [],
+      skills: [],
+      followUps: [],
+      scoringAnchors: [],
+      source: "test",
+      generated: false,
+      referenceQuestionIds: [],
+    };
+
+    const result = await registry.invoke("answer.evaluate", {
+      question,
+      answer: "我与阿布都买买提一起完成了交付复盘。",
+      expectedKeywords: [],
+    }, {
+      ...context(),
+      grantedDataScopes: ["interview_content", "evidence_graph"],
+    });
+
+    expect(result).toMatchObject({
+      usedFallback: true,
+      sourceVersion: "answer.evaluate@1.0.0",
+      warnings: [{ code: "EXTENSION_EXECUTION_FAILED" }],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects provider output that reintroduces a known name in another case or spacing", async () => {
     const unsafeScore = scoreOutput();
     unsafeScore.summary = "A L I C E   Z H A N G has a strong resume.";
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(unsafeScore)),
+      logger: () => undefined,
+    });
+
+    await expect(registry.invoke("resume.score", { resume, claims }, context())).resolves.toMatchObject({
+      usedFallback: true,
+      sourceVersion: "resume.score@1.0.0",
+    });
+  });
+
+  it("rejects provider output containing a new contextual name or address", async () => {
+    const unsafeScore = scoreOutput();
+    unsafeScore.summary = "我与张三在北京市朝阳区合作。";
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(unsafeScore)),
+      logger: () => undefined,
+    });
+
+    await expect(registry.invoke("resume.score", { resume, claims }, context())).resolves.toMatchObject({
+      usedFallback: true,
+      sourceVersion: "resume.score@1.0.0",
+      warnings: [{ code: "EXTENSION_EXECUTION_FAILED" }],
+    });
+  });
+
+  it("rejects provider output containing an ambiguous contextual name", async () => {
+    const unsafeScore = scoreOutput();
+    unsafeScore.summary = "我与阿布都买买提一起完成了交付复盘。";
     const registry = createServerCapabilityRegistry({
       environment: providerEnvironment,
       fetchImpl: vi.fn().mockResolvedValue(completionResponse(unsafeScore)),
