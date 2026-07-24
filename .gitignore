@@ -1,13 +1,24 @@
 # Dependencies and build output
 node_modules/
+.pnpm-store/
 .next/
+.turbo/
+.cache/
 coverage/
+htmlcov/
+.nyc_output/
 test-results/
 playwright-report/
+blob-report/
 dist/
 build/
 out/
 *.tsbuildinfo
+.eslintcache
+.stylelintcache
+.coverage
+coverage.xml
+junit*.xml
 
 # Private local configuration and credentials
 .env*
@@ -48,6 +59,11 @@ id_dsa*
 docker-compose.override.yml
 compose.override.yaml
 
+# Local scanner reports can contain matched secret material.
+.gitleaks-report.*
+gitleaks-report.*
+secret-scan-report.*
+
 # User documents, recordings, and local persistence
 .data/
 output/
@@ -74,6 +90,9 @@ recordings/
 dump.rdb
 *.har
 *.trace
+*.pid
+*.pid.lock
+*.sock
 
 # Local tool runtimes
 .tools/typst/typst

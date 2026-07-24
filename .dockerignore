@@ -2,6 +2,8 @@
 .next/
 node_modules/
 coverage/
+htmlcov/
+.nyc_output/
 output/
 tmp/
 .data/
@@ -10,6 +12,9 @@ services/document-worker/.venv/
 **/__pycache__/
 **/.pytest_cache/
 *.pyc
+.gitleaks-report.*
+gitleaks-report.*
+secret-scan-report.*
 .env
 .env.*
 !.env.example

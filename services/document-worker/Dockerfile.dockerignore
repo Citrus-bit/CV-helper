@@ -50,3 +50,6 @@
 **/dump.rdb
 **/*.har
 **/*.trace
+**/.gitleaks-report.*
+**/gitleaks-report.*
+**/secret-scan-report.*
