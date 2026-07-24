@@ -5,12 +5,17 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import {
   AnalysisBundleSchema,
   EvaluationResponseSchema,
+  InterviewProgressSchema,
   InterviewPlanSchema,
+  JobDraftSchema,
   JobMatchBundleSchema,
   dedupeConsistencyWarnings,
   type AnalysisBundle,
   type EvaluationResponse,
+  type InterviewProgress,
   type InterviewPlan,
+  type InterviewSetupStage,
+  type JobDraft,
   type JobMatchBundle,
   type RenderResponse,
 } from "./contracts";
@@ -19,7 +24,6 @@ import type {
   EvidenceAsset,
   InterviewStory,
   ResumeAST,
-  Scorecard,
   Suggestion,
   SuggestionPatch,
   SuggestionStatus,
@@ -44,8 +48,9 @@ import {
   type RecentAnalysisPayload,
   type RecentAnalysisSummary,
 } from "./recent-analysis";
-import { applySuggestion } from "./resume";
+import { applySuggestion, suggestionBeforeHashMatches } from "./resume";
 import { clearApiSessionId } from "./privacy";
+import { reanalyzeResumeRevision } from "@/lib/resume-reanalysis";
 import {
   cancelAllClientRequests,
   clearRegisteredClientCaches,
@@ -61,22 +66,44 @@ export type WorkspaceModule = "resume" | "job" | "interview";
 export type WorkspaceStage = "upload" | "analyzing" | "workspace";
 export type TemplateId = "professional" | "minimal" | "compact";
 export type PreviewMode = "original" | "locate" | "current" | "compare";
+export type ResumePanel = "suggestions" | "templates";
+export type InterviewProgressUpdate = Partial<
+  Pick<
+    InterviewProgress,
+    | "questionIndex"
+    | "followUpRound"
+    | "askedFollowUps"
+    | "followUpEvaluation"
+    | "transcript"
+    | "transcriptSource"
+  >
+>;
 
-type Snapshot = Pick<
+type LegacySnapshot = Pick<
   AnalysisBundle,
   "resume" | "suggestions" | "scorecard" | "claims" | "evidence" | "stories"
 >;
+type PersistedSnapshot = Omit<
+  AnalysisBundle,
+  "pagePreviews" | "originalPdfBase64"
+>;
+type Snapshot = AnalysisBundle | PersistedSnapshot | LegacySnapshot;
 
 export type AppState = {
   stage: WorkspaceStage;
   module: WorkspaceModule;
   expiresAt: string | null;
   analysis: AnalysisBundle | null;
+  jobDraft: JobDraft;
   jobMatch: JobMatchBundle | null;
   interviewPlan: InterviewPlan | null;
   interviewSessionVersion: number;
   evaluations: EvaluationResponse[];
+  interviewSetupStage: InterviewSetupStage;
+  interviewProgress: InterviewProgress | null;
   selectedSuggestionId: string | null;
+  activeResumeVariantId: string | null;
+  resumePanel: ResumePanel;
   selectedTemplate: TemplateId;
   previewMode: PreviewMode;
   previewedRenderHashes: string[];
@@ -86,6 +113,7 @@ export type AppState = {
   recentAnalyses: RecentAnalysisSummary[];
   recentAnalysesLoading: boolean;
   homeNavigationPending: boolean;
+  archiveSuppressedForResumeId: string | null;
   error: string | null;
   setStage: (stage: WorkspaceStage) => void;
   setError: (error: string | null) => void;
@@ -99,9 +127,14 @@ export type AppState = {
   ) => void;
   confirmClaim: (id: string, content?: string) => void;
   undo: () => void;
+  updateJobDraft: (update: Partial<JobDraft>) => void;
   setJobMatch: (jobMatch: JobMatchBundle) => void;
+  setResumeVariant: (variantId: string | null) => void;
+  setResumePanel: (panel: ResumePanel) => void;
   setInterviewPlan: (plan: InterviewPlan) => void;
   addEvaluation: (evaluation: EvaluationResponse) => void;
+  setInterviewSetupStage: (stage: InterviewSetupStage) => void;
+  updateInterviewProgress: (update: InterviewProgressUpdate) => void;
   setTemplate: (template: TemplateId) => void;
   setPreviewMode: (mode: PreviewMode) => void;
   markRenderPreviewed: (sha256: string) => void;
@@ -117,6 +150,16 @@ export type AppState = {
   reset: () => void;
 };
 
+function defaultJobDraft(locale?: string): JobDraft {
+  return {
+    jdText: "",
+    jobTitle: "",
+    seniority: "",
+    location: "",
+    language: locale?.toLowerCase().startsWith("en") ? "en-US" : "zh-CN",
+  };
+}
+
 function emptySessionState(
   state: AppState,
   recentAnalyses = state.recentAnalyses,
@@ -126,11 +169,16 @@ function emptySessionState(
     module: "resume" as const,
     expiresAt: null,
     analysis: null,
+    jobDraft: defaultJobDraft(),
     jobMatch: null,
     interviewPlan: null,
     interviewSessionVersion: state.interviewSessionVersion + 1,
     evaluations: [],
+    interviewSetupStage: "intro" as const,
+    interviewProgress: null,
     selectedSuggestionId: null,
+    activeResumeVariantId: null,
+    resumePanel: "suggestions" as const,
     selectedTemplate: "professional" as const,
     previewMode: "original" as const,
     previewedRenderHashes: [],
@@ -140,6 +188,7 @@ function emptySessionState(
     recentAnalyses,
     recentAnalysesLoading: false,
     homeNavigationPending: false,
+    archiveSuppressedForResumeId: null,
   };
 }
 
@@ -177,14 +226,30 @@ function clearPersistedSessionKeys() {
 }
 
 function snapshot(analysis: AnalysisBundle): Snapshot {
-  return {
-    resume: structuredClone(analysis.resume),
-    suggestions: structuredClone(analysis.suggestions),
-    scorecard: structuredClone(analysis.scorecard),
-    claims: structuredClone(analysis.claims),
-    evidence: structuredClone(analysis.evidence),
-    stories: structuredClone(analysis.stories),
-  };
+  return structuredClone(analysis);
+}
+
+function persistedSnapshot(snapshotValue: Snapshot): Snapshot {
+  const projected = structuredClone(snapshotValue);
+  if ("pagePreviews" in projected)
+    delete (projected as Partial<AnalysisBundle>).pagePreviews;
+  if ("originalPdfBase64" in projected)
+    delete (projected as Partial<AnalysisBundle>).originalPdfBase64;
+  return projected as PersistedSnapshot;
+}
+
+function restoreSnapshot(
+  current: AnalysisBundle,
+  previous: Snapshot,
+): AnalysisBundle {
+  if (
+    "processing" in previous &&
+    "pagePreviews" in previous &&
+    Array.isArray(previous.pagePreviews)
+  ) {
+    return structuredClone(previous);
+  }
+  return { ...current, ...structuredClone(previous) };
 }
 
 function storyForClaim(claim: Claim, current?: InterviewStory): InterviewStory {
@@ -382,6 +447,56 @@ export function isRenderForAnalysis(
   );
 }
 
+export type ActiveResumeTarget = {
+  kind: "base" | "job_variant";
+  id: string;
+  revision: number;
+  name: string;
+  ast: ResumeAST;
+};
+
+export function getActiveResumeTarget(
+  state: Pick<AppState, "analysis" | "jobMatch" | "activeResumeVariantId">,
+): ActiveResumeTarget | null {
+  if (!state.analysis) return null;
+  const variant = state.jobMatch?.variant;
+  if (
+    variant &&
+    state.activeResumeVariantId === variant.id &&
+    variant.baseResumeId === state.analysis.resume.id &&
+    variant.baseRevision === state.analysis.resume.revision
+  ) {
+    return {
+      kind: "job_variant",
+      id: variant.id,
+      revision: variant.revision,
+      name: variant.name,
+      ast: variant.ast,
+    };
+  }
+  return {
+    kind: "base",
+    id: state.analysis.resume.id,
+    revision: state.analysis.resume.revision,
+    name: "通用版",
+    ast: state.analysis.resume.ast,
+  };
+}
+
+export function isRenderForActiveResume(
+  state: Pick<AppState, "analysis" | "jobMatch" | "activeResumeVariantId">,
+  render: RenderResponse,
+) {
+  const target = getActiveResumeTarget(state);
+  return Boolean(
+    target &&
+    render.report.resumeId === target.id &&
+    render.report.resumeRevision === target.revision &&
+    render.report.template === render.template &&
+    render.report.artifactSha256 === render.sha256,
+  );
+}
+
 export function isJobMatchForAnalysis(
   analysis: AnalysisBundle | null,
   jobMatch: JobMatchBundle,
@@ -396,7 +511,11 @@ export function isJobMatchForAnalysis(
   return Boolean(
     !jobMatch.variant ||
     (jobMatch.variant.baseResumeId === analysis.resume.id &&
-      jobMatch.variant.baseRevision === analysis.resume.revision),
+      jobMatch.variant.baseRevision === analysis.resume.revision &&
+      (jobMatch.variant.changes.length > 0 ||
+        jobMatch.variant.appliedSuggestionIds.length > 0) &&
+      JSON.stringify(jobMatch.variant.ast) !==
+        JSON.stringify(analysis.resume.ast)),
   );
 }
 
@@ -428,11 +547,156 @@ function isEvaluationForState(
   );
 }
 
+export function interviewPlanFingerprint(plan: InterviewPlan) {
+  return stableId("interview_plan", JSON.stringify(plan));
+}
+
+export function interviewFollowUpQuestionId(questionId: string, round: number) {
+  const suffix = `::follow-up:${round}`;
+  return `${questionId.slice(0, 200 - suffix.length)}${suffix}`;
+}
+
+function defaultInterviewQuestionIndex(
+  plan: InterviewPlan,
+  evaluations: readonly EvaluationResponse[],
+) {
+  const maxFollowUps = Math.min(plan.maxFollowUps, 2);
+  for (let index = 0; index < plan.questions.length; index += 1) {
+    const question = plan.questions[index];
+    const evaluation = evaluations.find(
+      (item) => item.evaluation.questionId === question.id,
+    );
+    if (!evaluation) return index;
+    const hasPendingFollowUp =
+      maxFollowUps > 0 &&
+      Boolean(
+        evaluation.evaluation.followUpQuestion?.trim() ||
+        question.followUps.some((candidate) => candidate.trim()),
+      );
+    if (hasPendingFollowUp) return index;
+  }
+  return plan.questions.length;
+}
+
+function newInterviewProgress(
+  analysis: AnalysisBundle,
+  plan: InterviewPlan,
+  evaluations: readonly EvaluationResponse[],
+): InterviewProgress {
+  return {
+    schemaVersion: 1,
+    sourceResumeId: analysis.resume.id,
+    sourceResumeRevision: analysis.resume.revision,
+    planFingerprint: interviewPlanFingerprint(plan),
+    questionIndex: defaultInterviewQuestionIndex(plan, evaluations),
+    followUpRound: 0,
+    askedFollowUps: [],
+    followUpEvaluation: null,
+    transcript: "",
+    transcriptSource: "text",
+  };
+}
+
+export function normalizeInterviewProgress(
+  analysis: AnalysisBundle | null,
+  plan: InterviewPlan | null,
+  evaluations: readonly EvaluationResponse[],
+  value: unknown,
+): InterviewProgress | null {
+  if (!analysis || !plan || !isInterviewPlanForAnalysis(analysis, plan))
+    return null;
+  const fallback = newInterviewProgress(analysis, plan, evaluations);
+  const parsed = InterviewProgressSchema.safeParse(value);
+  if (!parsed.success) return fallback;
+  const progress = parsed.data;
+  if (
+    progress.sourceResumeId !== analysis.resume.id ||
+    progress.sourceResumeRevision !== analysis.resume.revision ||
+    progress.planFingerprint !== interviewPlanFingerprint(plan) ||
+    progress.questionIndex > plan.questions.length
+  ) {
+    return fallback;
+  }
+  if (progress.followUpRound === 0) {
+    if (
+      progress.askedFollowUps.length > 0 ||
+      progress.followUpEvaluation !== null
+    ) {
+      return fallback;
+    }
+    return progress;
+  }
+  const question = plan.questions[progress.questionIndex];
+  if (
+    !question ||
+    progress.followUpRound > Math.min(plan.maxFollowUps, 2) ||
+    progress.askedFollowUps.length !== progress.followUpRound ||
+    new Set(progress.askedFollowUps).size !== progress.askedFollowUps.length ||
+    !evaluations.some(
+      (evaluation) => evaluation.evaluation.questionId === question.id,
+    )
+  ) {
+    return fallback;
+  }
+  const followUpEvaluation = progress.followUpEvaluation;
+  if (
+    followUpEvaluation &&
+    (followUpEvaluation.sourceResumeId !== analysis.resume.id ||
+      followUpEvaluation.sourceResumeRevision !== analysis.resume.revision ||
+      followUpEvaluation.evaluation.questionId !==
+        interviewFollowUpQuestionId(question.id, progress.followUpRound))
+  ) {
+    return fallback;
+  }
+  return progress;
+}
+
+function normalizeInterviewSetupStage(value: unknown): InterviewSetupStage {
+  return value === "device_check" ? "device_check" : "intro";
+}
+
+function seniorityDraftValue(value: string | undefined): JobDraft["seniority"] {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  if (!normalized) return "";
+  if (/(intern|internship|实习)/u.test(normalized)) return "intern";
+  if (/(entry|junior|初级|应届)/u.test(normalized)) return "entry";
+  if (/(mid|middle|中级)/u.test(normalized)) return "mid";
+  if (/(senior|高级|资深)/u.test(normalized)) return "senior";
+  if (/(lead|head|负责人|专家)/u.test(normalized)) return "lead";
+  if (/(executive|director|vp|总监|高管)/u.test(normalized)) return "executive";
+  return "";
+}
+
+function normalizeJobDraft(
+  value: unknown,
+  analysis: AnalysisBundle | null,
+  jobMatch: JobMatchBundle | null,
+): JobDraft {
+  const parsed = JobDraftSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  const fallback = defaultJobDraft(
+    jobMatch?.job.locale ??
+      analysis?.resume.locale ??
+      analysis?.resume.ast.locale,
+  );
+  return {
+    ...fallback,
+    jdText: jobMatch?.job.rawText ?? "",
+    jobTitle: jobMatch?.job.title ?? "",
+    seniority: seniorityDraftValue(jobMatch?.job.seniority),
+    location: jobMatch?.job.location ?? "",
+  };
+}
+
 function invalidatedDerivedState() {
   return {
     jobMatch: null,
+    activeResumeVariantId: null,
+    resumePanel: "suggestions" as const,
     interviewPlan: null,
     evaluations: [],
+    interviewSetupStage: "intro" as const,
+    interviewProgress: null,
     previewMode: "original" as const,
     previewedRenderHashes: [],
     renders: {},
@@ -458,39 +722,6 @@ function evidenceGraphChanged(current: AnalysisBundle, previous: Snapshot) {
   );
 }
 
-function nextScorecard(
-  scorecard: Scorecard,
-  suggestion: Suggestion,
-  resumeRevision: number,
-): Scorecard {
-  const affected = new Set(suggestion.affectedDimensions);
-  let budget = 2;
-  const dimensions = scorecard.dimensions.map((dimension) => {
-    if (
-      !affected.has(dimension.id) ||
-      budget <= 0 ||
-      dimension.score >= dimension.maxScore
-    )
-      return dimension;
-    const increase = Math.min(1, budget, dimension.maxScore - dimension.score);
-    budget -= increase;
-    return {
-      ...dimension,
-      score: dimension.score + increase,
-      evidence: [...dimension.evidence, `已应用建议 ${suggestion.id}`],
-    };
-  });
-  return {
-    ...scorecard,
-    resumeRevision,
-    total: Math.min(
-      100,
-      dimensions.reduce((sum, dimension) => sum + dimension.score, 0),
-    ),
-    dimensions,
-  };
-}
-
 type PersistedSessionState = Partial<AppState> & { history?: Snapshot[] };
 
 export function migratePersistedSessionState(
@@ -499,17 +730,18 @@ export function migratePersistedSessionState(
   if (!persistedState || typeof persistedState !== "object") return {};
   const legacy = persistedState as PersistedSessionState;
   const { history, ...current } = legacy;
+  const undoStack = Array.isArray(current.undoStack)
+    ? current.undoStack
+    : Array.isArray(history)
+      ? history
+      : [];
   return {
     ...current,
     expiresAt: normalizePersistedSessionExpiry(
       current.expiresAt,
       current.analysis,
     ),
-    undoStack: Array.isArray(current.undoStack)
-      ? current.undoStack
-      : Array.isArray(history)
-        ? history
-        : [],
+    undoStack: undoStack.slice(-20).map(persistedSnapshot),
   };
 }
 
@@ -534,19 +766,70 @@ export function mergePersistedSessionState(
     merged.jobMatch && isJobMatchForAnalysis(merged.analysis, merged.jobMatch)
       ? merged.jobMatch
       : null;
+  const activeResumeVariantId =
+    jobMatch?.variant?.id === merged.activeResumeVariantId
+      ? merged.activeResumeVariantId
+      : null;
+  const resumePanel =
+    merged.resumePanel === "templates" || merged.resumePanel === "suggestions"
+      ? merged.resumePanel
+      : "suggestions";
+  const parsedInterviewPlan = merged.interviewPlan
+    ? InterviewPlanSchema.safeParse(merged.interviewPlan)
+    : null;
   const interviewPlan =
-    merged.interviewPlan &&
-    isInterviewPlanForAnalysis(merged.analysis, merged.interviewPlan)
-      ? merged.interviewPlan
+    parsedInterviewPlan?.success &&
+    isInterviewPlanForAnalysis(merged.analysis, parsedInterviewPlan.data)
+      ? parsedInterviewPlan.data
       : null;
   const evaluations = interviewPlan
-    ? merged.evaluations
+    ? (Array.isArray(merged.evaluations) ? merged.evaluations : [])
+        .map((evaluation) => EvaluationResponseSchema.safeParse(evaluation))
+        .filter((result) => result.success)
+        .map((result) => result.data)
         .filter((evaluation) =>
           isEvaluationForState(merged.analysis, interviewPlan, evaluation),
         )
         .map(normalizeEvaluation)
     : [];
-  return { ...merged, jobMatch, interviewPlan, evaluations };
+  const interviewProgress = normalizeInterviewProgress(
+    merged.analysis,
+    interviewPlan,
+    evaluations,
+    merged.interviewProgress,
+  );
+  const archiveSuppressedForResumeId =
+    merged.archiveSuppressedForResumeId === merged.analysis?.resume.id
+      ? merged.archiveSuppressedForResumeId
+      : null;
+  const jobDraft = normalizeJobDraft(
+    merged.jobDraft,
+    merged.analysis,
+    jobMatch,
+  );
+  const requestedModule = ["resume", "job", "interview"].includes(merged.module)
+    ? merged.module
+    : "resume";
+  const restoredModule = merged.analysis?.suggestions.some(
+    (suggestion) => suggestion.status === "pending",
+  )
+    ? "resume"
+    : requestedModule;
+  return {
+    ...merged,
+    module: restoredModule,
+    jobDraft,
+    jobMatch,
+    activeResumeVariantId,
+    resumePanel,
+    interviewPlan,
+    evaluations,
+    interviewSetupStage: normalizeInterviewSetupStage(
+      merged.interviewSetupStage,
+    ),
+    interviewProgress,
+    archiveSuppressedForResumeId,
+  };
 }
 
 function migratingSessionStorage() {
@@ -581,12 +864,17 @@ function recentPayload(state: AppState): RecentAnalysisPayload | null {
   if (!state.analysis) return null;
   return {
     analysis: state.analysis,
+    jobDraft: state.jobDraft,
     jobMatch: state.jobMatch,
     interviewPlan: state.interviewPlan,
     evaluations: state.evaluations,
+    interviewSetupStage: state.interviewSetupStage,
+    interviewProgress: state.interviewProgress,
     module: state.module,
     selectedSuggestionId: state.selectedSuggestionId,
     selectedTemplate: state.selectedTemplate,
+    activeResumeVariantId: state.activeResumeVariantId,
+    resumePanel: state.resumePanel,
   };
 }
 
@@ -607,8 +895,12 @@ async function refreshCurrentSessionArchive(): Promise<
 > {
   const existing = await listRecentAnalyses();
   const state = useAppStore.getState();
+  const suppressedId = state.archiveSuppressedForResumeId;
   const recentAnalyses =
-    state.analysis && !hasSessionExpired(state.expiresAt)
+    state.analysis &&
+    state.stage === "workspace" &&
+    state.analysis.resume.id !== suppressedId &&
+    !hasSessionExpired(state.expiresAt)
       ? await saveCurrentSessionToRecent()
       : existing;
   const current = useAppStore.getState();
@@ -628,7 +920,11 @@ async function refreshCurrentSessionArchive(): Promise<
       }
     }
   }
-  return recentAnalyses;
+  const latestSuppressedId =
+    useAppStore.getState().archiveSuppressedForResumeId;
+  return latestSuppressedId
+    ? recentAnalyses.filter((record) => record.id !== latestSuppressedId)
+    : recentAnalyses;
 }
 
 export const useAppStore = create<AppState>()(
@@ -638,11 +934,16 @@ export const useAppStore = create<AppState>()(
       module: "resume",
       expiresAt: null,
       analysis: null,
+      jobDraft: defaultJobDraft(),
       jobMatch: null,
       interviewPlan: null,
       interviewSessionVersion: 0,
       evaluations: [],
+      interviewSetupStage: "intro",
+      interviewProgress: null,
       selectedSuggestionId: null,
+      activeResumeVariantId: null,
+      resumePanel: "suggestions",
       selectedTemplate: "professional",
       previewMode: "original",
       previewedRenderHashes: [],
@@ -652,11 +953,21 @@ export const useAppStore = create<AppState>()(
       recentAnalyses: [],
       recentAnalysesLoading: false,
       homeNavigationPending: false,
+      archiveSuppressedForResumeId: null,
       error: null,
       setStage: (stage) => set({ stage }),
       setError: (error) => set({ error }),
       setModule: (module) =>
-        set((state) => (state.homeNavigationPending ? state : { module })),
+        set((state) => {
+          if (state.homeNavigationPending) return state;
+          const progressionLocked = Boolean(
+            state.analysis?.suggestions.some(
+              (suggestion) => suggestion.status === "pending",
+            ),
+          );
+          if (progressionLocked && module !== "resume") return state;
+          return { module };
+        }),
       setAnalysis: (analysis, suppliedPdfBlob) => {
         const sourcePdfBlob =
           suppliedPdfBlob ??
@@ -666,6 +977,7 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           ...invalidatedDerivedState(),
           analysis,
+          jobDraft: defaultJobDraft(analysis.resume.locale),
           sourcePdfBlob,
           interviewSessionVersion: state.interviewSessionVersion + 1,
           expiresAt: sessionExpiry(analysis),
@@ -675,6 +987,7 @@ export const useAppStore = create<AppState>()(
               ?.id ?? null,
           undoStack: [],
           homeNavigationPending: false,
+          archiveSuppressedForResumeId: null,
           error: null,
         }));
         void saveCurrentSessionToRecent().then(
@@ -693,52 +1006,128 @@ export const useAppStore = create<AppState>()(
             (item) => item.id === id,
           );
           if (!current || current.status !== "pending") return state;
+          const resumeRevision = state.analysis.resume.revision;
+          if (current.resumeRevision !== resumeRevision) {
+            const suggestions = state.analysis.suggestions.map((item) =>
+              item.id === id ? { ...item, status: "stale" as const } : item,
+            );
+            return {
+              analysis: { ...state.analysis, suggestions },
+              selectedSuggestionId:
+                suggestions.find((item) => item.status === "pending")?.id ?? id,
+            };
+          }
           if (
             (current.kind === "needs_proof" || current.kind === "ask_user") &&
             status === "accepted"
           ) {
             return state;
           }
-          const undoStack = [
-            ...state.undoStack,
-            snapshot(state.analysis),
-          ].slice(-20);
+          const normalizedManualText = manualText?.trim();
+          if (status === "manual" && !normalizedManualText) return state;
           const updated = {
             ...current,
             status,
-            proposedText: manualText ?? current.proposedText,
+            proposedText: normalizedManualText ?? current.proposedText,
           };
           const shouldApply = status === "accepted" || status === "manual";
-          const nextAst = shouldApply
-            ? applySuggestion(state.analysis.resume.ast, updated)
-            : state.analysis.resume.ast;
-          const changed = nextAst !== state.analysis.resume.ast;
           const intentionalNoop =
             updated.kind === "use_as_is" ||
             (updated.kind !== "remove" &&
               updated.proposedText !== undefined &&
               updated.proposedText === updated.originalText);
-          const decided =
-            shouldApply && !changed && !intentionalNoop
-              ? { ...updated, status: "stale" as const }
-              : updated;
-          const suggestions = state.analysis.suggestions.map((item) =>
-            item.id === id ? decided : item,
-          );
+          const intendsAstChange = shouldApply && !intentionalNoop;
+          if (
+            intendsAstChange &&
+            !suggestionBeforeHashMatches(state.analysis.resume.ast, updated)
+          ) {
+            const suggestions = state.analysis.suggestions.map((item) =>
+              item.id === id ? { ...item, status: "stale" as const } : item,
+            );
+            return {
+              analysis: { ...state.analysis, suggestions },
+              selectedSuggestionId:
+                suggestions.find((item) => item.status === "pending")?.id ?? id,
+            };
+          }
+          const nextAst = intendsAstChange
+            ? applySuggestion(state.analysis.resume.ast, updated)
+            : state.analysis.resume.ast;
+          const changed = nextAst !== state.analysis.resume.ast;
+          if (intendsAstChange && !changed) {
+            const suggestions = state.analysis.suggestions.map((item) =>
+              item.id === id ? { ...item, status: "stale" as const } : item,
+            );
+            return {
+              analysis: { ...state.analysis, suggestions },
+              selectedSuggestionId:
+                suggestions.find((item) => item.status === "pending")?.id ?? id,
+            };
+          }
+          const undoStack = [
+            ...state.undoStack,
+            snapshot(state.analysis),
+          ].slice(-20);
+          const decided = updated;
           const resume = changed
             ? {
                 ...state.analysis.resume,
-                revision: state.analysis.resume.revision + 1,
+                revision: resumeRevision + 1,
                 ast: nextAst,
               }
             : state.analysis.resume;
-          const scorecard = changed
-            ? nextScorecard(state.analysis.scorecard, decided, resume.revision)
-            : state.analysis.scorecard;
           const synchronizedGraph =
-            shouldApply && decided.status !== "stale"
+            shouldApply && !changed
               ? syncAcceptedUserClaims(state.analysis, decided)
               : null;
+          if (changed) {
+            const reanalysis = reanalyzeResumeRevision({
+              analysis: state.analysis,
+              resume,
+              appliedSuggestion: decided,
+              manualText:
+                status === "manual" ? normalizedManualText : undefined,
+            });
+            const historicalSuggestions = state.analysis.suggestions.map(
+              (item) => {
+                if (item.id === id) return decided;
+                return item.status === "pending"
+                  ? { ...item, status: "stale" as const }
+                  : item;
+              },
+            );
+            const suggestions = [
+              ...historicalSuggestions,
+              ...reanalysis.suggestions,
+            ];
+            return {
+              analysis: {
+                ...state.analysis,
+                resume,
+                claims: reanalysis.claims,
+                evidence: reanalysis.evidence,
+                scorecard: reanalysis.scorecard,
+                suggestions,
+                stories: reanalysis.stories,
+                processing: {
+                  ...state.analysis.processing,
+                  capabilityVersions: {
+                    ...state.analysis.processing.capabilityVersions,
+                    ...reanalysis.capabilityVersions,
+                  },
+                },
+              },
+              selectedSuggestionId:
+                reanalysis.suggestions.find((item) => item.status === "pending")
+                  ?.id ?? id,
+              undoStack,
+              ...invalidatedDerivedState(),
+              interviewSessionVersion: state.interviewSessionVersion + 1,
+            };
+          }
+          const suggestions = state.analysis.suggestions.map((item) =>
+            item.id === id ? decided : item,
+          );
           const selectedSuggestionId =
             suggestions.find((item) => item.status === "pending")?.id ?? id;
           return {
@@ -746,12 +1135,11 @@ export const useAppStore = create<AppState>()(
               ...state.analysis,
               resume,
               suggestions,
-              scorecard,
               ...(synchronizedGraph ?? {}),
             },
             selectedSuggestionId,
             undoStack,
-            ...(changed || synchronizedGraph
+            ...(synchronizedGraph
               ? {
                   ...invalidatedDerivedState(),
                   interviewSessionVersion: state.interviewSessionVersion + 1,
@@ -771,6 +1159,9 @@ export const useAppStore = create<AppState>()(
           const patchesBySuggestion = new Map<string, SuggestionPatch[]>();
           state.analysis.suggestions.forEach((item) => {
             if (
+              item.status !== "pending" ||
+              item.resumeRevision !== state.analysis!.resume.revision ||
+              !suggestionBeforeHashMatches(state.analysis!.resume.ast, item) ||
               !item.claimIds.includes(id) ||
               (item.kind !== "needs_proof" && item.kind !== "ask_user")
             )
@@ -846,6 +1237,7 @@ export const useAppStore = create<AppState>()(
           )
             return state;
           const previous = state.undoStack[state.undoStack.length - 1];
+          const restored = restoreSnapshot(state.analysis, previous);
           const invalidatesDerived =
             previous.resume.id !== state.analysis.resume.id ||
             previous.resume.revision !== state.analysis.resume.revision ||
@@ -853,7 +1245,12 @@ export const useAppStore = create<AppState>()(
               JSON.stringify(state.analysis.resume.ast) ||
             evidenceGraphChanged(state.analysis, previous);
           return {
-            analysis: { ...state.analysis, ...previous },
+            analysis: restored,
+            selectedSuggestionId:
+              restored.suggestions.find((item) => item.status === "pending")
+                ?.id ??
+              restored.suggestions[0]?.id ??
+              null,
             undoStack: state.undoStack.slice(0, -1),
             ...(invalidatesDerived
               ? {
@@ -863,6 +1260,33 @@ export const useAppStore = create<AppState>()(
               : {}),
           };
         }),
+      updateJobDraft: (update) =>
+        set((state) => {
+          if (state.homeNavigationPending || state.stage !== "workspace")
+            return state;
+          const parsed = JobDraftSchema.safeParse({
+            ...state.jobDraft,
+            ...update,
+          });
+          if (!parsed.success) return state;
+          const jobDraft = parsed.data;
+          if (JSON.stringify(jobDraft) === JSON.stringify(state.jobDraft))
+            return state;
+          const hasDerivedJobState = Boolean(
+            state.jobMatch ||
+            state.activeResumeVariantId ||
+            state.interviewPlan ||
+            state.evaluations.length > 0 ||
+            state.interviewProgress,
+          );
+          return hasDerivedJobState
+            ? {
+                jobDraft,
+                ...invalidatedDerivedState(),
+                interviewSessionVersion: state.interviewSessionVersion + 1,
+              }
+            : { jobDraft };
+        }),
       setJobMatch: (jobMatch) =>
         set((state) => {
           if (state.homeNavigationPending || state.stage !== "workspace")
@@ -870,10 +1294,60 @@ export const useAppStore = create<AppState>()(
           if (!isJobMatchForAnalysis(state.analysis, jobMatch)) return state;
           return {
             jobMatch,
+            activeResumeVariantId: null,
+            resumePanel: "suggestions",
             interviewPlan: null,
             interviewSessionVersion: state.interviewSessionVersion + 1,
             evaluations: [],
+            interviewSetupStage: "intro",
+            interviewProgress: null,
+            ...(state.activeResumeVariantId
+              ? {
+                  previewMode: "original" as const,
+                  previewedRenderHashes: [],
+                  renders: {},
+                }
+              : {}),
           };
+        }),
+      setResumeVariant: (variantId) =>
+        set((state) => {
+          if (
+            state.homeNavigationPending ||
+            state.stage !== "workspace" ||
+            !state.analysis
+          ) {
+            return state;
+          }
+          const nextVariantId =
+            variantId !== null && state.jobMatch?.variant?.id === variantId
+              ? variantId
+              : null;
+          if (nextVariantId === state.activeResumeVariantId) return state;
+          return {
+            activeResumeVariantId: nextVariantId,
+            resumePanel: "templates",
+            previewMode: "current",
+            previewedRenderHashes: [],
+            renders: {},
+          };
+        }),
+      setResumePanel: (resumePanel) =>
+        set((state) => {
+          if (state.homeNavigationPending) return state;
+          if (
+            resumePanel === "suggestions" &&
+            state.activeResumeVariantId !== null
+          ) {
+            return {
+              resumePanel,
+              activeResumeVariantId: null,
+              previewMode: "original",
+              previewedRenderHashes: [],
+              renders: {},
+            };
+          }
+          return { resumePanel };
         }),
       setInterviewPlan: (interviewPlan) =>
         set((state) => {
@@ -885,6 +1359,10 @@ export const useAppStore = create<AppState>()(
             interviewPlan,
             interviewSessionVersion: state.interviewSessionVersion + 1,
             evaluations: [],
+            interviewSetupStage: "intro",
+            interviewProgress: state.analysis
+              ? newInterviewProgress(state.analysis, interviewPlan, [])
+              : null,
           };
         }),
       addEvaluation: (evaluation) =>
@@ -913,6 +1391,37 @@ export const useAppStore = create<AppState>()(
             ],
           };
         }),
+      setInterviewSetupStage: (interviewSetupStage) =>
+        set((state) => {
+          if (
+            state.homeNavigationPending ||
+            state.stage !== "workspace" ||
+            state.interviewPlan
+          ) {
+            return state;
+          }
+          return {
+            interviewSetupStage:
+              normalizeInterviewSetupStage(interviewSetupStage),
+          };
+        }),
+      updateInterviewProgress: (update) =>
+        set((state) => {
+          if (
+            state.homeNavigationPending ||
+            state.stage !== "workspace" ||
+            !state.interviewProgress
+          ) {
+            return state;
+          }
+          const next = normalizeInterviewProgress(
+            state.analysis,
+            state.interviewPlan,
+            state.evaluations,
+            { ...state.interviewProgress, ...update },
+          );
+          return next ? { interviewProgress: next } : state;
+        }),
       setTemplate: (selectedTemplate) =>
         set((state) =>
           state.homeNavigationPending ? state : { selectedTemplate },
@@ -925,7 +1434,7 @@ export const useAppStore = create<AppState>()(
           const isCurrent = Object.values(state.renders).some(
             (render) =>
               render?.sha256 === sha256 &&
-              isRenderForAnalysis(state.analysis, render),
+              isRenderForActiveResume(state, render),
           );
           if (!isCurrent || state.previewedRenderHashes.includes(sha256))
             return state;
@@ -937,7 +1446,7 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           if (state.homeNavigationPending || state.stage !== "workspace")
             return state;
-          if (!isRenderForAnalysis(state.analysis, render)) return state;
+          if (!isRenderForActiveResume(state, render)) return state;
           return {
             renders: { ...state.renders, [render.template]: render },
             previewMode: state.analysis?.originalPdfBase64
@@ -1005,6 +1514,7 @@ export const useAppStore = create<AppState>()(
             stage: "upload",
             recentAnalyses,
             homeNavigationPending: false,
+            archiveSuppressedForResumeId: null,
             error: null,
           });
         } catch (error) {
@@ -1019,10 +1529,20 @@ export const useAppStore = create<AppState>()(
       },
       goHomeWithoutArchive: () => {
         cancelWorkspaceActivity();
-        set({
-          stage: "upload",
-          homeNavigationPending: false,
-          error: null,
+        set((state) => {
+          const archiveSuppressedForResumeId =
+            state.analysis?.resume.id ?? null;
+          return {
+            stage: "upload",
+            recentAnalyses: archiveSuppressedForResumeId
+              ? state.recentAnalyses.filter(
+                  (record) => record.id !== archiveSuppressedForResumeId,
+                )
+              : state.recentAnalyses,
+            homeNavigationPending: false,
+            archiveSuppressedForResumeId,
+            error: null,
+          };
         });
       },
       openRecentSession: async (id) => {
@@ -1064,6 +1584,11 @@ export const useAppStore = create<AppState>()(
           isJobMatchForAnalysis(analysis, parsedJobMatch.data)
             ? parsedJobMatch.data
             : null;
+        const jobDraft = normalizeJobDraft(
+          record.payload.jobDraft,
+          analysis,
+          jobMatch,
+        );
         const parsedInterviewPlan = record.payload.interviewPlan
           ? InterviewPlanSchema.safeParse(record.payload.interviewPlan)
           : null;
@@ -1083,11 +1608,22 @@ export const useAppStore = create<AppState>()(
                 isEvaluationForState(analysis, interviewPlan, evaluation),
               )
           : [];
-        const restoredModule = ["resume", "job", "interview"].includes(
+        const interviewProgress = normalizeInterviewProgress(
+          analysis,
+          interviewPlan,
+          evaluations,
+          record.payload.interviewProgress,
+        );
+        const requestedModule = ["resume", "job", "interview"].includes(
           record.payload.module,
         )
           ? record.payload.module
           : "resume";
+        const restoredModule = analysis.suggestions.some(
+          (suggestion) => suggestion.status === "pending",
+        )
+          ? "resume"
+          : requestedModule;
         const selectedSuggestionId = analysis.suggestions.some(
           (suggestion) => suggestion.id === record.payload.selectedSuggestionId,
         )
@@ -1095,24 +1631,40 @@ export const useAppStore = create<AppState>()(
           : (analysis.suggestions.find(
               (suggestion) => suggestion.status === "pending",
             )?.id ?? null);
+        const activeResumeVariantId =
+          jobMatch?.variant?.id === record.payload.activeResumeVariantId
+            ? record.payload.activeResumeVariantId
+            : null;
+        const resumePanel =
+          record.payload.resumePanel === "templates"
+            ? "templates"
+            : "suggestions";
 
         set((state) => ({
           stage: "workspace",
           module: restoredModule,
           expiresAt: record.expiresAt,
           analysis,
+          jobDraft,
           jobMatch,
           interviewPlan,
           interviewSessionVersion: state.interviewSessionVersion + 1,
           evaluations,
+          interviewSetupStage: normalizeInterviewSetupStage(
+            record.payload.interviewSetupStage,
+          ),
+          interviewProgress,
           selectedSuggestionId,
+          activeResumeVariantId,
+          resumePanel,
           selectedTemplate: record.payload.selectedTemplate,
-          previewMode: "original",
+          previewMode: activeResumeVariantId ? "current" : "original",
           previewedRenderHashes: [],
           renders: {},
           undoStack: [],
           sourcePdfBlob: record.pdfBlob ?? null,
           homeNavigationPending: false,
+          archiveSuppressedForResumeId: null,
           error: null,
         }));
         return true;
@@ -1127,11 +1679,16 @@ export const useAppStore = create<AppState>()(
                 module: "resume",
                 expiresAt: null,
                 analysis: null,
+                jobDraft: defaultJobDraft(),
                 jobMatch: null,
                 interviewPlan: null,
                 interviewSessionVersion: state.interviewSessionVersion + 1,
                 evaluations: [],
+                interviewSetupStage: "intro",
+                interviewProgress: null,
                 selectedSuggestionId: null,
+                activeResumeVariantId: null,
+                resumePanel: "suggestions",
                 selectedTemplate: "professional",
                 previewMode: "original",
                 previewedRenderHashes: [],
@@ -1140,6 +1697,7 @@ export const useAppStore = create<AppState>()(
                 sourcePdfBlob: null,
                 recentAnalyses,
                 homeNavigationPending: false,
+                archiveSuppressedForResumeId: null,
                 error: null,
               }
             : { recentAnalyses },
@@ -1230,12 +1788,18 @@ export const useAppStore = create<AppState>()(
               originalPdfBase64: undefined,
             }
           : null,
+        jobDraft: state.jobDraft,
         jobMatch: state.jobMatch,
         interviewPlan: state.interviewPlan,
         evaluations: state.evaluations,
+        interviewSetupStage: state.interviewSetupStage,
+        interviewProgress: state.interviewProgress,
         selectedSuggestionId: state.selectedSuggestionId,
+        activeResumeVariantId: state.activeResumeVariantId,
+        resumePanel: state.resumePanel,
         selectedTemplate: state.selectedTemplate,
-        undoStack: state.undoStack,
+        undoStack: state.undoStack.map(persistedSnapshot),
+        archiveSuppressedForResumeId: state.archiveSuppressedForResumeId,
       }),
       merge: mergePersistedSessionState,
       onRehydrateStorage: () => (state) => {

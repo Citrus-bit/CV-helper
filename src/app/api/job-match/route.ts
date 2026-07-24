@@ -3,17 +3,48 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { invokeBaselineCapability } from "@/lib/baseline";
+import { unwrapUntrustedDocumentText } from "@/lib/baseline/utils";
 import { JobMatchBundleSchema } from "@/lib/client/contracts";
-import { ClaimSchema, EvidenceAssetSchema, ResumeASTSchema, ResumeVariantSchema } from "@/lib/domain";
+import {
+  ClaimSchema,
+  EvidenceAssetSchema,
+  JobPostingSchema,
+  ResumeASTSchema,
+  ResumeVariantSchema,
+} from "@/lib/domain";
 import { createCapabilityContext } from "@/lib/server/analysis";
 import { enforceAiRateLimit } from "@/lib/server/ai-rate-limit";
 import { invokeCapability } from "@/lib/server/capability-runtime";
 import { jsonResponse, parseJsonBody, routeErrorResponse } from "@/lib/server/http";
+import { buildJobVariant } from "@/lib/server/job-variant";
 
 export const runtime = "nodejs";
 
+function optionalSingleLine(maxLength: number) {
+  return z
+    .string()
+    .max(maxLength)
+    .refine(
+      (value) => !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value),
+      {
+        message: "岗位元信息必须为单行文本。",
+      },
+    )
+    .transform((value) => value.trim() || undefined)
+    .optional();
+}
+
 const RequestSchema = z.object({
-  jdText: z.string().trim().min(30).max(60_000),
+  jdText: z
+    .string()
+    .max(60_000)
+    .refine((value) => value.trim().length >= 30, {
+      message: "岗位描述至少需要 30 个字符。",
+    }),
+  jobTitle: optionalSingleLine(120),
+  seniority: optionalSingleLine(80),
+  location: optionalSingleLine(160),
+  language: z.enum(["zh-CN", "en-US"]).optional(),
   resumeId: z.string().min(1),
   revision: z.number().int().nonnegative(),
   ast: ResumeASTSchema,
@@ -21,12 +52,37 @@ const RequestSchema = z.object({
   evidence: z.array(EvidenceAssetSchema).max(500),
 });
 
+type MetadataKey = "jobTitle" | "seniority" | "location";
+
+async function secureMetadataValue(
+  value: string | undefined,
+  context: ReturnType<typeof createCapabilityContext>,
+) {
+  if (!value) return undefined;
+  const redaction = await invokeBaselineCapability(
+    "pii.redact",
+    { text: value },
+    context,
+  );
+  const guard = await invokeBaselineCapability(
+    "prompt.guard",
+    { text: redaction.data.redactedText },
+    context,
+  );
+  return {
+    value: unwrapUntrustedDocumentText(guard.data.safeText),
+    suspicious: guard.data.suspicious,
+    sourceVersions: [redaction.sourceVersion, guard.sourceVersion],
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const input = await parseJsonBody(request, RequestSchema);
     await enforceAiRateLimit(request, "jd");
+    const capabilityLocale = input.language ?? input.ast.locale;
     const securityContext = createCapabilityContext(
-      input.ast.locale,
+      capabilityLocale,
       ["selected_text"],
       request.signal,
     );
@@ -36,16 +92,40 @@ export async function POST(request: Request) {
       { text: redactionResult.data.redactedText },
       securityContext,
     );
+    const metadataEntries = await Promise.all(
+      (["jobTitle", "seniority", "location"] as const).map(async (key) => [
+        key,
+        await secureMetadataValue(input[key], securityContext),
+      ] as const),
+    );
+    const metadata = Object.fromEntries(metadataEntries) as Record<
+      MetadataKey,
+      Awaited<ReturnType<typeof secureMetadataValue>>
+    >;
     const context = createCapabilityContext(
-      input.ast.locale,
+      capabilityLocale,
       ["job_description", "evidence_graph", "resume_ast"],
       request.signal,
     );
     const parsedJob = await invokeCapability(
       "jd.parse",
-      { text: guardResult.data.safeText, locale: input.ast.locale },
+      {
+        text: guardResult.data.safeText,
+        locale: capabilityLocale,
+        title: metadata.jobTitle?.value,
+        location: metadata.location?.value,
+      },
       context,
     );
+    const finalPosting = JobPostingSchema.parse({
+      ...parsedJob.data.jobPosting,
+      title: metadata.jobTitle?.value ?? parsedJob.data.jobPosting.title,
+      seniority:
+        metadata.seniority?.value ?? parsedJob.data.jobPosting.seniority,
+      location: metadata.location?.value ?? parsedJob.data.jobPosting.location,
+      locale: capabilityLocale,
+      rawText: input.jdText,
+    });
     const [matchResult, riskResult] = await Promise.all([
       invokeCapability(
         "job.match",
@@ -56,41 +136,63 @@ export async function POST(request: Request) {
         },
         context,
       ),
-      invokeBaselineCapability("job.riskDetect", { jobPosting: parsedJob.data.jobPosting }, context),
+      invokeBaselineCapability(
+        "job.riskDetect",
+        { jobPosting: finalPosting },
+        context,
+      ),
     ]);
-    const variant = ResumeVariantSchema.parse({
-      id: `variant-${randomUUID()}`,
-      baseResumeId: input.resumeId,
-      baseRevision: input.revision,
-      revision: 0,
-      jobPostingId: parsedJob.data.jobPosting.id,
-      name: `${parsedJob.data.jobPosting.title}定制版`,
+    const variantResult = buildJobVariant({
       ast: input.ast,
-      appliedSuggestionIds: [],
+      requirements: parsedJob.data.requirements,
+      mappings: matchResult.data.maps,
+      claims: input.claims,
     });
+    const variant = variantResult
+      ? ResumeVariantSchema.parse({
+          id: `variant-${randomUUID()}`,
+          baseResumeId: input.resumeId,
+          baseRevision: input.revision,
+          revision: 0,
+          jobPostingId: finalPosting.id,
+          name: `${finalPosting.title}定制版`,
+          ast: variantResult.ast,
+          appliedSuggestionIds: [],
+          changes: variantResult.changes,
+        })
+      : undefined;
     const risks = riskResult.data.risks.map((risk) => `${risk.explanation}（${risk.excerpt}）`);
     if (guardResult.data.suspicious) risks.unshift("岗位文本包含类似指令的内容，已按不可信数据处理。");
+    if (Object.values(metadata).some((result) => result?.suspicious)) {
+      risks.unshift("岗位元信息包含类似指令的内容，已按不可信数据处理。");
+    }
     return jsonResponse(
       JobMatchBundleSchema.parse({
         sourceResumeId: input.resumeId,
         sourceResumeRevision: input.revision,
-        job: { ...parsedJob.data.jobPosting, rawText: input.jdText },
+        job: finalPosting,
         requirements: parsedJob.data.requirements,
         mappings: matchResult.data.maps,
         coverage: matchResult.data.evidenceCoverageRate,
         summary: matchResult.data.disclaimer,
         riskFlags: risks,
         variant,
+        variantUnavailableReason: variant
+          ? undefined
+          : "现有章节与经历顺序已经是当前证据下的最相关顺序，因此未生成无差异的岗位版。",
       }),
       {
         headers: {
-          "x-capability-trace": [
+          "x-capability-trace": [...new Set([
             guardResult.sourceVersion,
             redactionResult.sourceVersion,
+            ...Object.values(metadata).flatMap(
+              (result) => result?.sourceVersions ?? [],
+            ),
             parsedJob.sourceVersion,
             matchResult.sourceVersion,
             riskResult.sourceVersion,
-          ].join(","),
+          ])].join(","),
         },
       },
     );

@@ -7,6 +7,8 @@ import {
   AnswerCoachOutputSchema,
   AnswerEvaluateInputSchema,
   AnswerEvaluateOutputSchema,
+  CopyRewriteInputSchema,
+  CopyRewriteOutputSchema,
   InterviewPlanInputSchema,
   InterviewPlanOutputSchema,
   JdParseInputSchema,
@@ -187,6 +189,14 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
         claims: matchInput.claims.map((claim) => minimalClaim(claim, sanitize)),
       };
     }
+    case "copy.rewrite.zh":
+    case "copy.rewrite.en": {
+      const rewriteInput = input as GatewayInputMap["copy.rewrite.zh"];
+      return {
+        text: sanitize(rewriteInput.text),
+        preserveTerms: rewriteInput.preserveTerms.map(sanitize),
+      };
+    }
     case "interview.plan": {
       const planInput = input as GatewayInputMap["interview.plan"];
       return {
@@ -310,6 +320,67 @@ function claimRelevance(requirement: GatewayInputMap["job.match"]["requirements"
 
 function validFactClaim(claim: Claim): boolean {
   return claim.status === "resume_only" || claim.status === "user_confirmed" || claim.status === "supported";
+}
+
+const UNSUPPORTED_FACT_PATTERNS = [
+  /(?:行业|全球|世界|全国|市场)(?:第一|领先|顶尖)|(?:第一|唯一|最佳)(?:名|家|个|款|位)?/iu,
+  /(?:获奖|奖项|认证|专利|晋升|升职|录取|offer|award[- ]winning|patent(?:ed)?|promot(?:ed|ion)|certif(?:ied|ication)|best[- ]in[- ]class|world[- ]class|industry[- ]leading)/iu,
+] as const;
+
+const SAFE_REWRITE_FUNCTION_WORDS = new Set([
+  "a", "an", "and", "as", "at", "be", "been", "being", "by", "for", "from", "in", "into", "is", "of", "on",
+  "or", "the", "to", "via", "was", "were", "with",
+]);
+const SAFE_REWRITE_HAN_CHARACTERS = new Set(Array.from("的了和与及并在于以将把被对从为向"));
+
+function factualLexemes(value: string): Set<string> {
+  const normalized = value.normalize("NFKC").toLocaleLowerCase();
+  const latin = normalized.match(/[\p{Script=Latin}][\p{Script=Latin}\p{N}+#.-]*/gu) ?? [];
+  const han = normalized.match(/\p{Script=Han}/gu) ?? [];
+  return new Set([
+    ...latin.filter((token) => !SAFE_REWRITE_FUNCTION_WORDS.has(token)),
+    ...han.filter((character) => !SAFE_REWRITE_HAN_CHARACTERS.has(character)),
+  ]);
+}
+
+function validateCopyRewriteOutput(
+  input: GatewayInputMap["copy.rewrite.zh"],
+  output: GatewayOutputMap["copy.rewrite.zh"],
+  projector: PiiProjector,
+): GatewayOutputMap["copy.rewrite.zh"] {
+  const projectedOriginal = projector.redact(input.text);
+  const projectedTerms = input.preserveTerms.map((term) => projector.redact(term));
+  const originalNumbers = numericTokens(projectedOriginal);
+  const normalizedOriginal = normalizedGroundingText(projectedOriginal);
+  const normalizedRewrite = normalizedGroundingText(output.rewritten);
+  const originalLexemes = factualLexemes(projectedOriginal);
+  const introducedLexemes = [...factualLexemes(output.rewritten)].filter((token) => !originalLexemes.has(token));
+  const redactionChangedInput = projectedOriginal !== input.text.normalize("NFKC").trim();
+  const introducedUnsupportedFact = UNSUPPORTED_FACT_PATTERNS.some(
+    (pattern) => pattern.test(output.rewritten) && !pattern.test(projectedOriginal),
+  );
+  if (
+    output.original !== projectedOriginal ||
+    output.addedFacts !== false ||
+    output.changes.length > 8 ||
+    output.changes.some((change) => change.trim().length === 0 || change.length > 300) ||
+    projectedTerms.some((term) => term.length > 0 && !output.rewritten.includes(term)) ||
+    numericTokens(output.rewritten).some((number) => !originalNumbers.includes(number)) ||
+    introducedLexemes.length > 0 ||
+    introducedUnsupportedFact ||
+    (normalizedOriginal.length > 0 && normalizedRewrite.length === 0) ||
+    output.rewritten.length > Math.max(80, projectedOriginal.length * 2 + 40) ||
+    output.rewritten.length > 4_000 ||
+    // Reversible PII tokens are intentionally not exposed to the provider. Preserve
+    // the exact local text through the baseline instead of returning placeholders.
+    redactionChangedInput
+  ) {
+    throw new ProviderGatewayError("INVALID_RESPONSE");
+  }
+  return {
+    ...output,
+    original: input.text,
+  };
 }
 
 function validateSuggestionOutput(
@@ -581,6 +652,13 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
         disclaimer: "证据覆盖率仅表示简历材料与岗位要求的适配程度，不代表录取或获得面试的概率。",
       } as unknown as GatewayOutputMap[K];
     }
+    case "copy.rewrite.zh":
+    case "copy.rewrite.en":
+      return validateCopyRewriteOutput(
+        input as GatewayInputMap["copy.rewrite.zh"],
+        output as GatewayOutputMap["copy.rewrite.zh"],
+        projector,
+      ) as GatewayOutputMap[K];
     case "interview.plan": {
       const planInput = input as GatewayInputMap["interview.plan"];
       const planOutput = output as GatewayOutputMap["interview.plan"];
@@ -659,6 +737,8 @@ const instructions: Record<ProviderGatewayCapabilityId, string> = {
   "resume.suggest": "Every suggestion must cite supplied sourceBlockIds or claimIds and use at most one replace JSON Pointer patch targeting an existing resume text field. Never add unsupported numbers or facts.",
   "jd.parse": "Parse only explicit job requirements. Preserve the supplied locale and do not infer employer facts.",
   "job.match": "Map every supplied requirement exactly once. Cite only supplied claim IDs and leave evidenceAssetIds empty.",
+  "copy.rewrite.zh": "Rewrite the supplied Chinese text for clarity and professional tone. Preserve every preserveTerms value exactly, keep all numbers unchanged, and do not add achievements, scope, credentials, rankings, or any other facts. Set original to the supplied text and addedFacts to false.",
+  "copy.rewrite.en": "Rewrite the supplied English text for clarity and professional tone. Preserve every preserveTerms value exactly, keep all numbers unchanged, and do not add achievements, scope, credentials, rankings, or any other facts. Set original to the supplied text and addedFacts to false.",
   "interview.plan": "Select and order only supplied question IDs. Do not invent or rewrite questions.",
   "answer.evaluate": "Evaluate only the supplied answer. Cited fragments must be exact substrings of the answer.",
   "answer.coach": "Give concrete coaching grounded only in the supplied answer and evaluation. Do not invent candidate facts.",
@@ -669,6 +749,8 @@ const schemas = {
   "resume.suggest": [ResumeSuggestInputSchema, ResumeSuggestOutputSchema],
   "jd.parse": [JdParseInputSchema, JdParseOutputSchema],
   "job.match": [JobMatchInputSchema, JobMatchOutputSchema],
+  "copy.rewrite.zh": [CopyRewriteInputSchema, CopyRewriteOutputSchema],
+  "copy.rewrite.en": [CopyRewriteInputSchema, CopyRewriteOutputSchema],
   "interview.plan": [InterviewPlanInputSchema, InterviewPlanOutputSchema],
   "answer.evaluate": [AnswerEvaluateInputSchema, AnswerEvaluateOutputSchema],
   "answer.coach": [AnswerCoachInputSchema, AnswerCoachOutputSchema],

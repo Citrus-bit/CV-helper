@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-阶段 7：最终交付审计与完整作品封装（进行中）
+阶段 10：最终作品独立终验（阶段 11 统一 Skill 套件已完成）
 
 ## 各阶段
 
@@ -66,12 +66,57 @@
 
 ### 阶段 7：最终交付审计与完整作品封装
 
-- [ ] 将 PRD、架构、Capability、页面组件和测试证据逐项映射，识别占位与未证明项
-- [ ] 补齐功能、交互、文档、安全及本地运行缺口
-- [ ] 重走真实 PDF、建议审阅、JD、面试、三模板预览和导出质量门
-- [ ] 完成桌面视觉、键盘/无障碍、安全、性能、构建和全量测试回归
-- [ ] 清理不应继续跟踪的生成物，整理可提交作品与最终交付说明
+- [x] 将 PRD、架构、Capability、页面组件和测试证据逐项映射，识别占位与未证明项
+- [x] 实现真实岗位定制 AST/差异，不再用原 AST 冒充岗位版本
+- [x] 面试评审携带完整题目元数据并执行最多两轮追问，完整展示教练反馈
+- [x] AST revision 变化后使旧建议失效，并重算 Claim、故事与评分
+- [x] 在预览区展示解析 warning、OCR/低置信度与定位信息
+- [x] 重构排版预览与导出面板，消除空洞并收紧模板、质检、确认与下载层级
+- [x] 修复上传区跨子元素拖动时提示闪回，并补齐文件拖拽状态回归测试
+- [x] 补齐 AI 匿名会话限流标识、本地 README 和 Capability 行为/eval 证据
+- [x] 补齐功能、交互、文档、安全及本地运行缺口
+- [x] 重走真实 PDF、建议审阅、JD、面试、三模板预览和导出质量门
+- [x] 完成桌面视觉、键盘/无障碍、安全、性能、构建和全量测试回归
+- [x] 清理不应继续跟踪的生成物，整理可提交作品与最终交付说明
+- **状态：** complete
+
+### 阶段 8：最终完成性复核
+
+- [x] 按全部用户要求建立功能、组件、文档、运行时与验收证据矩阵
+- [x] 独立复核产品闭环、Capability/安全边界和本地交付，不继承阶段 7 的完成结论
+- [x] 修复所有已证实的漏项、占位、伪实现或不可恢复交互
+- [x] 重走数字/扫描 PDF、建议、JD、三模板导出和面试核心流程
+- [x] 重跑全量测试、构建、容器、安全扫描与桌面视觉/无障碍验收
+- [x] 同步三份正式文档和交付说明，确认工作树可提交
+- **状态：** complete
+
+### 阶段 9：完整作品交付审计
+
+- [x] 从全部用户要求、PRD、架构、Capability Registry 和运行拓扑建立逐项证据矩阵
+- [x] 独立复核每个页面、组件、API、baseline、Skill 接口和本地交付路径，不能继承阶段 8 结论
+- [x] 修复任何缺失操作、未接线组件、占位实现、错误状态或文档反证
+- [x] 重跑 Web/worker/proxy 测试、构建、容器、安全扫描和真实桌面核心流程
+- [x] 确认 Git 差异包含完整作品且没有遗漏未跟踪文件、敏感信息或生成物
+- **状态：** complete
+
+### 阶段 10：最终作品独立终验
+
+- [ ] 以当前工作树重建全部用户要求、PRD、架构、页面、组件、API 和本地运行证据矩阵
+- [ ] 并行审计所有操作是否接线、所有组件是否可达、所有错误/取消/恢复路径是否闭环
+- [ ] 审计未跟踪与混合暂存文件、敏感信息、生成物和本地启动材料是否构成完整交付
+- [ ] 修复所有由当前证据确认的缺口，并为每项补充可失败的回归测试
+- [ ] 重跑 Web、worker、代理、生产构建、容器、安全和桌面浏览器核心流程
+- [ ] 同步 `.codex/PROJECT.md`、PRD、架构、README、计划、发现与进度，确认作品可提交
 - **状态：** in_progress
+
+### 阶段 11：统一 Skill 套件
+
+- [x] 在仓库内创建单一 `resume-assistant-toolkit` 插件入口，不写入个人 marketplace
+- [x] 创建一个编排 Skill 和六个领域 Skill，覆盖现有 30 项 Capability
+- [x] 提取共享 Capability 映射、安全边界、输出规范与验收清单，避免各 Skill 重复或冲突
+- [x] 为每个 Skill 生成 `agents/openai.yaml`，并通过 Skill/插件验证器
+- [x] 同步 `.codex/PROJECT.md`、架构文档和项目进度，明确开发期 Skill 与产品运行时 Capability 的边界
+- **状态：** complete
 
 ## 关键问题
 
@@ -80,10 +125,14 @@
 3. 用户已临时暂停 Vercel 部署；本阶段不保留 Private Blob、Hosted API、Vercel 配置或云端 worker 半成品。
 4. 阶段 6 最终验证通过：TypeScript、ESLint、33 个文件 / 179 项 Web 测试、32 项 document-worker 测试、3 项 loopback proxy 测试及 `git diff --check` 全部通过；其中健康路由 4 项测试通过。
 5. Compose 默认服务已精确验证为 Web、worker 和 loopback；`future-infra` profile 配置可解析。loopback 的 3 项资源边界测试通过。
-6. 当前 Git 只有一个已推送提交；常见 API Key、私钥和带值 Secret 模式扫描无命中。初始提交已跟踪 6 个合成 PDF 与 5 个 Python 字节码文件；它们不是用户数据，但后续提交应删除这些生成物，新增忽略规则只能阻止新文件，不能改写已推送历史。
-7. 当前本地 Web 镜像为 `sha256:b0353ce369df9bfbb8efa9711b51d4bae5dc45a0e2e7efd9884f097439419e03`；生产构建包含 `/api/health`，首页、能力接口、示例接口与健康接口均已通过容器 smoke。
+6. 当前 Git 历史有两个提交；Gitleaks 对全部历史、当前差异、未跟踪源码和提交消息均无命中。两个提交的作者/提交者元数据包含个人邮箱；初始提交还跟踪过 6 个合成 PDF 与 5 个 Python 字节码文件。当前 index 已删除生成物并补齐忽略规则，但彻底移除邮箱或旧文件需要重写已推送历史，未经用户明确授权不执行。
+7. 当前本地 Web 镜像为 `sha256:a249fcd2684f47769fc09b8dace3481aed2e8b7dc4fed90f3dbf03159192ef4c`，worker 镜像为 `sha256:e66d66fb46250340337079bc066ad6c35f5b47f1c1ad52deada6630a135bccb9`；生产构建包含 `/api/health`，首页、能力接口、示例接口、真实 PDF 生成与健康接口均已通过容器 smoke。
 8. 首页与工作台在 1024×768、1280×720、1440×900、1920×1080 均无横向滚动；375×812、768×900、1023×768 仅显示电脑浏览器提示。体验示例、顶栏返回、历史恢复和侧栏品牌返回均通过。
 9. 本地 `/api/health` GET 返回 200，只暴露 document、AI、storage 的 `ready/degraded` 与 mode；当前分别为 `isolated/ready`、`baseline/ready`、`client_local/ready`。
+10. 阶段 7 审计曾否定“全部完成”结论；岗位定制 AST、面试元数据/追问、revision 后领域重算、解析 warning 可见性和根 README 均已补齐并回归。
+11. 隔离 worker 可恢复错误现会回退内置解析；摘要不一致、413 和用户取消继续失败关闭。“24 小时清理”文案已明确浏览器关闭时在下次打开后物理清理。
+12. 阶段 7 最终验证通过 TypeScript、ESLint、42 个文件 / 220 项 Web 测试、32 项 document-worker 测试、3 项 loopback proxy 测试、生产构建与 `git diff --check`；Gitleaks 对 Git 历史、当前差异和提交消息均无命中。
+13. 阶段 8 最终验证通过 TypeScript、ESLint、44 个文件 / 239 项 Web 测试、32 项 document-worker 测试、3 项 loopback proxy 测试、生产构建、容器健康、四档桌面/三档窄屏浏览器回归及 Gitleaks 全范围扫描。上传拖拽、分析等待、历史恢复、页签保活、导出单滚动层和真实 PDF 质量门均有独立回归证据。
 
 ## 已做决策
 
@@ -116,7 +165,22 @@
 | Store 测试的 `reset()` 按产品语义保留历史摘要，造成跨用例残留    | 1        | `beforeEach` 在清 IndexedDB 后同步清空测试内 `recentAnalyses`，补齐状态隔离                                  |
 | Next standalone 重复复制 `pdfjs-dist`，移除后又漏掉 fake worker  | 2        | 统一服务端 PDF.js loader 显式导入 worker，并补子路径类型声明；不再依赖重复 tracing include                   |
 | Prettier 无法推断 Git/Docker ignore 文件 parser                  | 1        | ignore 文件保持人工审阅，并用 Docker build、`git check-ignore` 与 `git diff --check` 验证                    |
-| Radix Tabs 回归测试未响应低层 `fireEvent.click`                  | 1        | 改用 `userEvent` 发送完整用户点击序列，不重复低层事件                                                       |
+| Radix Tabs 回归测试未响应低层 `fireEvent.click`                  | 1        | 改用 `userEvent` 发送完整用户点击序列，不重复低层事件                                                        |
+| `127.0.0.1:3001` 被 Next dev 拒绝跨域开发资源                    | 1        | 不修改生产配置，开发视觉回归改用同源 `localhost:3001`                                                        |
+| Browser locator DOM 量测在 PDF iframe 页面超时                   | 1        | 不重复该 locator evaluate；改用可访问树、截图和无 iframe 的顶层选择器证据                                    |
+| 浏览器能力不支持 `networkidle` 等待状态                          | 1        | 改用受支持的 `domcontentloaded`，随后读取 DOM 快照和具体渲染状态                                             |
+| React `<details>` 类型不支持 `defaultOpen`                       | 1        | 使用合法 `open` 属性，只在质检存在警告或失败时默认展开                                                       |
+| 三文件进度补丁复用旧表格上下文而失败                             | 1        | 拆分为逐文件补丁，并按当前实际行应用                                                                         |
+| Browser 隔离执行环境不能构造文件拖拽事件                         | 3        | 停止重复事件注入；使用组件级完整 dragenter/dragleave 序列验证逻辑，浏览器仅复核真实页面布局与默认/最终状态   |
+| 最终容器重建命中失效的 Docker Desktop credential/plugin 配置     | 1        | 使用一次性 `DOCKER_CONFIG`、Homebrew buildx 与现有 Colima socket 构建，不修改用户全局 Docker 配置            |
+| Computer Use 尝试 Finder 真实拖拽时 Mac 处于锁定状态             | 1        | 不绕过系统锁；保留 Finder 实拖为人工验收项，组件事件序列覆盖拖拽状态机                                       |
+| jsdom `fireEvent.dragLeave` 不保留原生坐标                       | 1        | 改用带 `dataTransfer`、`clientX` 和 `clientY` 的自定义原生拖拽事件验证真实边界判断                           |
+| BSD `tar` 不支持 GNU 参数                                        | 1        | 先过滤实际存在的文件，再归档未暂存及未跟踪源码供敏感信息扫描                                                 |
+| 阶段 10 三文件补丁假定了错误的 findings 标题                     | 1        | 不重复原补丁；先读取实际标题 `# 发现与决策`，再用正确上下文一次应用                                           |
+| 交付审计首次读取了不存在的根 `docker-compose.yml`                | 1        | 使用 README 声明且实际存在的 `infra/docker-compose.yml` 作为权威 Compose 文件                                |
+| 新增全仓 Prettier 门发现 114 个既有文件未采用统一格式            | 1        | 不引入大规模无关格式化；撤回该门并移除未接线 Prettier，继续使用 ESLint、TypeScript 与 `git diff --check`       |
+| 4 个 Skill 的中文 `short_description` 少于 25 个字符             | 1        | 保留脚手架已创建的目录，不重复初始化；补足描述后用 `generate_openai_yaml.py` 生成界面元数据和资源目录          |
+| `generate_openai_yaml.py` 的系统 Python 缺少 PyYAML              | 1        | 不增加全局依赖；改用脚本的 `--name` 参数绕过 frontmatter YAML 读取，继续生成确定性界面元数据                  |
 
 ## 备注
 

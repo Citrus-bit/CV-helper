@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { ResumeASTSchema, SuggestionSchema, type Suggestion } from "@/lib/domain";
+import {
+  ResumeASTSchema,
+  SuggestionSchema,
+  type Suggestion,
+} from "@/lib/domain";
 import { applySuggestion } from "@/lib/client/resume";
+import { stableId } from "@/lib/baseline/utils";
 
 const ast = ResumeASTSchema.parse({
   schemaVersion: "1.0",
@@ -46,7 +51,7 @@ function makeSuggestion(input: Partial<Suggestion> = {}) {
     originalText: "主要负责平台开发",
     proposedText: "负责平台开发",
     rationale: "压缩弱表达。",
-    beforeHash: "hash-1",
+    beforeHash: stableId("hash", input.originalText ?? "主要负责平台开发"),
     patches: [
       {
         operation: "replace",
@@ -72,10 +77,15 @@ describe("applySuggestion", () => {
   it("uses the reviewed manual text for the scoped patch", () => {
     const result = applySuggestion(
       ast,
-      makeSuggestion({ status: "manual", proposedText: "负责平台能力建设与交付" }),
+      makeSuggestion({
+        status: "manual",
+        proposedText: "负责平台能力建设与交付",
+      }),
     );
 
-    expect(result.sections[0].entries[0].bullets[0]).toBe("负责平台能力建设与交付");
+    expect(result.sections[0].entries[0].bullets[0]).toBe(
+      "负责平台能力建设与交付",
+    );
   });
 
   it("supports removing a single array item", () => {
@@ -85,7 +95,9 @@ describe("applySuggestion", () => {
         kind: "remove",
         proposedText: undefined,
         originalText: "重复描述",
-        patches: [{ operation: "remove", path: "/sections/0/entries/0/bullets/1" }],
+        patches: [
+          { operation: "remove", path: "/sections/0/entries/0/bullets/1" },
+        ],
       }),
     );
 
@@ -95,7 +107,16 @@ describe("applySuggestion", () => {
   it("preserves the AST identity when a valid patch does not change its value", () => {
     const result = applySuggestion(
       ast,
-      makeSuggestion({ proposedText: "主要负责平台开发", patches: [{ operation: "replace", path: "/sections/0/entries/0/bullets/0", value: "主要负责平台开发" }] }),
+      makeSuggestion({
+        proposedText: "主要负责平台开发",
+        patches: [
+          {
+            operation: "replace",
+            path: "/sections/0/entries/0/bullets/0",
+            value: "主要负责平台开发",
+          },
+        ],
+      }),
     );
 
     expect(result).toBe(ast);
@@ -104,10 +125,26 @@ describe("applySuggestion", () => {
   it("rejects unsafe pointer segments and leaves the AST unchanged", () => {
     const result = applySuggestion(
       ast,
-      makeSuggestion({ patches: [{ operation: "replace", path: "/sections/__proto__/polluted", value: true }] }),
+      makeSuggestion({
+        patches: [
+          {
+            operation: "replace",
+            path: "/sections/__proto__/polluted",
+            value: true,
+          },
+        ],
+      }),
     );
 
     expect(result).toBe(ast);
     expect(Object.prototype).not.toHaveProperty("polluted");
+  });
+
+  it("rejects a valid pointer when beforeHash no longer matches its current value", () => {
+    const stale = makeSuggestion({
+      beforeHash: stableId("hash", "较早版本的文字"),
+    });
+
+    expect(applySuggestion(ast, stale)).toBe(ast);
   });
 });

@@ -8,6 +8,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from app.config import (
+    MAX_FONT_NAME_LENGTH,
     MAX_IMAGE_BOXES_PER_PAGE,
     MAX_NATIVE_TEXT_CHARACTERS_PER_PAGE,
     MAX_OCR_REGIONS_PER_PAGE,
@@ -56,9 +57,78 @@ def test_extracts_native_characters_and_bounding_boxes(digital_pdf: bytes) -> No
     assert result.pages[0].preview_png_base64 is None
     assert "Taylor" in "".join(character.text for character in result.pages[0].characters)
     assert any(block.text == "Taylor" for block in result.pages[0].blocks)
+    title_block = next(block for block in result.pages[0].blocks if block.text == "Taylor")
+    assert title_block.font_name is not None and "Helvetica-Bold" in title_block.font_name
+    assert title_block.font_size == 18
+    assert title_block.font_weight == 700
+    assert title_block.font_style == "normal"
     assert all(character.bbox.x1 >= character.bbox.x0 for character in result.pages[0].characters)
     assert all(character.bbox.bottom >= character.bbox.top for character in result.pages[0].characters)
     assert not any(warning.code == "OCR_UNAVAILABLE" for warning in result.warnings)
+
+
+def test_native_block_font_metadata_is_styled_and_bounded() -> None:
+    output = io.BytesIO()
+    document = canvas.Canvas(output, pagesize=(595, 842), pageCompression=1)
+    document.setFont("Helvetica-BoldOblique", 14)
+    document.drawString(54, 780, "Styled heading")
+    document.save()
+
+    result = parse_document(
+        output.getvalue(),
+        "styled.pdf",
+        include_previews=False,
+        ocr_provider=UnavailableOCRProvider("OCR intentionally unavailable in test."),
+    )
+
+    block = next(block for block in result.pages[0].blocks if block.text == "Styled")
+    assert block.font_name is not None
+    assert len(block.font_name) <= MAX_FONT_NAME_LENGTH
+    assert "Helvetica-BoldOblique" in block.font_name
+    assert block.font_size == 14
+    assert block.font_weight == 700
+    assert block.font_style == "italic"
+
+
+def test_native_word_extraction_falls_back_when_font_metadata_is_missing() -> None:
+    class MissingFontMetadataPage:
+        width = 100
+        height = 100
+        chars = [
+            {
+                "text": "Fallback",
+                "x0": 10,
+                "x1": 50,
+                "top": 10,
+                "bottom": 20,
+            }
+        ]
+        images: list[object] = []
+
+        @staticmethod
+        def extract_words(**kwargs):  # type: ignore[no-untyped-def]
+            if kwargs.get("extra_attrs"):
+                raise KeyError("fontname")
+            return [
+                {
+                    "text": "Fallback",
+                    "x0": 10,
+                    "x1": 50,
+                    "top": 10,
+                    "bottom": 20,
+                }
+            ]
+
+    _characters, blocks, _signals, _images, limits = _native_content(
+        MissingFontMetadataPage()
+    )
+
+    assert [block.text for block in blocks] == ["Fallback"]
+    assert blocks[0].font_name is None
+    assert blocks[0].font_size is None
+    assert blocks[0].font_weight is None
+    assert blocks[0].font_style is None
+    assert limits.words_truncated is False
 
 
 def test_digital_parse_can_include_a_png_preview(digital_pdf: bytes) -> None:
@@ -179,7 +249,11 @@ def test_scan_ocr_still_returns_positioned_text_within_a_bounded_call() -> None:
 
     assert len(provider.timeouts) == 1
     assert provider.timeouts[0] is not None and provider.timeouts[0] > 0
-    assert any(block.text == "OCR result" for block in result.pages[0].blocks)
+    block = next(block for block in result.pages[0].blocks if block.text == "OCR result")
+    assert block.font_name is None
+    assert block.font_size is None
+    assert block.font_weight is None
+    assert block.font_style is None
 
 
 def test_mixed_page_ocr_still_targets_the_image_region() -> None:

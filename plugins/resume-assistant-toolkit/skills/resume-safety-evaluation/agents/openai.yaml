@@ -1,0 +1,4 @@
+interface:
+  display_name: "简历助手安全评测"
+  short_description: "审查隐私脱敏、提示注入、无障碍、安全边界和模型质量回归"
+  default_prompt: "使用 $resume-safety-evaluation 审计简历助手的安全与质量门。"

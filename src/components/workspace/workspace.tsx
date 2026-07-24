@@ -29,38 +29,64 @@ const navigation: Array<{
   { id: "interview", label: "模拟面试", icon: Mic2 },
 ];
 
-function Navigation() {
+function Navigation({
+  pendingSuggestionCount,
+}: {
+  pendingSuggestionCount: number;
+}) {
   const activeModule = useAppStore((state) => state.module);
   const setModule = useAppStore((state) => state.setModule);
+  const advanceLocked = pendingSuggestionCount > 0;
   return (
-    <nav aria-label="工作台导航" className="space-y-1">
-      {navigation.map((item) => {
-        const Icon = item.icon;
-        const active = activeModule === item.id;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            aria-current={active ? "page" : undefined}
-            onClick={() => setModule(item.id)}
-            className={`flex min-h-12 w-full items-center gap-2 rounded-[8px] px-3 text-sm font-medium transition-colors ${
-              active
-                ? "bg-[#edf5ff] text-brand"
-                : "text-muted hover:bg-[#f0f1f3] hover:text-ink"
-            }`}
-          >
-            <Icon aria-hidden="true" size={19} />
-            <span>{item.label}</span>
-          </button>
-        );
-      })}
-    </nav>
+    <>
+      <nav aria-label="工作台导航" className="space-y-1">
+        {navigation.map((item) => {
+          const Icon = item.icon;
+          const active = activeModule === item.id;
+          const disabled = item.id !== "resume" && advanceLocked;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              aria-current={active ? "page" : undefined}
+              aria-describedby={disabled ? "workflow-lock-hint" : undefined}
+              disabled={disabled}
+              onClick={() => setModule(item.id)}
+              className={`flex min-h-12 w-full items-center gap-2 rounded-[8px] px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                active
+                  ? "bg-[#edf5ff] text-brand"
+                  : "text-muted hover:bg-[#f0f1f3] hover:text-ink disabled:hover:bg-transparent disabled:hover:text-muted"
+              }`}
+            >
+              <Icon aria-hidden="true" size={19} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+      {advanceLocked ? (
+        <p
+          id="workflow-lock-hint"
+          className="mt-3 flex items-start gap-2 px-2 text-xs leading-5 text-muted"
+        >
+          <CircleAlert
+            aria-hidden="true"
+            size={15}
+            className="mt-0.5 shrink-0 text-warning"
+          />
+          还有 {pendingSuggestionCount} 条建议待确认，处理后可进入下一阶段。
+        </p>
+      ) : null}
+    </>
   );
 }
 
 export function Workspace() {
   const activeModule = useAppStore((state) => state.module);
   const analysis = useAppStore((state) => state.analysis)!;
+  const pendingSuggestionCount = analysis.suggestions.filter(
+    (suggestion) => suggestion.status === "pending",
+  ).length;
   const undoStack = useAppStore((state) => state.undoStack);
   const undo = useAppStore((state) => state.undo);
   const goHome = useAppStore((state) => state.goHome);
@@ -154,7 +180,7 @@ export function Workspace() {
           </Tooltip.Portal>
         </Tooltip.Root>
         <div className="mt-8">
-          <Navigation />
+          <Navigation pendingSuggestionCount={pendingSuggestionCount} />
         </div>
         <div className="mt-auto border-t border-line pt-4">
           <div className="flex items-start gap-2 px-2 text-xs leading-5 text-muted">
@@ -163,7 +189,7 @@ export function Workspace() {
               size={16}
               className="mt-0.5 shrink-0 text-success"
             />
-            当前会话将在 24 小时内自动清理
+            当前会话 24 小时到期，下次打开时清理
           </div>
         </div>
       </aside>
@@ -309,7 +335,9 @@ export function Workspace() {
           ref={workspaceContentRef}
           id="workspace-content"
           tabIndex={-1}
-          className="min-h-0 flex-1 overflow-auto overscroll-contain"
+          className={`relative h-0 min-h-0 flex-1 overscroll-contain ${
+            activeModule === "resume" ? "overflow-hidden" : "overflow-auto"
+          }`}
         >
           {activeModule === "resume" ? <ResumeWorkspace /> : null}
           {activeModule === "job" ? <JobWorkspace /> : null}

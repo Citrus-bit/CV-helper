@@ -5,6 +5,11 @@
 !templates/typst/**
 
 # Re-exclude sensitive artifacts even when they are nested in allowed roots.
+**/__pycache__/**
+**/.pytest_cache/**
+**/*.pyc
+**/*.pyo
+**/*.pyd
 **/.env
 **/.env.*
 **/.envrc

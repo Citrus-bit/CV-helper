@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   AnswerEvaluationSchema,
+  AtsAuditSchema,
   ClaimSchema,
   EvidenceAssetSchema,
   ExportHardGateSchema,
@@ -21,6 +22,7 @@ export const AnalysisBundleSchema = z.object({
   evidence: z.array(EvidenceAssetSchema),
   claims: z.array(ClaimSchema),
   scorecard: ScorecardSchema,
+  atsAudit: AtsAuditSchema.optional(),
   suggestions: z.array(SuggestionSchema),
   stories: z.array(InterviewStorySchema),
   pagePreviews: z.array(z.string()),
@@ -33,18 +35,59 @@ export const AnalysisBundleSchema = z.object({
 });
 export type AnalysisBundle = z.infer<typeof AnalysisBundleSchema>;
 
-export const JobMatchBundleSchema = z.object({
-  sourceResumeId: z.string().min(1),
-  sourceResumeRevision: z.number().int().nonnegative(),
-  job: JobPostingSchema,
-  requirements: z.array(JDRequirementSchema),
-  mappings: z.array(RequirementEvidenceMapSchema),
-  coverage: z.number().min(0).max(100),
-  summary: z.string(),
-  riskFlags: z.array(z.string()),
-  variant: ResumeVariantSchema.optional(),
-});
+export const JobMatchBundleSchema = z
+  .object({
+    sourceResumeId: z.string().min(1),
+    sourceResumeRevision: z.number().int().nonnegative(),
+    job: JobPostingSchema,
+    requirements: z.array(JDRequirementSchema),
+    mappings: z.array(RequirementEvidenceMapSchema),
+    coverage: z.number().min(0).max(100),
+    summary: z.string(),
+    riskFlags: z.array(z.string()),
+    variant: ResumeVariantSchema.optional(),
+    variantUnavailableReason: z.string().min(1).optional(),
+  })
+  .superRefine((bundle, context) => {
+    if (
+      bundle.variant &&
+      bundle.variant.changes.length === 0 &&
+      bundle.variant.appliedSuggestionIds.length === 0
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["variant"],
+        message: "A job variant must declare at least one applied change.",
+      });
+    }
+    if (bundle.variant && bundle.variantUnavailableReason) {
+      context.addIssue({
+        code: "custom",
+        path: ["variantUnavailableReason"],
+        message: "A created variant cannot also be marked unavailable.",
+      });
+    }
+  });
 export type JobMatchBundle = z.infer<typeof JobMatchBundleSchema>;
+
+export const JobDraftSchema = z
+  .object({
+    jdText: z.string().max(60_000),
+    jobTitle: z.string().max(120),
+    seniority: z.enum([
+      "",
+      "intern",
+      "entry",
+      "mid",
+      "senior",
+      "lead",
+      "executive",
+    ]),
+    location: z.string().max(160),
+    language: z.enum(["zh-CN", "en-US"]),
+  })
+  .strict();
+export type JobDraft = z.infer<typeof JobDraftSchema>;
 
 export const InterviewPlanSchema = z.object({
   sourceResumeId: z.string().min(1).optional(),
@@ -56,7 +99,9 @@ export const InterviewPlanSchema = z.object({
 });
 export type InterviewPlan = z.infer<typeof InterviewPlanSchema>;
 
-export function dedupeConsistencyWarnings(warnings: readonly string[]): string[] {
+export function dedupeConsistencyWarnings(
+  warnings: readonly string[],
+): string[] {
   const seen = new Set<string>();
   const unique: string[] = [];
   for (const warning of warnings) {
@@ -68,13 +113,42 @@ export function dedupeConsistencyWarnings(warnings: readonly string[]): string[]
   return unique;
 }
 
+export const AnswerCoachingSchema = z.object({
+  headline: z.string().min(1),
+  actions: z.array(z.string().min(1)),
+  improvedOutline: z.array(z.string().min(1)),
+  factSafetyReminder: z.string().min(1),
+});
+export type AnswerCoaching = z.infer<typeof AnswerCoachingSchema>;
+
 export const EvaluationResponseSchema = z.object({
   sourceResumeId: z.string().min(1).optional(),
   sourceResumeRevision: z.number().int().nonnegative().optional(),
   evaluation: AnswerEvaluationSchema,
+  // Optional so a v3 session created before coaching was exposed can still be restored.
+  coaching: AnswerCoachingSchema.optional(),
   consistencyWarnings: z.array(z.string()).transform(dedupeConsistencyWarnings),
 });
 export type EvaluationResponse = z.infer<typeof EvaluationResponseSchema>;
+
+export const InterviewSetupStageSchema = z.enum(["intro", "device_check"]);
+export type InterviewSetupStage = z.infer<typeof InterviewSetupStageSchema>;
+
+export const InterviewProgressSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    sourceResumeId: z.string().min(1),
+    sourceResumeRevision: z.number().int().nonnegative(),
+    planFingerprint: z.string().min(1).max(128),
+    questionIndex: z.number().int().nonnegative(),
+    followUpRound: z.number().int().min(0).max(2),
+    askedFollowUps: z.array(z.string().trim().min(1).max(1_000)).max(2),
+    followUpEvaluation: EvaluationResponseSchema.nullable(),
+    transcript: z.string().max(50_000),
+    transcriptSource: z.enum(["speech", "text"]),
+  })
+  .strict();
+export type InterviewProgress = z.infer<typeof InterviewProgressSchema>;
 
 export const TranscriptionResponseSchema = z.object({
   transcript: z.string(),
@@ -90,42 +164,59 @@ export const LayoutRecommendationSchema = z.object({
   estimatedPages: z.number().int().positive(),
   density: z.enum(["light", "balanced", "dense"]),
   reasons: z.array(z.string().min(1)).min(1),
-  rankings: z.array(
-    z.object({
-      template: z.enum(["professional", "minimal", "compact"]),
-      score: z.number().min(0).max(100),
-      estimatedPages: z.number().int().positive(),
-    }),
-  ).length(3),
+  rankings: z
+    .array(
+      z.object({
+        template: z.enum(["professional", "minimal", "compact"]),
+        score: z.number().min(0).max(100),
+        estimatedPages: z.number().int().positive(),
+      }),
+    )
+    .length(3),
 });
 export type LayoutRecommendation = z.infer<typeof LayoutRecommendationSchema>;
 
-export const RenderResponseSchema = z.object({
-  template: z.enum(["professional", "minimal", "compact"]),
-  pdfBase64: z.string().min(1),
-  sha256: z.string().regex(/^[a-f0-9]{64}$/),
-  byteLength: z.number().int().positive(),
-  searchableText: z.boolean(),
-  astContentCovered: z.boolean(),
-  hardGate: ExportHardGateSchema,
-  report: ExportQualityReportSchema,
-}).superRefine((render, context) => {
-  if (render.sha256 !== render.report.artifactSha256) {
-    context.addIssue({ code: "custom", message: "Render hash must match the quality report." });
-  }
-  if (render.searchableText !== render.report.searchableText) {
-    context.addIssue({ code: "custom", message: "Render searchability must match the quality report." });
-  }
-  if (render.astContentCovered !== render.report.contentComplete) {
-    context.addIssue({ code: "custom", message: "Render content coverage must match the quality report." });
-  }
-  if (
-    render.hardGate.passed !== render.report.hardGate.passed ||
-    render.hardGate.blockingCheckIds.join("|") !== render.report.hardGate.blockingCheckIds.join("|")
-  ) {
-    context.addIssue({ code: "custom", message: "Render hard gate must match the quality report." });
-  }
-});
+export const RenderResponseSchema = z
+  .object({
+    template: z.enum(["professional", "minimal", "compact"]),
+    pdfBase64: z.string().min(1),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    byteLength: z.number().int().positive(),
+    searchableText: z.boolean(),
+    astContentCovered: z.boolean(),
+    hardGate: ExportHardGateSchema,
+    report: ExportQualityReportSchema,
+  })
+  .superRefine((render, context) => {
+    if (render.sha256 !== render.report.artifactSha256) {
+      context.addIssue({
+        code: "custom",
+        message: "Render hash must match the quality report.",
+      });
+    }
+    if (render.searchableText !== render.report.searchableText) {
+      context.addIssue({
+        code: "custom",
+        message: "Render searchability must match the quality report.",
+      });
+    }
+    if (render.astContentCovered !== render.report.contentComplete) {
+      context.addIssue({
+        code: "custom",
+        message: "Render content coverage must match the quality report.",
+      });
+    }
+    if (
+      render.hardGate.passed !== render.report.hardGate.passed ||
+      render.hardGate.blockingCheckIds.join("|") !==
+        render.report.hardGate.blockingCheckIds.join("|")
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Render hard gate must match the quality report.",
+      });
+    }
+  });
 export type RenderResponse = z.infer<typeof RenderResponseSchema>;
 
 export type CapabilityAvailability = {

@@ -159,6 +159,7 @@ function seedPlan(plan: InterviewPlan, evaluatedQuestionId?: string) {
       .addEvaluation(
         evaluation(evaluatedQuestionId, plan.sourceResumeRevision),
       );
+    useAppStore.getState().updateInterviewProgress({ questionIndex: 1 });
   }
 }
 
@@ -172,6 +173,115 @@ afterEach(() => {
 });
 
 describe("InterviewWorkspace session identity", () => {
+  it("keeps full question metadata, shows complete coaching, and caps follow-ups at two rounds", async () => {
+    const interviewPlan = planFixture("闭环");
+    interviewPlan.questions[0] = {
+      ...interviewPlan.questions[0],
+      roleFamilies: ["product", "cross-industry"],
+      skills: ["流程改进", "跨职能协作"],
+      followUps: ["第一个追问", "第二个追问", "第三个追问"],
+      scoringAnchors: ["说明个人行动", "结果可核对"],
+      source: "test-question-pack@1.0.0",
+      referenceQuestionIds: ["source-question-1"],
+    };
+    const mainQuestion = interviewPlan.questions[0];
+    const mainResponse = evaluation(mainQuestion.id);
+    mainResponse.evaluation.followUpQuestion = "第一个追问";
+    mainResponse.evaluation.citedAnswerFragments = ["我重新梳理了入职流程"];
+    mainResponse.coaching = {
+      headline: "先收紧结构，再补充真实证据。",
+      actions: ["开头直接回答问题。"],
+      improvedOutline: ["背景：说明场景", "行动：说明个人贡献"],
+      factSafetyReminder: "只使用可核对的事实。",
+    };
+    const firstFollowUpResponse = evaluation(`${mainQuestion.id}::follow-up:1`);
+    firstFollowUpResponse.evaluation.followUpQuestion = "第二个追问";
+    const secondFollowUpResponse = evaluation(
+      `${mainQuestion.id}::follow-up:2`,
+    );
+    secondFollowUpResponse.evaluation.followUpQuestion = "第三个追问";
+    apiMocks.evaluateAnswer
+      .mockResolvedValueOnce(mainResponse)
+      .mockResolvedValueOnce(firstFollowUpResponse)
+      .mockResolvedValueOnce(secondFollowUpResponse);
+
+    seedPlan(interviewPlan);
+    renderWorkspace();
+
+    fireEvent.change(screen.getByLabelText("回答转写"), {
+      target: { value: "我重新梳理了入职流程，并协调产品与研发落地。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
+
+    expect(
+      await screen.findByText("先收紧结构，再补充真实证据。"),
+    ).toBeInTheDocument();
+    expect(apiMocks.evaluateAnswer).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        question: expect.objectContaining({
+          id: mainQuestion.id,
+          locale: "zh-CN",
+          category: "resume",
+          difficulty: "intermediate",
+          roleFamilies: ["product", "cross-industry"],
+          skills: ["流程改进", "跨职能协作"],
+          followUps: ["第一个追问", "第二个追问", "第三个追问"],
+          scoringAnchors: ["说明个人行动", "结果可核对"],
+          source: "test-question-pack@1.0.0",
+          generated: false,
+          referenceQuestionIds: ["source-question-1"],
+        }),
+      }),
+    );
+    expect(
+      screen.getByRole("progressbar", { name: "问题相关评分" }),
+    ).toHaveAttribute("aria-valuenow", "16");
+    expect(screen.getByText("我重新梳理了入职流程")).toBeInTheDocument();
+    expect(screen.getByText("建议回答结构")).toBeInTheDocument();
+    expect(screen.getByText("只使用可核对的事实。")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "回答追问 1/2" }));
+    expect(screen.getByText("第一个追问")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("回答转写"), {
+      target: { value: "我用交付记录和团队复盘来核对结果。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
+    expect(
+      await screen.findByRole("button", { name: "回答追问 2/2" }),
+    ).toBeInTheDocument();
+    expect(apiMocks.evaluateAnswer).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        question: expect.objectContaining({
+          id: `${mainQuestion.id}::follow-up:1`,
+          prompt: "第一个追问",
+          skills: mainQuestion.skills,
+          followUps: ["第二个追问", "第三个追问"],
+        }),
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "回答追问 2/2" }));
+    expect(screen.getByText("第二个追问")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("回答转写"), {
+      target: { value: "我会补充第二个可核对的交付物证据。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
+
+    expect(
+      await screen.findByRole("button", { name: "下一题" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /回答追问/ }),
+    ).not.toBeInTheDocument();
+    expect(apiMocks.evaluateAnswer).toHaveBeenCalledTimes(3);
+    expect(useAppStore.getState().evaluations).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "下一题" }));
+    expect(screen.getByText("闭环 第 2 题")).toBeInTheDocument();
+  });
+
   it("registers active speech recognition so workspace navigation aborts it immediately", () => {
     const abort = vi.fn();
     class MockSpeechRecognition implements SpeechRecognitionLike {
@@ -311,6 +421,13 @@ describe("InterviewWorkspace session identity", () => {
     renderWorkspace();
 
     fireEvent.click(screen.getByRole("button", { name: "进入设备检查" }));
+    expect(apiMocks.createInterviewPlan).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("heading", { name: "设备与隐私检查" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("文字回答")).toBeInTheDocument();
+    expect(screen.getByText("隐私边界")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "开始面试" }));
     await waitFor(() =>
       expect(apiMocks.createInterviewPlan).toHaveBeenCalledOnce(),
     );
@@ -322,5 +439,83 @@ describe("InterviewWorkspace session identity", () => {
 
     expect(useAppStore.getState().interviewPlan).toBeNull();
     expect(screen.queryByText("过期计划 第 1 题")).not.toBeInTheDocument();
+  });
+
+  it("restores an in-progress follow-up, its draft, and its evaluation after remount", async () => {
+    const interviewPlan = planFixture("可恢复");
+    interviewPlan.questions[0] = {
+      ...interviewPlan.questions[0],
+      followUps: ["请说明你个人完成的关键动作。"],
+    };
+    const mainResponse = evaluation(interviewPlan.questions[0].id);
+    mainResponse.evaluation.followUpQuestion = "请说明你个人完成的关键动作。";
+    const followUpResponse = evaluation(
+      `${interviewPlan.questions[0].id}::follow-up:1`,
+    );
+    apiMocks.evaluateAnswer
+      .mockResolvedValueOnce(mainResponse)
+      .mockResolvedValueOnce(followUpResponse);
+    seedPlan(interviewPlan);
+
+    const mounted = renderWorkspace();
+    fireEvent.change(screen.getByLabelText("回答转写"), {
+      target: { value: "我先说明主问题中的背景、行动和真实结果。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "回答追问 1/2" }),
+    );
+    fireEvent.change(screen.getByLabelText("回答转写"), {
+      target: { value: "这是还没有提交的追问草稿，会保存在本机进度中。" },
+    });
+
+    mounted.unmount();
+    renderWorkspace();
+
+    expect(
+      screen.getByText("请说明你个人完成的关键动作。"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("回答转写")).toHaveValue(
+      "这是还没有提交的追问草稿，会保存在本机进度中。",
+    );
+    expect(useAppStore.getState().interviewProgress).toMatchObject({
+      questionIndex: 0,
+      followUpRound: 1,
+      askedFollowUps: ["请说明你个人完成的关键动作。"],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
+    await screen.findByRole("button", { name: "下一题" });
+    expect(
+      useAppStore.getState().interviewProgress?.followUpEvaluation,
+    ).toMatchObject({
+      evaluation: {
+        questionId: `${interviewPlan.questions[0].id}::follow-up:1`,
+      },
+    });
+
+    cleanup();
+    renderWorkspace();
+    expect(screen.getByText("追问 1 评分")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下一题" })).toBeInTheDocument();
+  });
+
+  it("does not skip a pending follow-up when a reviewed main answer is remounted", () => {
+    const interviewPlan = planFixture("不跳过");
+    interviewPlan.questions[0] = {
+      ...interviewPlan.questions[0],
+      followUps: ["还有一个未完成的追问"],
+    };
+    seedPlan(interviewPlan);
+    const mainResponse = evaluation(interviewPlan.questions[0].id);
+    mainResponse.evaluation.followUpQuestion = "还有一个未完成的追问";
+    useAppStore.getState().addEvaluation(mainResponse);
+
+    renderWorkspace();
+
+    expect(screen.getByText("不跳过 第 1 题")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "回答追问 1/2" }),
+    ).toBeInTheDocument();
   });
 });

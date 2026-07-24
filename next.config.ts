@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  poweredByHeader: false,
   outputFileTracingIncludes: {
     "/api/analyze": ["./.tools/tesseract/*.traineddata.gz"],
     "/api/interview/plan": ["./content/interview/**/*"],

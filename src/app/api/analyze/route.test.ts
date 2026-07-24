@@ -21,6 +21,12 @@ const mocks = vi.hoisted(() => ({
               confidence: 1,
               bbox: { x: 0.1, y: 0.1, width: 0.5, height: 0.06 },
               role: "heading",
+              style: {
+                fontFamily: "ABCDEE+Helvetica-Bold",
+                fontSize: 18,
+                fontWeight: 700,
+                fontStyle: "normal",
+              },
             },
           ],
           pages: [
@@ -138,6 +144,15 @@ describe("POST /api/analyze mixed-page OCR", () => {
     expect(parsed.blocks.find((block) => block.id === "mixed-missing")).toMatchObject({
       confidence: 0.93,
       bbox: { x: 0.1, y: 0.55, width: 0.72, height: 0.075 },
+    });
+    expect(parsed.blocks.find((block) => block.id === "native-title")).toMatchObject({
+      role: "heading",
+      style: {
+        fontFamily: "ABCDEE+Helvetica-Bold",
+        fontSize: 18,
+        fontWeight: 700,
+        fontStyle: "normal",
+      },
     });
     expect(parsed.pages.map((page) => page.ocrConfidence)).toEqual([0.9, 0.9, undefined]);
     expect(parsed.extractionMode).toBe("hybrid");

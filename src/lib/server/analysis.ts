@@ -283,13 +283,16 @@ function sourceBlocks(
     bbox: block.bbox,
     source: block.source === "pdf" ? "native" : "ocr",
     confidence: block.confidence,
+    style: block.style,
     role: roles.headingIds.has(block.id)
       ? "heading"
       : roles.contactIds.has(block.id)
         ? "contact"
         : roles.listItemIds.has(block.id)
           ? "list-item"
-          : "paragraph",
+          : block.role && block.role !== "unknown"
+            ? block.role
+            : "paragraph",
   }));
 }
 
@@ -383,9 +386,19 @@ export async function analyzeParsedResume(
     options.signal,
   );
   const evidenceResult = await invokeBaselineCapability("evidence.mine", { resume }, context);
-  const conflictResult = await invokeBaselineCapability("claim.conflict", { claims: evidenceResult.data.claims }, context);
+  const assessmentResults = await Promise.all(
+    evidenceResult.data.claims.map((claim) =>
+      invokeBaselineCapability(
+        "claim.assess",
+        { claim, evidenceAssets: evidenceResult.data.evidenceAssets },
+        context,
+      ),
+    ),
+  );
+  const assessedClaims = assessmentResults.map((result) => result.data);
+  const conflictResult = await invokeBaselineCapability("claim.conflict", { claims: assessedClaims }, context);
   const conflictingIds = new Set(conflictResult.data.conflicts.flatMap((conflict) => conflict.claimIds));
-  const claims = evidenceResult.data.claims.map((claim) =>
+  const claims = assessedClaims.map((claim) =>
     conflictingIds.has(claim.id) ? { ...claim, status: "conflicting" as const, confidence: Math.min(claim.confidence, 0.65) } : claim,
   );
   const [scoreResult, suggestionResult, atsResult] = await Promise.all([
@@ -407,6 +420,7 @@ export async function analyzeParsedResume(
     evidence: evidenceResult.data.evidenceAssets,
     claims,
     scorecard: { ...scoreResult.data, sourceVersion: scoreResult.sourceVersion },
+    atsAudit: { ...atsResult.data, sourceVersion: atsResult.sourceVersion },
     suggestions: suggestionResult.data.suggestions,
     stories: storyResults.map((result) => result.data),
     pagePreviews: parsed.pages.map((page) => page.previewDataUrl),
@@ -422,6 +436,7 @@ export async function analyzeParsedResume(
         "prompt.guard": guardResult.sourceVersion,
         "pii.redact": redactionResult.sourceVersion,
         "evidence.mine": evidenceResult.sourceVersion,
+        ...(assessmentResults[0] ? { "claim.assess": assessmentResults[0].sourceVersion } : {}),
         "claim.conflict": conflictResult.sourceVersion,
         "resume.score": scoreResult.sourceVersion,
         "resume.suggest": suggestionResult.sourceVersion,

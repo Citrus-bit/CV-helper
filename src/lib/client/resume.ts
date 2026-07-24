@@ -1,7 +1,18 @@
-import { ResumeASTSchema, type ResumeAST, type ResumeEntry, type ResumeSection, type Suggestion } from "@/lib/domain";
+import {
+  ResumeASTSchema,
+  type ResumeAST,
+  type ResumeEntry,
+  type ResumeSection,
+  type Suggestion,
+} from "@/lib/domain";
+import { stableId } from "@/lib/baseline/utils";
 import type { RenderableResume } from "@/lib/server/typst";
 
-const blockedPointerSegments = new Set(["__proto__", "constructor", "prototype"]);
+const blockedPointerSegments = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
 const allowedRoots = new Set(["contact", "summary", "sections"]);
 
 function replaceText(value: string | undefined, before: string, after: string) {
@@ -9,14 +20,20 @@ function replaceText(value: string | undefined, before: string, after: string) {
   return value.replace(before, after);
 }
 
-function replaceInEntry(entry: ResumeEntry, before: string, after: string): ResumeEntry {
+function replaceInEntry(
+  entry: ResumeEntry,
+  before: string,
+  after: string,
+): ResumeEntry {
   return {
     ...entry,
     title: replaceText(entry.title, before, after) ?? entry.title,
     subtitle: replaceText(entry.subtitle, before, after),
     organization: replaceText(entry.organization, before, after),
     summary: replaceText(entry.summary, before, after),
-    bullets: entry.bullets.map((bullet) => replaceText(bullet, before, after) ?? bullet),
+    bullets: entry.bullets.map(
+      (bullet) => replaceText(bullet, before, after) ?? bullet,
+    ),
   };
 }
 
@@ -26,10 +43,56 @@ function pointerSegments(path: string): string[] | null {
     .slice(1)
     .split("/")
     .map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
-  if (!segments[0] || !allowedRoots.has(segments[0]) || segments.some((segment) => blockedPointerSegments.has(segment))) {
+  if (
+    !segments[0] ||
+    !allowedRoots.has(segments[0]) ||
+    segments.some((segment) => blockedPointerSegments.has(segment))
+  ) {
     return null;
   }
   return segments;
+}
+
+function pointerValue(target: unknown, path: string): unknown {
+  const segments = pointerSegments(path);
+  if (!segments) return undefined;
+  let current = target;
+  for (const segment of segments) {
+    if (Array.isArray(current)) {
+      if (!/^\d+$/.test(segment)) return undefined;
+      const index = Number(segment);
+      if (index < 0 || index >= current.length) return undefined;
+      current = current[index];
+    } else if (current && typeof current === "object") {
+      if (!Object.hasOwn(current, segment)) return undefined;
+      current = (current as Record<string, unknown>)[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return current;
+}
+
+function hashableValue(value: unknown) {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+export function suggestionBeforeHashMatches(
+  ast: ResumeAST,
+  suggestion: Suggestion,
+) {
+  if (suggestion.patches.length === 1) {
+    const patch = suggestion.patches[0];
+    if (patch.operation === "add") return false;
+    const currentValue = pointerValue(ast, patch.path);
+    const serialized = hashableValue(currentValue);
+    return (
+      serialized !== undefined &&
+      stableId("hash", serialized) === suggestion.beforeHash
+    );
+  }
+  if (suggestion.patches.length > 1 || !suggestion.originalText) return false;
+  return stableId("hash", suggestion.originalText) === suggestion.beforeHash;
 }
 
 function applyPatch(target: unknown, suggestion: Suggestion): ResumeAST | null {
@@ -89,7 +152,10 @@ function applyPatch(target: unknown, suggestion: Suggestion): ResumeAST | null {
       if (patch.operation === "remove") {
         delete record[key];
         changed = true;
-      } else if (!Object.hasOwn(record, key) || JSON.stringify(record[key]) !== JSON.stringify(value)) {
+      } else if (
+        !Object.hasOwn(record, key) ||
+        JSON.stringify(record[key]) !== JSON.stringify(value)
+      ) {
         record[key] = value;
         changed = true;
       }
@@ -100,11 +166,16 @@ function applyPatch(target: unknown, suggestion: Suggestion): ResumeAST | null {
 
   if (!changed) return null;
   const parsed = ResumeASTSchema.safeParse(draft);
-  if (!parsed.success || JSON.stringify(parsed.data) === JSON.stringify(target)) return null;
+  if (!parsed.success || JSON.stringify(parsed.data) === JSON.stringify(target))
+    return null;
   return parsed.data;
 }
 
-export function applySuggestion(ast: ResumeAST, suggestion: Suggestion): ResumeAST {
+export function applySuggestion(
+  ast: ResumeAST,
+  suggestion: Suggestion,
+): ResumeAST {
+  if (!suggestionBeforeHashMatches(ast, suggestion)) return ast;
   const patched = applyPatch(ast, suggestion);
   if (patched) return patched;
   if (suggestion.patches.length > 0) return ast;
@@ -118,19 +189,28 @@ export function applySuggestion(ast: ResumeAST, suggestion: Suggestion): ResumeA
     sections: ast.sections.map((section) => ({
       ...section,
       text: replaceText(section.text, before, after),
-      entries: section.entries.map((entry) => replaceInEntry(entry, before, after)),
+      entries: section.entries.map((entry) =>
+        replaceInEntry(entry, before, after),
+      ),
     })),
   };
   return JSON.stringify(next) === JSON.stringify(ast) ? ast : next;
 }
 
-function sectionItems(section: ResumeSection): RenderableResume["sections"][number]["items"] {
+function sectionItems(
+  section: ResumeSection,
+): RenderableResume["sections"][number]["items"] {
   if (section.entries.length > 0) {
     return section.entries.map((entry) => ({
       title: entry.title,
       subtitle: entry.organization ?? entry.subtitle,
       date: [entry.startDate, entry.endDate].filter(Boolean).join(" - "),
-      bullets: entry.bullets.length > 0 ? entry.bullets : entry.summary ? [entry.summary] : [],
+      bullets:
+        entry.bullets.length > 0
+          ? entry.bullets
+          : entry.summary
+            ? [entry.summary]
+            : [],
     }));
   }
   return section.text

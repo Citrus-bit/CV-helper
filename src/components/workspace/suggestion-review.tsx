@@ -13,16 +13,87 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { Suggestion, SuggestionKind } from "@/lib/domain";
+import type { Claim, Suggestion, SuggestionKind } from "@/lib/domain";
 import { useAppStore } from "@/lib/client/store";
 
-const kindMeta: Record<SuggestionKind, { label: string; className: string; icon: typeof Pencil }> = {
-  use_as_is: { label: "保留原文", className: "bg-[#eef8f2] text-success", icon: Check },
-  rewrite: { label: "表达优化", className: "bg-[#edf5ff] text-brand", icon: Pencil },
-  needs_proof: { label: "待补证据", className: "bg-[#fff7df] text-warning", icon: ShieldAlert },
-  remove: { label: "建议移除", className: "bg-[#fff0ef] text-danger", icon: AlertTriangle },
-  ask_user: { label: "需要确认", className: "bg-[#f1efff] text-[#6546b8]", icon: CircleHelp },
+const kindMeta: Record<
+  SuggestionKind,
+  { label: string; className: string; icon: typeof Pencil }
+> = {
+  use_as_is: {
+    label: "保留原文",
+    className: "bg-[#eef8f2] text-success",
+    icon: Check,
+  },
+  rewrite: {
+    label: "表达优化",
+    className: "bg-[#edf5ff] text-brand",
+    icon: Pencil,
+  },
+  needs_proof: {
+    label: "待补证据",
+    className: "bg-[#fff7df] text-warning",
+    icon: ShieldAlert,
+  },
+  remove: {
+    label: "建议移除",
+    className: "bg-[#fff0ef] text-danger",
+    icon: AlertTriangle,
+  },
+  ask_user: {
+    label: "需要确认",
+    className: "bg-[#f1efff] text-[#6546b8]",
+    icon: CircleHelp,
+  },
 };
+
+const claimStatusMeta: Record<
+  Claim["status"],
+  { label: string; className: string }
+> = {
+  resume_only: {
+    label: "仅来自简历",
+    className: "bg-[#f0f1f3] text-muted",
+  },
+  user_confirmed: {
+    label: "用户已确认",
+    className: "bg-[#edf5ff] text-brand",
+  },
+  supported: {
+    label: "有材料支持",
+    className: "bg-[#eef8f2] text-success",
+  },
+  needs_evidence: {
+    label: "待补证据",
+    className: "bg-[#fff7df] text-warning",
+  },
+  conflicting: {
+    label: "存在冲突",
+    className: "bg-[#fff0ef] text-danger",
+  },
+};
+
+const dimensionLabel: Record<string, string> = {
+  impact: "成果与影响力",
+  completeness: "信息完整性",
+  clarity: "清晰与精炼",
+  structure: "结构与版式",
+  ats: "ATS 可解析性",
+  language: "语言规范性",
+};
+
+const riskLabel = {
+  none: "无",
+  low: "低",
+  medium: "中",
+  high: "高",
+} as const;
+
+export function evidenceAnswerIsValid(value: string, originalText: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  const original = originalText.replace(/\s+/g, " ").trim();
+  return normalized.length >= 2 && normalized !== original;
+}
 
 export function suggestionStatusMessage(suggestion: Suggestion) {
   if (suggestion.status === "rejected") return "这条建议已跳过。";
@@ -44,12 +115,19 @@ function EvidenceDialog({ suggestion }: { suggestion: Suggestion }) {
   const claims = useAppStore((state) => state.analysis?.claims ?? []);
   const confirmClaim = useAppStore((state) => state.confirmClaim);
   const claim = claims.find((item) => suggestion.claimIds.includes(item.id));
-  const [value, setValue] = useState(claim?.text ?? suggestion.originalText);
+  const [value, setValue] = useState("");
+  const validAnswer = evidenceAnswerIsValid(
+    value,
+    claim?.text ?? suggestion.originalText,
+  );
 
   return (
     <Dialog.Root>
       <Dialog.Trigger asChild>
-        <button type="button" className="inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-warning px-4 text-sm font-medium text-white hover:bg-[#7d5400]">
+        <button
+          type="button"
+          className="inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-warning px-4 text-sm font-medium text-white hover:bg-[#7d5400]"
+        >
           <ShieldAlert aria-hidden="true" size={17} />
           补充事实
         </button>
@@ -57,28 +135,55 @@ function EvidenceDialog({ suggestion }: { suggestion: Suggestion }) {
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/45" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[85dvh] w-[calc(100%-32px)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-[8px] bg-white p-6 shadow-panel">
-          <Dialog.Title className="text-lg font-semibold">补充可核对的事实</Dialog.Title>
+          <Dialog.Title className="text-lg font-semibold">
+            补充可核对的事实
+          </Dialog.Title>
           <Dialog.Description className="mt-2 text-sm leading-6 text-muted">
             只填写你真实完成的动作、方法或结果。没有准确数字时，可以保留非量化表述。
           </Dialog.Description>
-          <label className="mt-5 block text-sm font-medium" htmlFor={`evidence-${suggestion.id}`}>事实说明</label>
+          {suggestion.question ? (
+            <div className="mt-5 rounded-[8px] border-l-2 border-brand bg-[#f3f8ff] px-3 py-2.5">
+              <p className="text-xs font-medium text-muted">需要你回答</p>
+              <p className="mt-1 text-sm leading-6">{suggestion.question}</p>
+            </div>
+          ) : null}
+          <div className="mt-4 rounded-[8px] bg-[#f7f7f8] px-3 py-2.5">
+            <p className="text-xs font-medium text-muted">当前简历原文</p>
+            <p className="mt-1 text-sm leading-6">
+              {claim?.text ?? suggestion.originalText}
+            </p>
+          </div>
+          <label
+            className="mt-5 block text-sm font-medium"
+            htmlFor={`evidence-${suggestion.id}`}
+          >
+            你的核对结果
+          </label>
           <textarea
             id={`evidence-${suggestion.id}`}
             value={value}
             onChange={(event) => setValue(event.target.value)}
             rows={6}
+            placeholder="填写真实、可在面试中说明的事实；不要直接重复原文。"
             className="mt-2 w-full resize-y rounded-[8px] border border-line bg-white p-3 text-sm leading-6 outline-none focus:border-brand"
           />
+          {!validAnswer && value.trim() ? (
+            <p className="mt-2 text-xs leading-5 text-warning" role="status">
+              请回答上方问题并补充可核对信息，不能直接重复原文。
+            </p>
+          ) : null}
           <div className="mt-6 flex justify-end gap-2">
-            <Dialog.Close className="min-h-11 rounded-[8px] px-4 text-sm font-medium text-muted hover:bg-[#f0f1f3]">取消</Dialog.Close>
+            <Dialog.Close className="min-h-11 rounded-[8px] px-4 text-sm font-medium text-muted hover:bg-[#f0f1f3]">
+              取消
+            </Dialog.Close>
             <Dialog.Close asChild>
               <button
                 type="button"
-                disabled={!claim || !value.trim()}
+                disabled={!claim || !validAnswer}
                 onClick={() => claim && confirmClaim(claim.id, value)}
                 className="min-h-11 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf] disabled:opacity-40"
               >
-                确认事实
+                生成待审阅改写
               </button>
             </Dialog.Close>
           </div>
@@ -96,9 +201,14 @@ export function SuggestionReview() {
   const [editing, setEditing] = useState(false);
   const [manualText, setManualText] = useState("");
 
-  const selectedIndex = Math.max(0, analysis.suggestions.findIndex((item) => item.id === selectedId));
+  const selectedIndex = Math.max(
+    0,
+    analysis.suggestions.findIndex((item) => item.id === selectedId),
+  );
   const suggestion = analysis.suggestions[selectedIndex];
-  const pending = analysis.suggestions.filter((item) => item.status === "pending").length;
+  const pending = analysis.suggestions.filter(
+    (item) => item.status === "pending",
+  ).length;
   const meta = suggestion ? kindMeta[suggestion.kind] : null;
   const Icon = meta?.icon ?? Pencil;
 
@@ -106,23 +216,39 @@ export function SuggestionReview() {
     const claimIds = new Set(suggestion?.claimIds ?? []);
     return analysis.claims.filter((claim) => claimIds.has(claim.id));
   }, [analysis.claims, suggestion]);
+  const sourceBlocks = useMemo(() => {
+    const sourceIds = new Set(suggestion?.sourceBlockIds ?? []);
+    return analysis.resume.sourceBlocks.filter((block) =>
+      sourceIds.has(block.id),
+    );
+  }, [analysis.resume.sourceBlocks, suggestion]);
 
   if (!suggestion) {
     return <div className="p-6 text-sm text-muted">没有需要审阅的建议。</div>;
   }
 
   function move(offset: number) {
-    const index = Math.min(analysis.suggestions.length - 1, Math.max(0, selectedIndex + offset));
+    const index = Math.min(
+      analysis.suggestions.length - 1,
+      Math.max(0, selectedIndex + offset),
+    );
     selectSuggestion(analysis.suggestions[index].id);
     setEditing(false);
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col" aria-labelledby="suggestions-heading">
+    <section
+      className="flex min-h-0 flex-1 flex-col"
+      aria-labelledby="suggestions-heading"
+    >
       <div className="flex items-center justify-between border-b border-line px-5 py-3">
         <div>
-          <h2 id="suggestions-heading" className="text-sm font-semibold">逐条审阅</h2>
-          <p className="mt-0.5 text-xs text-muted">待处理 {pending} · 共 {analysis.suggestions.length} 条</p>
+          <h2 id="suggestions-heading" className="text-sm font-semibold">
+            逐条审阅
+          </h2>
+          <p className="mt-0.5 text-xs text-muted">
+            待处理 {pending} · 共 {analysis.suggestions.length} 条
+          </p>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -134,7 +260,9 @@ export function SuggestionReview() {
           >
             <ChevronLeft aria-hidden="true" size={18} />
           </button>
-          <span className="w-12 text-center text-xs tabular-nums text-muted">{selectedIndex + 1}/{analysis.suggestions.length}</span>
+          <span className="w-12 text-center text-xs tabular-nums text-muted">
+            {selectedIndex + 1}/{analysis.suggestions.length}
+          </span>
           <button
             type="button"
             aria-label="下一条建议"
@@ -149,14 +277,22 @@ export function SuggestionReview() {
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium ${meta?.className}`}>
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium ${meta?.className}`}
+          >
             <Icon aria-hidden="true" size={14} />
             {meta?.label}
           </span>
           {suggestion.factRisk !== "none" ? (
             <span className="inline-flex items-center gap-1 text-xs text-warning">
               <ShieldAlert aria-hidden="true" size={14} />
-              事实风险 {suggestion.factRisk}
+              事实风险 {riskLabel[suggestion.factRisk]}
+            </span>
+          ) : null}
+          {suggestion.interviewRisk !== "none" ? (
+            <span className="inline-flex items-center gap-1 text-xs text-danger">
+              <CircleHelp aria-hidden="true" size={14} />
+              面试追问风险 {riskLabel[suggestion.interviewRisk]}
             </span>
           ) : null}
         </div>
@@ -172,7 +308,12 @@ export function SuggestionReview() {
             <div>
               {editing ? (
                 <>
-                  <label htmlFor={`manual-suggestion-${suggestion.id}`} className="text-xs font-medium text-muted">手动修改内容</label>
+                  <label
+                    htmlFor={`manual-suggestion-${suggestion.id}`}
+                    className="text-xs font-medium text-muted"
+                  >
+                    手动修改内容
+                  </label>
                   <textarea
                     id={`manual-suggestion-${suggestion.id}`}
                     value={manualText}
@@ -181,6 +322,9 @@ export function SuggestionReview() {
                     autoFocus
                     className="mt-1.5 w-full resize-y rounded-[8px] border border-brand bg-white p-3 text-sm leading-6 outline-none"
                   />
+                  <p className="mt-2 text-xs leading-5 text-muted">
+                    这里只调整已有事实的表达；新增数字、职责或结果应先走补事实流程。
+                  </p>
                 </>
               ) : (
                 <>
@@ -199,14 +343,57 @@ export function SuggestionReview() {
           <p className="mt-1 text-sm leading-6">{suggestion.rationale}</p>
         </div>
 
+        {suggestion.affectedDimensions.length > 0 ? (
+          <div className="mt-5">
+            <p className="text-xs font-medium text-muted">影响评分</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {suggestion.affectedDimensions.map((dimension) => (
+                <span
+                  key={dimension}
+                  className="rounded-[6px] bg-[#f0f1f3] px-2 py-1 text-xs text-muted"
+                >
+                  {dimensionLabel[dimension] ?? dimension}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {sourceBlocks.length > 0 ? (
+          <div className="mt-5">
+            <p className="text-xs font-medium text-muted">原文来源</p>
+            <ul className="mt-2 space-y-2">
+              {sourceBlocks.slice(0, 2).map((block) => (
+                <li
+                  key={block.id}
+                  className="rounded-[8px] border border-line px-3 py-2 text-xs leading-5"
+                >
+                  <span className="font-medium text-muted">
+                    第 {block.pageIndex + 1} 页 ·{" "}
+                    {block.source === "ocr" ? "OCR" : "原生文字"}
+                  </span>
+                  <span className="mt-1 block text-ink">{block.text}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {evidenceLabels.length > 0 ? (
           <div className="mt-5">
             <p className="text-xs font-medium text-muted">证据状态</p>
             <ul className="mt-2 space-y-2">
               {evidenceLabels.map((claim) => (
-                <li key={claim.id} className="flex items-start justify-between gap-3 rounded-[8px] bg-[#f7f7f8] px-3 py-2 text-xs leading-5">
+                <li
+                  key={claim.id}
+                  className="flex items-start justify-between gap-3 rounded-[8px] bg-[#f7f7f8] px-3 py-2 text-xs leading-5"
+                >
                   <span>{claim.text}</span>
-                  <span className="shrink-0 font-medium text-muted">{claim.status === "needs_evidence" ? "待补证据" : claim.status === "user_confirmed" ? "用户确认" : "简历原文"}</span>
+                  <span
+                    className={`shrink-0 rounded-[6px] px-2 py-0.5 font-medium ${claimStatusMeta[claim.status].className}`}
+                  >
+                    {claimStatusMeta[claim.status].label}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -228,13 +415,23 @@ export function SuggestionReview() {
             >
               保存修改
             </button>
-            <button type="button" onClick={() => setEditing(false)} className="min-h-11 rounded-[8px] px-4 text-sm font-medium text-muted hover:bg-[#f0f1f3]">取消</button>
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              className="min-h-11 rounded-[8px] px-4 text-sm font-medium text-muted hover:bg-[#f0f1f3]"
+            >
+              取消
+            </button>
           </div>
         ) : suggestion.status !== "pending" ? (
-          <p className="min-h-11 py-3 text-sm font-medium text-muted" role="status">
+          <p
+            className="min-h-11 py-3 text-sm font-medium text-muted"
+            role="status"
+          >
             {suggestionStatusMessage(suggestion)}
           </p>
-        ) : suggestion.kind === "needs_proof" || suggestion.kind === "ask_user" ? (
+        ) : suggestion.kind === "needs_proof" ||
+          suggestion.kind === "ask_user" ? (
           <div className="flex flex-wrap gap-2">
             <EvidenceDialog key={suggestion.id} suggestion={suggestion} />
             <button

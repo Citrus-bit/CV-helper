@@ -1,0 +1,4 @@
+interface:
+  display_name: "简历助手 Skill 总入口"
+  short_description: "统一规划并路由简历分析、岗位匹配、排版导出、面试和安全评测任务"
+  default_prompt: "使用 $resume-assistant-orchestrator 规划并执行当前简历分析助手任务。"

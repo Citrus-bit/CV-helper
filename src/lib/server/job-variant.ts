@@ -1,0 +1,234 @@
+import type {
+  Claim,
+  JDRequirement,
+  RequirementEvidenceMap,
+  ResumeAST,
+  ResumeEntry,
+  ResumeSection,
+  ResumeVariantChange,
+} from "@/lib/domain";
+import { extractKeywords, keywordOverlap, stableId } from "@/lib/baseline/utils";
+
+type JobVariantInput = {
+  ast: ResumeAST;
+  requirements: JDRequirement[];
+  mappings: RequirementEvidenceMap[];
+  claims: Claim[];
+};
+
+export type JobVariantResult = {
+  ast: ResumeAST;
+  changes: ResumeVariantChange[];
+};
+
+type RankingSignal = {
+  requirementId: string;
+  importance: number;
+  terms: string[];
+  claims: Claim[];
+};
+
+type ItemRelevance = {
+  score: number;
+  requirementIds: string[];
+  claimIds: string[];
+};
+
+function entryText(entry: ResumeEntry) {
+  return [
+    entry.title,
+    entry.subtitle,
+    entry.organization,
+    entry.location,
+    entry.summary,
+    ...entry.bullets,
+    ...entry.keywords,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function sectionText(section: ResumeSection) {
+  return [
+    section.title,
+    section.text,
+    ...section.entries.map(entryText),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function signalsFor(input: JobVariantInput): RankingSignal[] {
+  const requirements = new Map(
+    input.requirements.map((requirement) => [requirement.id, requirement]),
+  );
+  const claims = new Map(input.claims.map((claim) => [claim.id, claim]));
+
+  return input.mappings.flatMap((mapping) => {
+    if (mapping.status !== "met" && mapping.status !== "partial") return [];
+    const requirement = requirements.get(mapping.requirementId);
+    if (!requirement) return [];
+    const mappedClaims = mapping.claimIds
+      .map((id) => claims.get(id))
+      .filter((claim): claim is Claim => Boolean(claim))
+      .filter((claim) => claim.status !== "conflicting");
+    const terms = [
+      ...requirement.keywords,
+      ...extractKeywords(requirement.text),
+    ];
+    return [
+      {
+        requirementId: requirement.id,
+        importance:
+          requirement.importance * (mapping.status === "met" ? 1 : 0.6),
+        terms: [...new Set(terms.map((term) => term.toLowerCase()))],
+        claims: mappedClaims,
+      },
+    ];
+  });
+}
+
+function relevanceFor(
+  text: string,
+  sourceBlockIds: readonly string[],
+  signals: readonly RankingSignal[],
+): ItemRelevance {
+  const entitySourceIds = new Set(sourceBlockIds);
+  const requirementIds = new Set<string>();
+  const claimIds = new Set<string>();
+  let score = 0;
+
+  for (const signal of signals) {
+    const directOverlap = keywordOverlap(signal.terms, text);
+    let signalScore = directOverlap.length * signal.importance;
+
+    for (const claim of signal.claims) {
+      const sourceMatch = claim.sourceBlockIds.some((id) =>
+        entitySourceIds.has(id),
+      );
+      const claimTextMatch = keywordOverlap(claim.text, text).length > 0;
+      if (!sourceMatch && !claimTextMatch) continue;
+      signalScore += signal.importance * (sourceMatch ? 4 : 2);
+      if (claim.status === "supported" || claim.status === "user_confirmed") {
+        signalScore += signal.importance * 0.25;
+      }
+      claimIds.add(claim.id);
+    }
+
+    if (signalScore <= 0) continue;
+    score += signalScore;
+    requirementIds.add(signal.requirementId);
+  }
+
+  return {
+    score,
+    requirementIds: [...requirementIds],
+    claimIds: [...claimIds],
+  };
+}
+
+function ranked<T extends { id: string }>(
+  items: readonly T[],
+  relevance: (item: T) => ItemRelevance,
+) {
+  return items
+    .map((item, index) => ({ item, index, relevance: relevance(item) }))
+    .sort(
+      (left, right) =>
+        right.relevance.score - left.relevance.score ||
+        left.index - right.index,
+    );
+}
+
+function changedOrder(before: readonly string[], after: readonly string[]) {
+  return before.some((id, index) => id !== after[index]);
+}
+
+function changeEvidence(
+  rankings: ReadonlyArray<{ relevance: ItemRelevance }>,
+) {
+  return {
+    requirementIds: [
+      ...new Set(rankings.flatMap((item) => item.relevance.requirementIds)),
+    ],
+    claimIds: [
+      ...new Set(rankings.flatMap((item) => item.relevance.claimIds)),
+    ],
+  };
+}
+
+/**
+ * Produces a job-targeted AST without editing any user-authored value. The
+ * only allowed operation is a stable reorder of existing sections or entries.
+ */
+export function buildJobVariant(input: JobVariantInput): JobVariantResult | null {
+  const signals = signalsFor(input);
+  if (signals.length === 0) return null;
+
+  const changes: ResumeVariantChange[] = [];
+  const sectionsWithRankedEntries = input.ast.sections.map((section) => {
+    if (section.entries.length < 2) return section;
+    const rankings = ranked(section.entries, (entry) =>
+      relevanceFor(entryText(entry), entry.sourceBlockIds, signals),
+    );
+    const beforeIds = section.entries.map((entry) => entry.id);
+    const afterIds = rankings.map(({ item }) => item.id);
+    if (!changedOrder(beforeIds, afterIds)) return section;
+    const evidence = changeEvidence(rankings);
+    changes.push({
+      id: stableId(
+        "variant-change",
+        `entries:${section.id}:${beforeIds.join("|")}:${afterIds.join("|")}`,
+      ),
+      kind: "entry_reorder",
+      path: `/sections/by-id/${section.id}/entries`,
+      beforeIds,
+      afterIds,
+      ...evidence,
+      explanation: `将“${section.title}”中与目标岗位要求关联更强的经历前置；所有经历与原文保持不变。`,
+    });
+    return { ...section, entries: rankings.map(({ item }) => item) };
+  });
+
+  const movableSections = sectionsWithRankedEntries.filter(
+    (section) => section.type !== "summary",
+  );
+  const sectionRankings = ranked(movableSections, (section) =>
+    relevanceFor(
+      sectionText(section),
+      [
+        ...section.sourceBlockIds,
+        ...section.entries.flatMap((entry) => entry.sourceBlockIds),
+      ],
+      signals,
+    ),
+  );
+  const rankedIterator = sectionRankings.map(({ item }) => item)[Symbol.iterator]();
+  const reorderedSections = sectionsWithRankedEntries.map((section) =>
+    section.type === "summary" ? section : rankedIterator.next().value!,
+  );
+  const beforeSectionIds = sectionsWithRankedEntries.map((section) => section.id);
+  const afterSectionIds = reorderedSections.map((section) => section.id);
+  if (changedOrder(beforeSectionIds, afterSectionIds)) {
+    const evidence = changeEvidence(sectionRankings);
+    changes.unshift({
+      id: stableId(
+        "variant-change",
+        `sections:${beforeSectionIds.join("|")}:${afterSectionIds.join("|")}`,
+      ),
+      kind: "section_reorder",
+      path: "/sections",
+      beforeIds: beforeSectionIds,
+      afterIds: afterSectionIds,
+      ...evidence,
+      explanation:
+        "按目标岗位要求与现有简历证据的关联度调整章节顺序；简介位置及全部原文保持不变。",
+    });
+  }
+
+  if (changes.length === 0) return null;
+  return {
+    ast: { ...input.ast, sections: reorderedSections },
+    changes,
+  };
+}

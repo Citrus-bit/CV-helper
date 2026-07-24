@@ -19,8 +19,8 @@ class BoundingBox(BaseModel):
 class Character(BaseModel):
     text: str
     bbox: BoundingBox
-    font_name: str | None = None
-    font_size: float | None = None
+    font_name: str | None = Field(default=None, max_length=256)
+    font_size: float | None = Field(default=None, gt=0, le=1_000)
 
 
 class TextBlock(BaseModel):
@@ -28,6 +28,10 @@ class TextBlock(BaseModel):
     bbox: BoundingBox
     source: Literal["native", "ocr"]
     confidence: float = Field(ge=0, le=1)
+    font_name: str | None = Field(default=None, max_length=256)
+    font_size: float | None = Field(default=None, gt=0, le=1_000)
+    font_weight: int | None = Field(default=None, ge=100, le=900)
+    font_style: Literal["normal", "italic"] | None = None
 
 
 class PageMetrics(BaseModel):

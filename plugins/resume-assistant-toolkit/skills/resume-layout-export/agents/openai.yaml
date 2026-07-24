@@ -1,0 +1,4 @@
+interface:
+  display_name: "简历排版与导出"
+  short_description: "推荐版式、生成 Typst PDF，并执行导出质量硬门"
+  default_prompt: "使用 $resume-layout-export 设计并验证可下载的简历 PDF。"

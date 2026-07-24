@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import math
+import re
 import threading
 import time
 import unicodedata
@@ -138,6 +139,48 @@ def _area_ratio(boxes: Iterable[BoundingBox], page_area: float) -> float:
     return min(max(area / page_area, 0.0), 1.0)
 
 
+def _font_name(value: Any) -> str | None:
+    if value is None:
+        return None
+    name = str(value).strip()[:MAX_FONT_NAME_LENGTH]
+    return name or None
+
+
+def _font_size(value: Any) -> float | None:
+    size = _number(value)
+    return min(size, 1_000) if size > 0 else None
+
+
+def _font_weight(font_name: str | None) -> int | None:
+    if not font_name:
+        return None
+    normalized = re.sub(r"[^a-z0-9]+", "", font_name.lower())
+    if "thin" in normalized:
+        return 100
+    if "extralight" in normalized or "ultralight" in normalized:
+        return 200
+    if "light" in normalized:
+        return 300
+    if "medium" in normalized:
+        return 500
+    if "semibold" in normalized or "demibold" in normalized:
+        return 600
+    if "extrabold" in normalized or "ultrabold" in normalized:
+        return 800
+    if "black" in normalized or "heavy" in normalized:
+        return 900
+    if "bold" in normalized:
+        return 700
+    return 400
+
+
+def _font_style(font_name: str | None) -> str | None:
+    if not font_name:
+        return None
+    normalized = font_name.lower()
+    return "italic" if "italic" in normalized or "oblique" in normalized else "normal"
+
+
 def _native_content(
     page: Any,
 ) -> tuple[
@@ -176,12 +219,8 @@ def _native_content(
             Character(
                 text=text,
                 bbox=box,
-                font_name=(
-                    str(raw_character.get("fontname"))[:MAX_FONT_NAME_LENGTH]
-                    if raw_character.get("fontname")
-                    else None
-                ),
-                font_size=_number(raw_character.get("size")) or None,
+                font_name=_font_name(raw_character.get("fontname")),
+                font_size=_font_size(raw_character.get("size")),
             )
         )
 
@@ -190,9 +229,27 @@ def _native_content(
     words: list[Any] = []
     if not characters_truncated:
         try:
-            words = page.extract_words(x_tolerance=3, y_tolerance=3, keep_blank_chars=False) or []
+            words = (
+                page.extract_words(
+                    x_tolerance=3,
+                    y_tolerance=3,
+                    keep_blank_chars=False,
+                    extra_attrs=["fontname", "size"],
+                )
+                or []
+            )
         except (KeyError, TypeError, ValueError):
-            words = []
+            try:
+                words = (
+                    page.extract_words(
+                        x_tolerance=3,
+                        y_tolerance=3,
+                        keep_blank_chars=False,
+                    )
+                    or []
+                )
+            except (KeyError, TypeError, ValueError):
+                words = []
     if len(words) > MAX_WORDS_PER_PAGE:
         words_truncated = True
     block_text_characters = 0
@@ -213,12 +270,17 @@ def _native_content(
         if not text:
             continue
         block_text_characters += len(text)
+        font_name = _font_name(word.get("fontname"))
         blocks.append(
             TextBlock(
                 text=text,
                 bbox=_bbox(word, width, height),
                 source="native",
                 confidence=1.0,
+                font_name=font_name,
+                font_size=_font_size(word.get("size")),
+                font_weight=_font_weight(font_name),
+                font_style=_font_style(font_name),
             )
         )
 

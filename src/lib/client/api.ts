@@ -14,7 +14,13 @@ import {
   type RenderResponse,
   type TranscriptionResponse,
 } from "./contracts";
-import type { Claim, EvidenceAsset, InterviewStory, ResumeAST } from "@/lib/domain";
+import type {
+  Claim,
+  EvidenceAsset,
+  InterviewQuestion,
+  InterviewStory,
+  ResumeAST,
+} from "@/lib/domain";
 import { useAppStore, type TemplateId } from "./store";
 import {
   revokeTrackedObjectUrl,
@@ -27,14 +33,18 @@ type ResumeReference = {
   revision?: number;
 };
 
-function apiSessionHeaders(additional: Record<string, string> = {}): Record<string, string> {
+function apiSessionHeaders(
+  additional: Record<string, string> = {},
+): Record<string, string> {
   return additional;
 }
 
 function bindActiveResume(reference: ResumeReference) {
   const activeResume = useAppStore.getState().analysis?.resume;
   const resumeId = reference.resumeId ?? activeResume?.id;
-  const revision = reference.revision ?? (activeResume?.id === resumeId ? activeResume?.revision : undefined);
+  const revision =
+    reference.revision ??
+    (activeResume?.id === resumeId ? activeResume?.revision : undefined);
   if (!resumeId || revision === undefined) {
     throw new Error("无法确认当前简历版本，请重新载入后再试。");
   }
@@ -50,7 +60,10 @@ async function errorMessage(response: Response) {
   }
 }
 
-export async function analyzeResume(file: File, signal?: AbortSignal): Promise<AnalysisBundle> {
+export async function analyzeResume(
+  file: File,
+  signal?: AbortSignal,
+): Promise<AnalysisBundle> {
   const form = new FormData();
   form.append("file", file);
   const response = await trackedFetch("/api/analyze", {
@@ -63,7 +76,9 @@ export async function analyzeResume(file: File, signal?: AbortSignal): Promise<A
   return AnalysisBundleSchema.parse(await response.json());
 }
 
-export async function loadDemoAnalysis(signal?: AbortSignal): Promise<AnalysisBundle> {
+export async function loadDemoAnalysis(
+  signal?: AbortSignal,
+): Promise<AnalysisBundle> {
   const response = await trackedFetch("/api/demo", {
     headers: apiSessionHeaders(),
     signal,
@@ -74,6 +89,10 @@ export async function loadDemoAnalysis(signal?: AbortSignal): Promise<AnalysisBu
 
 export async function matchJob(input: {
   jdText: string;
+  jobTitle?: string;
+  seniority?: string;
+  location?: string;
+  language?: "zh-CN" | "en-US";
   resumeId: string;
   revision?: number;
   ast: ResumeAST;
@@ -115,8 +134,7 @@ export async function createInterviewPlan(input: {
 export async function evaluateAnswer(input: {
   resumeId?: string;
   revision?: number;
-  questionId: string;
-  question: string;
+  question: InterviewQuestion;
   answer: string;
   claims: Claim[];
 }): Promise<EvaluationResponse> {
@@ -179,9 +197,13 @@ export async function recommendLayout(input: {
 }
 
 function arrayBufferSha256(bytes: ArrayBuffer) {
-  return crypto.subtle.digest("SHA-256", bytes).then((digest) =>
-    Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""),
-  );
+  return crypto.subtle
+    .digest("SHA-256", bytes)
+    .then((digest) =>
+      Array.from(new Uint8Array(digest), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join(""),
+    );
 }
 
 export async function downloadVerifiedResume(input: {
@@ -210,7 +232,10 @@ export async function downloadVerifiedResume(input: {
   const bytes = await response.arrayBuffer();
   const responseSha256 = response.headers.get("x-artifact-sha256");
   const actualSha256 = await arrayBufferSha256(bytes);
-  if (responseSha256 !== input.render.sha256 || actualSha256 !== input.render.sha256) {
+  if (
+    responseSha256 !== input.render.sha256 ||
+    actualSha256 !== input.render.sha256
+  ) {
     throw new Error("下载产物与已确认预览不一致，已停止下载。");
   }
 

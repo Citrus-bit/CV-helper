@@ -260,6 +260,66 @@ describe("infrastructure capability contracts", () => {
     expect(audited.data.hardGate.passed).toBe(true);
   });
 
+  it("preserves every summary section in the rendered PDF", async () => {
+    const multiSummaryAst = ResumeASTSchema.parse({
+      ...ast,
+      sections: [
+        {
+          id: "summary-focus",
+          type: "summary",
+          title: "Focus",
+          text: "Owns platform delivery from discovery to rollout.",
+          entries: [],
+          sourceBlockIds: [],
+        },
+        {
+          id: "summary-collaboration",
+          type: "summary",
+          title: "Collaboration",
+          text: "Aligns engineering, design, and operations around measurable outcomes.",
+          entries: [],
+          sourceBlockIds: [],
+        },
+        ...ast.sections,
+      ],
+    });
+    const registry = createDefaultCapabilityRegistry();
+    const rendered = await registry.invoke<unknown, { pdfBase64: string; sha256: string }>(
+      "resume.render",
+      {
+        resumeId: "resume-multi-summary",
+        revision: 4,
+        ast: multiSummaryAst,
+        template: "professional",
+      },
+      context,
+    );
+    const audited = await registry.invoke<
+      unknown,
+      {
+        astContentCovered: boolean;
+        hardGate: { passed: boolean; blockingCheckIds: string[] };
+      }
+    >(
+      "export.audit",
+      {
+        resumeId: "resume-multi-summary",
+        revision: 4,
+        ast: multiSummaryAst,
+        template: "professional",
+        pdfBase64: rendered.data.pdfBase64,
+        expectedSha256: rendered.data.sha256,
+      },
+      context,
+    );
+
+    expect(audited.data.astContentCovered).toBe(true);
+    expect(audited.data.hardGate).toEqual({
+      passed: true,
+      blockingCheckIds: [],
+    });
+  });
+
   it("speech.transcribe only normalizes browser-recognized text and declares that limitation", async () => {
     const result = await createDefaultCapabilityRegistry().invoke<unknown, { transcript: string; source: string; audioProcessed: boolean }>(
       "speech.transcribe",

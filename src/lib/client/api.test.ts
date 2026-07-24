@@ -35,6 +35,10 @@ describe("version-bound client requests", () => {
     await expect(
       matchJob({
         jdText: "这是一个长度足够的岗位描述，用于验证客户端会发送当前简历版本号。",
+        jobTitle: "高级产品经理",
+        seniority: "高级",
+        location: "上海",
+        language: "zh-CN",
         resumeId: "resume-current",
         ast,
         claims: [],
@@ -46,6 +50,10 @@ describe("version-bound client requests", () => {
     expect(JSON.parse(String(request.body))).toMatchObject({
       resumeId: "resume-current",
       revision: 6,
+      jobTitle: "高级产品经理",
+      seniority: "高级",
+      location: "上海",
+      language: "zh-CN",
     });
     expect(new Headers(request.headers).has("x-resume-session")).toBe(false);
   });

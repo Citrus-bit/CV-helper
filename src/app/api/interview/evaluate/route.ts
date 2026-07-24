@@ -1,77 +1,154 @@
 import { z } from "zod";
 
 import { invokeBaselineCapability } from "@/lib/baseline";
-import { dedupeConsistencyWarnings, EvaluationResponseSchema } from "@/lib/client/contracts";
+import {
+  dedupeConsistencyWarnings,
+  EvaluationResponseSchema,
+} from "@/lib/client/contracts";
 import { ClaimSchema, InterviewQuestionSchema } from "@/lib/domain";
+import {
+  unwrapUntrustedDocumentText,
+  wrapUntrustedDocumentText,
+} from "@/lib/baseline/utils";
 import { createCapabilityContext } from "@/lib/server/analysis";
 import { enforceAiRateLimit } from "@/lib/server/ai-rate-limit";
 import { invokeCapability } from "@/lib/server/capability-runtime";
-import { jsonResponse, parseJsonBody, routeErrorResponse } from "@/lib/server/http";
+import {
+  jsonResponse,
+  parseJsonBody,
+  routeErrorResponse,
+} from "@/lib/server/http";
 
 export const runtime = "nodejs";
 
+const QuestionRequestSchema = InterviewQuestionSchema.extend({
+  id: z.string().min(1).max(200),
+  prompt: z.string().trim().min(1).max(2_000),
+  roleFamilies: z.array(z.string().trim().min(1).max(200)).max(20),
+  skills: z.array(z.string().trim().min(1).max(200)).max(50),
+  followUps: z.array(z.string().trim().min(1).max(2_000)).max(10),
+  scoringAnchors: z.array(z.string().trim().min(1).max(500)).max(30),
+  source: z.string().trim().min(1).max(500),
+  referenceQuestionIds: z.array(z.string().min(1).max(200)).max(100),
+});
+
+const QuestionTextSchema = QuestionRequestSchema.pick({
+  prompt: true,
+  roleFamilies: true,
+  skills: true,
+  followUps: true,
+  scoringAnchors: true,
+});
+
 const RequestSchema = z.object({
-  questionId: z.string().min(1).max(200),
-  question: z.string().trim().min(1).max(2_000),
+  question: QuestionRequestSchema,
   answer: z.string().trim().min(10).max(20_000),
   claims: z.array(ClaimSchema).max(500),
 });
 
-function answerLocale(text: string) {
-  const han = text.match(/[\p{Script=Han}]/gu)?.length ?? 0;
-  const latin = text.match(/[A-Za-z]/g)?.length ?? 0;
-  return han > latin * 0.2 ? ("zh-CN" as const) : ("en-US" as const);
+function protectMetadataValues(
+  values: string[],
+  suspicious: boolean,
+): string[] {
+  return suspicious ? values.map(wrapUntrustedDocumentText) : values;
 }
 
 export async function POST(request: Request) {
   try {
     const input = await parseJsonBody(request, RequestSchema);
     await enforceAiRateLimit(request, "interview");
-    const locale = answerLocale(`${input.question}\n${input.answer}`);
+    const locale = input.question.locale;
     const securityContext = createCapabilityContext(
       locale,
       ["selected_text"],
       request.signal,
     );
+    const questionText = QuestionTextSchema.parse(input.question);
     const [answerRedaction, questionRedaction] = await Promise.all([
-      invokeBaselineCapability("pii.redact", { text: input.answer }, securityContext),
-      invokeBaselineCapability("pii.redact", { text: input.question }, securityContext),
+      invokeBaselineCapability(
+        "pii.redact",
+        { text: input.answer },
+        securityContext,
+      ),
+      invokeBaselineCapability(
+        "pii.redact",
+        { text: JSON.stringify(questionText) },
+        securityContext,
+      ),
     ]);
-    const [answerGuard, questionGuard] = await Promise.all([
-      invokeBaselineCapability("prompt.guard", { text: answerRedaction.data.redactedText }, securityContext),
-      invokeBaselineCapability("prompt.guard", { text: questionRedaction.data.redactedText }, securityContext),
+    const redactedQuestionText = QuestionTextSchema.parse(
+      JSON.parse(questionRedaction.data.redactedText),
+    );
+    const [answerGuard, promptGuard, metadataGuard] = await Promise.all([
+      invokeBaselineCapability(
+        "prompt.guard",
+        { text: answerRedaction.data.redactedText },
+        securityContext,
+      ),
+      invokeBaselineCapability(
+        "prompt.guard",
+        { text: redactedQuestionText.prompt },
+        securityContext,
+      ),
+      invokeBaselineCapability(
+        "prompt.guard",
+        { text: questionRedaction.data.redactedText },
+        securityContext,
+      ),
     ]);
+    const protectMetadata = (values: string[]) =>
+      protectMetadataValues(values, metadataGuard.data.suspicious);
     const question = InterviewQuestionSchema.parse({
-      id: input.questionId,
-      locale,
-      prompt: questionGuard.data.safeText,
-      category: "role",
-      difficulty: "intermediate",
-      roleFamilies: [],
-      skills: [],
-      followUps: [],
-      scoringAnchors: [],
-      source: "active-interview-plan",
-      generated: true,
-      referenceQuestionIds: [],
+      ...input.question,
+      prompt: promptGuard.data.safeText,
+      roleFamilies: protectMetadata(redactedQuestionText.roleFamilies),
+      skills: protectMetadata(redactedQuestionText.skills),
+      followUps: protectMetadata(redactedQuestionText.followUps),
+      scoringAnchors: protectMetadata(redactedQuestionText.scoringAnchors),
     });
     const answerForCapabilities = answerGuard.data.safeText;
-    const context = createCapabilityContext(locale, ["interview_content", "evidence_graph"], request.signal);
+    const context = createCapabilityContext(
+      locale,
+      ["interview_content", "evidence_graph"],
+      request.signal,
+    );
     const [evaluationResult, consistencyResult] = await Promise.all([
-      invokeCapability("answer.evaluate", { question, answer: answerForCapabilities, expectedKeywords: [] }, context),
-      invokeBaselineCapability("resumeInterview.check", { answer: answerRedaction.data.redactedText, claims: input.claims }, context),
+      invokeCapability(
+        "answer.evaluate",
+        {
+          question,
+          answer: answerForCapabilities,
+          expectedKeywords: [...question.skills, ...question.roleFamilies],
+        },
+        context,
+      ),
+      invokeBaselineCapability(
+        "resumeInterview.check",
+        { answer: answerRedaction.data.redactedText, claims: input.claims },
+        context,
+      ),
     ]);
     const coaching = await invokeCapability(
       "answer.coach",
-      { question, answer: answerForCapabilities, evaluation: evaluationResult.data },
+      {
+        question,
+        answer: answerForCapabilities,
+        evaluation: evaluationResult.data,
+      },
       context,
     );
     return jsonResponse(
       EvaluationResponseSchema.parse({
         evaluation: {
           ...evaluationResult.data,
-          improvements: [...new Set([...evaluationResult.data.improvements, ...coaching.data.actions])],
+          followUpQuestion:
+            evaluationResult.data.followUpQuestion === undefined
+              ? undefined
+              : unwrapUntrustedDocumentText(
+                  evaluationResult.data.followUpQuestion,
+                ),
         },
+        coaching: coaching.data,
         consistencyWarnings: dedupeConsistencyWarnings(
           consistencyResult.data.findings.map((finding) => finding.explanation),
         ),
@@ -82,7 +159,8 @@ export async function POST(request: Request) {
             answerRedaction.sourceVersion,
             questionRedaction.sourceVersion,
             answerGuard.sourceVersion,
-            questionGuard.sourceVersion,
+            promptGuard.sourceVersion,
+            metadataGuard.sourceVersion,
             evaluationResult.sourceVersion,
             coaching.sourceVersion,
             consistencyResult.sourceVersion,

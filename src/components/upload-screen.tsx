@@ -12,7 +12,12 @@ import {
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+} from "react";
 import { analyzeResume, loadDemoAnalysis } from "@/lib/client/api";
 import { beginAnalysisRequest } from "@/lib/client/analysis-request";
 import { useAppStore } from "@/lib/client/store";
@@ -47,8 +52,11 @@ function isAbortError(error: unknown) {
 
 export function UploadScreen() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [initialRecentLoadPending, setInitialRecentLoadPending] =
+    useState(true);
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
@@ -75,8 +83,119 @@ export function UploadScreen() {
   );
 
   useEffect(() => {
-    void refreshRecentSessions();
+    let active = true;
+    void refreshRecentSessions().finally(() => {
+      if (active) setInitialRecentLoadPending(false);
+    });
+    return () => {
+      active = false;
+    };
   }, [refreshRecentSessions]);
+
+  useEffect(() => {
+    const clearExternalDrag = () => {
+      setDragging(false);
+    };
+    const isWindowFileDrag = (event: DragEvent) =>
+      Array.from(event.dataTransfer?.types ?? []).includes("Files");
+    const trackWindowFileDrag = (event: DragEvent) => {
+      if (!isWindowFileDrag(event)) return;
+      event.preventDefault();
+      const target = event.target;
+      const zone = dropZoneRef.current;
+      const rect = zone?.getBoundingClientRect();
+      const isOverDropZone = Boolean(
+        zone &&
+        ((target instanceof Node && zone.contains(target)) ||
+          (rect &&
+            event.clientX >= rect.left &&
+            event.clientX <= rect.right &&
+            event.clientY >= rect.top &&
+            event.clientY <= rect.bottom)),
+      );
+      if (event.dataTransfer)
+        event.dataTransfer.dropEffect = isOverDropZone ? "copy" : "none";
+      setDragging(isOverDropZone);
+    };
+    const handleWindowDragLeave = (event: DragEvent) => {
+      if (!isWindowFileDrag(event)) return;
+      const zone = dropZoneRef.current;
+      const leavingTarget = event.target;
+      if (
+        zone &&
+        leavingTarget instanceof Node &&
+        zone.contains(leavingTarget)
+      ) {
+        return;
+      }
+
+      const nextTarget = event.relatedTarget;
+      if (
+        nextTarget instanceof Node &&
+        document.documentElement.contains(nextTarget)
+      ) {
+        return;
+      }
+
+      const rect = zone?.getBoundingClientRect();
+      const isStillOverDropZone = Boolean(
+        rect &&
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+          event.clientY <= rect.bottom,
+      );
+
+      // Child transitions and active-state renders can both emit dragleave.
+      // Coordinates remain the source of truth until the pointer exits.
+      if (isStillOverDropZone) return;
+      clearExternalDrag();
+    };
+    const finishWindowDrop = (event: DragEvent) => {
+      if (!isWindowFileDrag(event)) return;
+      event.preventDefault();
+      clearExternalDrag();
+    };
+    const cancelWindowDrag = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clearExternalDrag();
+    };
+
+    window.addEventListener("dragend", clearExternalDrag);
+    window.addEventListener("dragleave", handleWindowDragLeave);
+    window.addEventListener("dragover", trackWindowFileDrag);
+    window.addEventListener("drop", finishWindowDrop);
+    window.addEventListener("blur", clearExternalDrag);
+    window.addEventListener("keydown", cancelWindowDrag);
+    return () => {
+      window.removeEventListener("dragend", clearExternalDrag);
+      window.removeEventListener("dragleave", handleWindowDragLeave);
+      window.removeEventListener("dragover", trackWindowFileDrag);
+      window.removeEventListener("drop", finishWindowDrop);
+      window.removeEventListener("blur", clearExternalDrag);
+      window.removeEventListener("keydown", cancelWindowDrag);
+    };
+  }, []);
+
+  function isFileDrag(event: ReactDragEvent<HTMLDivElement>) {
+    return Array.from(event.dataTransfer.types).includes("Files");
+  }
+
+  function handleDragEnter(event: ReactDragEvent<HTMLDivElement>) {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    setDragging(true);
+  }
+
+  function handleDragOver(event: ReactDragEvent<HTMLDivElement>) {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setDragging(true);
+  }
+
+  function resetDragState() {
+    setDragging(false);
+  }
 
   async function submit(file: File) {
     setError(null);
@@ -191,7 +310,11 @@ export function UploadScreen() {
             <FileSearch aria-hidden="true" size={22} />
           </span>
           <div className="min-w-0">
-            <h1 className="truncate text-[20px] font-semibold leading-6">
+            <h1
+              data-page-heading
+              tabIndex={-1}
+              className="truncate text-[20px] font-semibold leading-6 outline-none"
+            >
               简历分析助手
             </h1>
             <p className="truncate text-sm text-muted">
@@ -201,7 +324,7 @@ export function UploadScreen() {
         </div>
         <span className="flex items-center gap-2 text-sm text-muted">
           <ShieldCheck aria-hidden="true" size={17} className="text-success" />
-          匿名会话 · 24 小时清理
+          匿名会话 · 24 小时到期
         </span>
       </div>
 
@@ -222,20 +345,20 @@ export function UploadScreen() {
         </div>
 
         <div
+          ref={dropZoneRef}
+          role="region"
+          aria-label="PDF 简历上传区"
+          aria-busy={busy}
+          data-drag-active={dragging ? "true" : "false"}
           className={`relative grid min-h-[340px] place-items-center overflow-hidden rounded-[8px] border bg-surface px-6 py-10 shadow-panel transition-colors duration-200 ${
             dragging ? "border-brand bg-[#f3f8ff]" : "border-line"
           }`}
-          onDragEnter={(event) => {
-            event.preventDefault();
-            setDragging(true);
-          }}
-          onDragOver={(event) => event.preventDefault()}
-          onDragLeave={(event) => {
-            if (event.currentTarget === event.target) setDragging(false);
-          }}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
           onDrop={(event) => {
+            if (!isFileDrag(event)) return;
             event.preventDefault();
-            setDragging(false);
+            resetDragState();
             const file = event.dataTransfer.files.item(0);
             if (file) void submit(file);
           }}
@@ -254,14 +377,10 @@ export function UploadScreen() {
             }}
           />
           <div className="flex max-w-lg flex-col items-center text-center">
-            <span className="grid size-16 place-items-center rounded-full bg-[#edf5ff] text-brand">
-              {dragging ? (
-                <FileText aria-hidden="true" size={28} />
-              ) : (
-                <Upload aria-hidden="true" size={28} />
-              )}
+            <span className="pointer-events-none grid size-16 place-items-center rounded-full bg-[#edf5ff] text-brand">
+              <Upload aria-hidden="true" size={28} />
             </span>
-            <h3 className="mt-6 text-xl font-semibold">
+            <h3 className="mt-6 text-xl font-semibold" aria-live="polite">
               {dragging ? "松开即可开始分析" : "拖入你的 PDF 简历"}
             </h3>
             <p className="mt-2 text-sm leading-6 text-muted">
@@ -362,7 +481,7 @@ export function UploadScreen() {
               最近分析
             </h2>
             <p className="mt-1 text-sm text-muted">
-              记录仅保存在这台电脑，最多 10 条并在 24 小时内清理。
+              记录仅保存在这台电脑，最多 10 条；24 小时到期并在下次打开时清理。
             </p>
           </div>
           {recentAnalyses.length > 0 ? (
@@ -409,8 +528,12 @@ export function UploadScreen() {
           ) : null}
         </div>
 
-        <div className="mt-4 overflow-hidden rounded-[8px] border border-line bg-white shadow-sm">
-          {recentAnalysesLoading ? (
+        <div
+          className="mt-4 overflow-hidden rounded-[8px] border border-line bg-white shadow-sm"
+          aria-busy={initialRecentLoadPending || recentAnalysesLoading}
+        >
+          {recentAnalyses.length === 0 &&
+          (initialRecentLoadPending || recentAnalysesLoading) ? (
             <p
               className="px-5 py-8 text-center text-sm text-muted"
               role="status"

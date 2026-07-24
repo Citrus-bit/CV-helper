@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  CircleAlert,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -9,12 +10,53 @@ import {
   Upload,
 } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
+import type { SourceBlock, Suggestion } from "@/lib/domain";
 import { pdfDataUrl } from "@/lib/client/api";
 import { useAppStore } from "@/lib/client/store";
 import { ClientPdfPreview } from "./client-pdf-preview";
 
+function normalizedMatchText(value: string) {
+  return value.toLowerCase().replace(/[\s，。；、,.!?！？:：()（）\[\]]+/g, "");
+}
+
+export function selectSuggestionSourceBlock(
+  suggestion: Pick<Suggestion, "sourceBlockIds" | "originalText"> | undefined,
+  sourceBlocks: readonly SourceBlock[],
+) {
+  if (!suggestion) return undefined;
+  const sourceIds = new Set(suggestion.sourceBlockIds);
+  const candidates = sourceBlocks.filter((block) => sourceIds.has(block.id));
+  const original = normalizedMatchText(suggestion.originalText);
+  if (!original) return candidates[0];
+
+  return candidates
+    .map((block, index) => {
+      const text = normalizedMatchText(block.text);
+      const overlap = [...new Set(original)].filter((character) =>
+        text.includes(character),
+      ).length;
+      const similarity = overlap / Math.max(1, new Set(original).size);
+      const containment =
+        text === original
+          ? 4
+          : text.includes(original)
+            ? 3
+            : original.includes(text) && text.length >= 4
+              ? 2
+              : 0;
+      return { block, index, score: containment + similarity };
+    })
+    .sort(
+      (left, right) => right.score - left.score || left.index - right.index,
+    )[0]?.block;
+}
+
 export function DocumentPreview() {
   const analysis = useAppStore((state) => state.analysis)!;
+  const jobVariant = useAppStore((state) => state.jobMatch?.variant);
+  const activeResumeVariantId = useAppStore(
+    (state) => state.activeResumeVariantId,
+  );
   const selectedSuggestionId = useAppStore(
     (state) => state.selectedSuggestionId,
   );
@@ -25,21 +67,75 @@ export function DocumentPreview() {
   const markRenderPreviewed = useAppStore((state) => state.markRenderPreviewed);
   const attachOriginalPdf = useAppStore((state) => state.attachOriginalPdf);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [page, setPage] = useState(0);
+  const [pageSelection, setPageSelection] = useState({
+    page: 0,
+    targetKey: null as string | null,
+  });
   const [zoom, setZoom] = useState(0.82);
   const [attachingPdf, setAttachingPdf] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const activeResumeName =
+    jobVariant && jobVariant.id === activeResumeVariantId
+      ? jobVariant.name
+      : "通用版";
 
   const suggestion = analysis.suggestions.find(
     (item) => item.id === selectedSuggestionId,
   );
-  const highlight = useMemo(() => {
-    const blockId = suggestion?.sourceBlockIds[0];
-    return analysis.resume.sourceBlocks.find(
-      (block) => block.id === blockId && block.pageIndex === page,
+  const highlightTarget = useMemo(() => {
+    return selectSuggestionSourceBlock(
+      suggestion,
+      analysis.resume.sourceBlocks,
     );
-  }, [analysis.resume.sourceBlocks, page, suggestion]);
+  }, [analysis.resume.sourceBlocks, suggestion]);
+  const highlightTargetKey = highlightTarget
+    ? `${suggestion?.id ?? "unknown"}:${highlightTarget.id}`
+    : null;
+  const suggestedPage = highlightTarget?.pageIndex;
+  const unboundedPage =
+    pageSelection.targetKey === highlightTargetKey
+      ? pageSelection.page
+      : (suggestedPage ?? pageSelection.page);
+  const page = Math.min(
+    Math.max(0, analysis.resume.pageCount - 1),
+    Math.max(0, unboundedPage),
+  );
+  const setPage = useCallback(
+    (nextPage: number | ((currentPage: number) => number)) => {
+      setPageSelection((currentSelection) => {
+        const currentPage =
+          currentSelection.targetKey === highlightTargetKey
+            ? currentSelection.page
+            : (suggestedPage ?? currentSelection.page);
+        const resolvedPage =
+          typeof nextPage === "function" ? nextPage(currentPage) : nextPage;
+        return {
+          page: Math.min(
+            Math.max(0, analysis.resume.pageCount - 1),
+            Math.max(0, resolvedPage),
+          ),
+          targetKey: highlightTargetKey,
+        };
+      });
+    },
+    [analysis.resume.pageCount, highlightTargetKey, suggestedPage],
+  );
+  const highlight =
+    highlightTarget?.pageIndex === page ? highlightTarget : undefined;
   const preview = analysis.pagePreviews[page];
+  const lowConfidencePages = useMemo(() => {
+    const pages = new Map<number, number>();
+    for (const block of analysis.resume.sourceBlocks) {
+      if (block.source !== "ocr" || block.confidence >= 0.8) continue;
+      pages.set(
+        block.pageIndex,
+        Math.min(pages.get(block.pageIndex) ?? 1, block.confidence),
+      );
+    }
+    return [...pages.entries()].sort(([left], [right]) => left - right);
+  }, [analysis.resume.sourceBlocks]);
+  const parsingNoticeCount =
+    analysis.resume.parsingWarnings.length + lowConfidencePages.length;
   const originalPdf = analysis.originalPdfBase64
     ? pdfDataUrl(analysis.originalPdfBase64)
     : null;
@@ -121,6 +217,56 @@ export function DocumentPreview() {
         </div>
       </div>
 
+      {parsingNoticeCount > 0 ? (
+        <details className="group shrink-0 border-b border-[#ead7a3] bg-[#fffaf0]">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-4 text-xs font-medium text-[#72510b] [&::-webkit-details-marker]:hidden">
+            <CircleAlert aria-hidden="true" size={16} className="shrink-0" />
+            解析提醒 {parsingNoticeCount}
+            <span className="ml-auto text-[11px] font-normal text-[#8a6a26] group-open:hidden">
+              展开核对
+            </span>
+          </summary>
+          <div className="border-t border-[#ead7a3] px-4 py-3 text-xs leading-5 text-[#604b20]">
+            {analysis.resume.parsingWarnings.length > 0 ? (
+              <ul className="space-y-1.5">
+                {analysis.resume.parsingWarnings.map((warning, index) => (
+                  <li key={`${index}-${warning}`} className="flex gap-2">
+                    <span aria-hidden="true">•</span>
+                    <span>{warning}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {lowConfidencePages.length > 0 ? (
+              <div
+                className={analysis.resume.parsingWarnings.length ? "mt-2" : ""}
+              >
+                {lowConfidencePages.map(([pageIndex, confidence]) => (
+                  <button
+                    key={pageIndex}
+                    type="button"
+                    onClick={() => {
+                      setPage(pageIndex);
+                      setMode(
+                        analysis.pagePreviews[pageIndex]
+                          ? "locate"
+                          : "original",
+                      );
+                    }}
+                    className="flex min-h-11 w-full items-center justify-between gap-3 rounded-[6px] px-2 text-left transition-colors hover:bg-[#f8edcf]"
+                  >
+                    <span>第 {pageIndex + 1} 页包含低置信度 OCR 区块</span>
+                    <span className="shrink-0 tabular-nums">
+                      最低 {Math.round(confidence * 100)}%
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+
       <div className="min-h-0 flex-1 overflow-auto p-6">
         {mode === "compare" ? (
           originalPdf && currentPdf && render ? (
@@ -179,7 +325,7 @@ export function DocumentPreview() {
             <ClientPdfPreview
               key={render.sha256}
               artifactSha256={render.sha256}
-              title={`当前简历 ${selectedTemplate} 模板预览`}
+              title={`${activeResumeName} ${selectedTemplate} 模板预览`}
               iframeSrc={currentPdf ?? ""}
               pdfBase64={render.pdfBase64}
               onVerified={handleVerifiedPreview}

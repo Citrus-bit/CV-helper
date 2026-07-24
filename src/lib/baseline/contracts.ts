@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   AnswerEvaluationSchema,
+  AtsAuditSchema,
   ClaimSchema,
   EvidenceAssetSchema,
   ExportQualityReportSchema,
@@ -313,17 +314,9 @@ export const ResumeSuggestInputSchema = z.object({
 });
 export const ResumeSuggestOutputSchema = z.object({ suggestions: z.array(SuggestionSchema) });
 
-export const AtsFindingSchema = z.object({
-  code: z.string(),
-  severity: z.enum(["info", "warning", "error"]),
-  message: z.string(),
-  sourceBlockIds: z.array(z.string()).default([]),
-});
 export const ResumeAtsAuditInputSchema = z.object({ resume: ResumeDocumentSchema });
-export const ResumeAtsAuditOutputSchema = z.object({
-  score: z.number().min(0).max(100),
-  passed: z.boolean(),
-  findings: z.array(AtsFindingSchema),
+export const ResumeAtsAuditOutputSchema = AtsAuditSchema.omit({
+  sourceVersion: true,
 });
 
 export const JdParseInputSchema = z.object({

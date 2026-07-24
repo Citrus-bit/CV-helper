@@ -26,12 +26,12 @@ Next.js Node runtime
   ├─ PDF.js native extraction + page PNG rendering
   ├─ offline Tesseract.js for scan/mixed pages
   ├─ static Capability Registry + deterministic baselines
-  ├─ optional provider gateway for seven allowlisted capabilities
+  ├─ optional provider gateway for nine allowlisted capabilities
   └─ local Typst compilation
        └─ .tools/typst/typst (0.15.1)
 ```
 
-未配置 `DOCUMENT_WORKER_URL` 时，PDF.js 与 Tesseract.js 运行在 Next.js Node runtime，不在浏览器执行。本地开发不要求 Docker、数据库或外部密钥；活动状态使用标签页级 `sessionStorage`，最近分析与可选原 PDF 使用 IndexedDB，两者最长 24 小时；浏览器不支持语音识别时回退为文字输入。`TYPST_BIN` 默认指向项目内 CLI，渲染失败会阻断当前产物，不存在未声明的 TypeScript renderer fallback。`pnpm dev` 读取 `.env.local`，该私有文件和 `.env` 均在 `.gitignore` 中。
+未配置 `DOCUMENT_WORKER_URL` 时，PDF.js 与 Tesseract.js 运行在 Next.js Node runtime，不在浏览器执行。本地开发不要求 Docker、数据库或外部密钥；活动状态使用标签页级 `sessionStorage`，最近分析与可选原 PDF 使用 IndexedDB，两者在 24 小时后到期，并在应用运行期间或下次打开时清理；浏览器不支持语音识别时回退为文字输入。`TYPST_BIN` 默认指向项目内 CLI，渲染失败会阻断当前产物，不存在未声明的 TypeScript renderer fallback。`pnpm dev` 读取 `.env.local`，该私有文件和 `.env` 均在 `.gitignore` 中。
 
 App 顶层桌面边界在 hydration 后检查 `min-width: 1024px`。窄屏只挂载设备提示，不挂载 Upload、AnalysisProgress、Workspace 或语音组件。1024px 以上始终使用 216px 侧栏和桌面文档/建议布局，不存在底部导航或手机单列工作台。
 
@@ -49,7 +49,7 @@ Next.js Web/API
             └─ normalized parse response  native/OCR blocks + PNG previews
 ```
 
-配置 `DOCUMENT_WORKER_URL` 后，`parseWithDocumentWorker` 使用 180 秒请求预算调用 `/parse`，以 Zod 校验响应并映射到 `DocumentParseOutput`，随后沿用 TypeScript 的分段、AST、证据、评分和建议流程。未配置时该 adapter 返回 `null` 并调用 2.1 的 baseline；配置后 worker 连接或 Schema 失败会返回受控错误，不会静默把简历发送给其他服务。Web 的 `/api/render` 同样优先调用 worker `/render-preview`，远端渲染失败时再回退 Web 本地 Typst；二者产物进入同一审计与确认链。`infra/web.Dockerfile` 按架构校验下载 Typst `0.15.1`，在运行镜像安装 `font-noto-cjk` 并复制 `templates/typst` 三套模板，因此容器内 fallback 不依赖宿主机工具。
+配置 `DOCUMENT_WORKER_URL` 后，`parseWithDocumentWorker` 使用 180 秒请求预算调用 `/parse`，以 Zod 校验响应并映射到 `DocumentParseOutput`，随后沿用 TypeScript 的分段、AST、证据、评分和建议流程。未配置时该 adapter 返回 `null` 并调用 2.1 的 baseline；配置后遇到 worker 网络不可用、超时、解析失败、缺少页面数据或 Schema 非法时，也会回退同机 TypeScript baseline，并在解析 warning 与 capability warning 中记录降级。上传摘要不一致、413 资源硬门和用户主动取消不会回退；前两者防止完整性或资源限制被绕过，取消则保持用户意图。fallback 不会把简历发送给其他服务。Web 的 `/api/render` 同样优先调用 worker `/render-preview`，远端渲染失败时再回退 Web 本地 Typst；二者产物进入同一审计与确认链。`infra/web.Dockerfile` 按架构校验下载 Typst `0.15.1`，在运行镜像安装 `font-noto-cjk` 并复制 `templates/typst` 三套模板，因此容器内 fallback 不依赖宿主机工具。
 
 worker、镜像和 Compose 默认 `OCR_PROVIDER=tesseract`、`TESSERACT_LANGUAGE=chi_sim+eng`。PaddleOCR 只有在显式构建 OCR 依赖、设置 `OCR_PROVIDER=paddleocr` 并预置本地检测/识别模型目录后才启用；`PADDLEOCR_ALLOW_MODEL_DOWNLOAD=false`，不是默认路径。
 
@@ -110,11 +110,11 @@ worker 在调用 OCR 前按 85% 较小区域覆盖率去重，每页最多 4 个
 - `Claim`：文本、主体、动作、方法、结果、来源引用和支持状态。
 - 逻辑 EvidenceGraph：当前不是单独持久化对象，而由 Claim 的 `sourceBlockIds/evidenceAssetIds` 与 EvidenceAsset 的 `sourceBlockIds` 共同表达；生产 adapter 可据此物化为图或关系表。
 - `Suggestion`：`resumeRevision/sourceBlockIds/claimIds/kind/status/originalText/proposedText/rationale/beforeHash/patches/factRisk/interviewRisk`。
-- `JobPosting/JDRequirement`：原始 JD 和结构化要求。
+- `JobDraft/JobPosting/JDRequirement`：可恢复的职位名、职级、地点、语言和原始 JD 草稿，以及结构化岗位要求。
 - `RequirementEvidenceMap`：要求、证据、覆盖状态、解释和追问。
 - `ResumeVariant`：基线 revision 的岗位分支，不复制或覆盖原稿。
 - `InterviewStory`：已确认声明映射成的 STAR 训练材料。
-- `InterviewQuestion/AnswerEvaluation`：问题、评分维度、反馈、引用片段和追问；会话推进目前由客户端 store 管理，不是独立持久化领域对象。
+- `InterviewQuestion/AnswerEvaluation/InterviewProgress`：问题、评分维度、反馈、引用片段、追问和可恢复进度。`InterviewProgress` 以简历 ID/revision 与计划指纹绑定，进入 `sessionStorage` 和 IndexedDB 历史；录音对象、计时器和权限错误仍为临时态。
 - Render response / `ExportQualityReport`：模板、PDF 哈希、页数和审计结果；当前没有单独持久化的 `LayoutCandidate` 实体。
 
 ## 4. Capability 契约
@@ -174,13 +174,25 @@ type CapabilityResult<T> = {
 ### 4.2 调用与回退
 
 1. 未配置 AI 时 Registry 只选择内置 baseline；受信本地扩展仅在显式评测模式启用，且必须使用 canonical Schema、禁网并保留 baseline。
-2. `provider_gateway` 只增强七项能力：`resume.score`、`resume.suggest`、`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate` 和 `answer.coach`。`copy.rewrite.zh/en` 继续注册为版本化 baseline 接口，不通过 provider gateway；其余能力也只能调用确定性 baseline。
+2. `provider_gateway` 只增强九项能力：`resume.score`、`resume.suggest`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate` 和 `answer.coach`；其余能力只能调用确定性 baseline。两项 copy 能力只发送脱敏后的选中文本与保留术语，返回值必须保持原文映射、指定术语和数字，不得新增排名、资质或成果，否则回退 baseline。
 3. Gateway 在 Next.js 服务端完成字段投影与 PII 清理，只从环境变量注入 URL、Key 和模型。前端 bundle、FeatureAvailability、日志与响应不包含供应商细节。
    Base URL 还必须命中代码内静态批准列表；系统不读取可配置的 `AI_API_ALLOWLIST`，避免部署者通过环境变量无审查扩权。
 4. 首次请求使用 JSON Schema；供应商明确不支持时只重试一次 `json_object`。返回值随后通过 canonical Zod Schema、引用、JSON Pointer、数字新增和事实证据检查。
 5. 超时、429/5xx、网络错误或非法输出回退对应 `builtin.<capabilityId>@1.0.0`；用户取消直接传播，不执行 fallback。
 6. 当前 MVP 在浏览器 revision 中防止陈旧产物覆盖；生产持久化 service 再使用 idempotency key 和 base revision 提交，版本冲突返回 `409`。
 7. 结构日志只记录 capability、版本、trace、耗时、结果码、fallback 和用量，不记录业务正文、完整 prompt、模型名或密钥。
+
+### 4.3 开发期 Skill 套件与运行时边界
+
+仓库内的 `plugins/resume-assistant-toolkit/` 是 Codex 开发辅助插件，由一个编排入口和六个领域 Skill 组成。它统一说明如何实现、审查和评测文档、证据、岗位文案、排版导出、面试及安全能力，但不被 Next.js 或 document worker 在产品请求路径中加载。
+
+开发期 Skill 与运行时 Capability 的关系是“指导与验收”，不是“直接执行”：
+
+1. 编排 Skill 根据共享 Capability map 选择领域 Skill；共享 map 只描述所有权、最大 data scope 和 eval suite，不替代 `src/lib/capabilities` 中的 canonical 类型与 Schema。
+2. 领域 Skill 可以指导创建 adapter、rule pack、knowledge pack 或 prompt policy；产物仍须通过 manifest 审查、静态注册、Zod 契约测试、固定 fixture、feature flag 和 fallback 测试。
+3. Codex Skill 不持有产品密钥，不自动读取用户数据，不因文档内容获取网络或工具权限，也不能提交 revision 或签发导出。
+4. 用户上传的 PDF、JD、转写和任意第三方 Skill 文本始终是不可信输入；开发工具说明不能覆盖运行时权限、事实安全、人工确认、取消语义或导出硬门。
+5. 30 项 Capability 的开发期归属只在 `skills/resume-assistant-orchestrator/references/capability-map.md` 维护；运行时状态与回滚版本仍以 `.codex/PROJECT.md` 和静态 Registry 为准。
 
 ## 5. API 边界
 
@@ -200,7 +212,7 @@ type CapabilityResult<T> = {
 - `POST /api/interview/transcribe`：只标准化浏览器已识别的文字，不接收或保存音频。
 - `POST /api/interview/evaluate`：评审回答并执行简历口径检查。
 
-当前 API 通过 Zod 校验输入并把 `request.signal` 传入 CapabilityContext；隔离文档响应另经 Zod 校验。上述七项生成式 capability 可调用已接线的 provider gateway，`copy.rewrite.zh/en` 仅使用 baseline；默认配置仍只运行 baseline。当前不声称已经完成真实供应商质量验收、持久化幂等键、资源所有权或队列 worker 恢复。
+当前 API 通过 Zod 校验输入并把 `request.signal` 传入 CapabilityContext；隔离文档响应另经 Zod 校验。上述九项生成式 capability 可调用已接线的 provider gateway；默认配置仍只运行 baseline。简历分析链在冲突检查前逐条调用 `claim.assess`，再把冲突状态叠加到已评估声明上。当前不声称已经完成真实供应商质量验收、持久化幂等键、资源所有权或队列 worker 恢复。
 
 健康端点采用 `no-store` 响应并以本地可用性为准：未配置 worker 或 provider 时，document/AI baseline 与 `client_local` storage 都是 `ready`，不会因为未启用增强依赖而误报降级；只有显式配置隔离文档或增强 AI 且该配置不可用时，对应组件及整体状态才为 `degraded`。该端点不执行真实 AI 内容请求，也不改变 Vercel、Private Blob 与 Hosted 模式仍延期的边界。
 
@@ -249,7 +261,7 @@ type CapabilityResult<T> = {
 
 baseline 检索先按语言、领域、岗位族、级别、题型和技能过滤，再做规范化词项加权排序。生产可在同一 `question.retrieve` 契约后接 pgvector。题库文本是参考内容，不是可执行 prompt；检索结果中的任何指令均视为数据。
 
-面试计划默认 6 道主问题、每题最多两次追问。实时生成问题保存 `generated: true` 和 `sourceQuestionIds`。转写在用户确认后才进入 `answer.evaluate`；一致性检查只产生带证据的警告，不自动修改简历。
+面试计划默认 6 道主问题、每题最多两次追问。实时生成问题保存 `generated: true` 和 `referenceQuestionIds`。转写在用户确认后才进入 `answer.evaluate`；一致性检查只产生带证据的警告，不自动修改简历。
 
 ## 8. 安全与隐私
 
@@ -257,7 +269,7 @@ baseline 检索先按语言、领域、岗位族、级别、题型和技能过�
 - Prompt：系统指令与简历/JD/题库分通道；不可信文本先经 guard，不能产生工具或权限请求。
 - 权限：Capability 使用声明式最小 scope；安全文本能力只获 `selected_text`，题库检索只获匿名角色/技能元数据。默认 Registry 拒绝任意 extension，provider 模式另受固定能力名单约束。
 - PII：provider DTO 删除姓名、电话、邮箱、链接、原 PDF、页面图片和无关证据正文；本地投影同时识别普通叙述中的姓名及无标签中英文地址。投影完成后会重新扫描最小 DTO，任何残留疑似 PII 都 fail closed，阻断 provider 调用并回退 baseline；日志、指标和 eval 样本不保存正文。
-- 数据生命周期：MVP Web Speech 不向应用产生或保存音频 Blob；转写文字仅存于设备会话。活动状态使用 `sessionStorage`，最近分析及可选原 PDF 使用 IndexedDB；最多 10 条/50 MB并在 24 小时内过期。生产 ASR 若接收音频，必须在转写后删除并记录无正文删除回执。
+- 数据生命周期：MVP Web Speech 不向应用产生或保存音频 Blob；转写文字仅存于设备会话。活动状态使用 `sessionStorage`，最近分析及可选原 PDF 使用 IndexedDB；最多 10 条/50 MB，24 小时后过期，并在应用运行期间或下次打开时清理。生产 ASR 若接收音频，必须在转写后删除并记录无正文删除回执。
 - 供应链：依赖锁定，候选 Skill 审查许可证和依赖；生产镜像固定 digest，禁止运行时下载代码。
 
 ## 9. 可观测性和故障策略
@@ -272,7 +284,7 @@ baseline 检索先按语言、领域、岗位族、级别、题型和技能过�
 
 ## 10. 测试策略
 
-阶段 6 改动后的最终 `typecheck`、lint、Vitest、document-worker pytest、生产构建和 Compose smoke 数量待本轮全量验证填写，不沿用上一版统计作为当前结论。已完成的浏览器回归为：1024/1280/1440/1920px 首页与工作区无横向滚动；375/768/1023px 只显示设备提示且不挂载工作台；返回、历史恢复、当前/单条删除及清空取消/确认均通过，控制台无应用 error/warn。本地 worker health 已确认 Typst/Tesseract 可用，未配置新 Key 的 capability 全部为 baseline。该结论仅覆盖固定 fixture、构建与 smoke，不等同生产 OCR 准确率、第三方安全认证或外部 AI 质量。
+阶段 9 自动化验证通过 `typecheck`、lint、44 个文件 / 259 项 Vitest、34 项 document-worker pytest、3 项 loopback proxy pytest、生产构建和 `git diff --check`。浏览器回归覆盖：1024/1280/1440/1920px 首页与工作区无横向滚动或底部空洞；375/768/1023px 只显示设备提示且不挂载工作台；两个返回入口、历史恢复、流程门、JD 草稿/证据矩阵、面试设备检查/回答/追问恢复和 Professional 100/100、18/18 质量门均通过。拖拽状态以窗口级文件 `dragover` 的目标归属与真实坐标边界为真值，页面离开、`Escape`、drop、dragend 与 blur 负责收尾；激活重渲染、多次跨子元素、窗口目标、框外移动、真实 PDF 单次提交和监听器卸载由组件事件序列验证。Mac 锁定时 Finder 物理拖拽保留为人工验收项。Gitleaks 对历史、差异、未跟踪源码和提交消息均无发现。该结论仅覆盖固定 fixture、构建与 smoke，不等同生产 OCR 准确率、第三方安全认证或外部 AI 质量。
 
 - 安全健康端点：4 项 Vitest 覆盖自包含 baseline 不发起 worker 探测、可用 isolated/enhanced 仅返回抽象字段、显式配置失效时 fail closed，以及 HTTP 响应为 `no-store` 且通过 Schema。当前本地 Docker 路径可用；Vercel 验证仍延期。
 - 契约：30 个 Capability 的 Zod/JSON Schema、权限、超时、取消、非法输出和 fallback 测试。

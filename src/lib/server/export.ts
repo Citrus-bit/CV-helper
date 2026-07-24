@@ -297,14 +297,14 @@ export function toRenderableResume(ast: ResumeAST): RenderableResume {
   const locationAndLinks = [ast.contact.location, ...links]
     .filter(Boolean)
     .join(" | ");
-  const summarySection = ast.sections.find(
-    (section) => section.type === "summary",
-  );
   const summaries = [
     ...new Set(
-      [ast.summary, summarySection?.text].filter((value): value is string =>
-        Boolean(value?.trim()),
-      ),
+      [
+        ast.summary,
+        ...ast.sections
+          .filter((section) => section.type === "summary")
+          .map((section) => section.text),
+      ].filter((value): value is string => Boolean(value?.trim())),
     ),
   ];
   return {
@@ -317,14 +317,12 @@ export function toRenderableResume(ast: ResumeAST): RenderableResume {
       summary: summaries.join("\n") || undefined,
     },
     sections: ast.sections
-      .filter(
-        (section) =>
-          section.type !== "summary" || (!ast.summary && !section.text),
-      )
       .map((section) => ({
         title: section.title,
         items: [
-          ...(section.text ? [{ title: "", bullets: [section.text] }] : []),
+          ...(section.type !== "summary" && section.text
+            ? [{ title: "", bullets: [section.text] }]
+            : []),
           ...section.entries.map((entry) => ({
             title: entry.title,
             subtitle:

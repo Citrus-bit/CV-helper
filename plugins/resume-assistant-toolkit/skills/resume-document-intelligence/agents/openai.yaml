@@ -1,0 +1,4 @@
+interface:
+  display_name: "简历文档智能"
+  short_description: "解析 PDF、局部 OCR、阅读顺序恢复与结构化分段"
+  default_prompt: "使用 $resume-document-intelligence 审查并改进简历文档解析流程。"

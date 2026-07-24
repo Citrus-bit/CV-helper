@@ -24,9 +24,10 @@ export const SourceBlockSchema = z.object({
     .default("unknown"),
   style: z
     .object({
-      fontFamily: z.string().optional(),
-      fontSize: z.number().positive().optional(),
+      fontFamily: z.string().trim().min(1).max(256).optional(),
+      fontSize: z.number().positive().max(1_000).optional(),
       fontWeight: z.number().int().min(100).max(900).optional(),
+      fontStyle: z.enum(["normal", "italic"]).optional(),
       color: z.string().optional(),
     })
     .optional(),
@@ -218,6 +219,22 @@ export const ScorecardSchema = z.object({
 });
 export type Scorecard = z.infer<typeof ScorecardSchema>;
 
+export const AtsFindingSchema = z.object({
+  code: z.string().min(1),
+  severity: z.enum(["info", "warning", "error"]),
+  message: z.string().min(1),
+  sourceBlockIds: z.array(z.string().min(1)).default([]),
+});
+export type AtsFinding = z.infer<typeof AtsFindingSchema>;
+
+export const AtsAuditSchema = z.object({
+  score: z.number().min(0).max(100),
+  passed: z.boolean(),
+  findings: z.array(AtsFindingSchema),
+  sourceVersion: z.string().min(1),
+});
+export type AtsAudit = z.infer<typeof AtsAuditSchema>;
+
 export const JobPostingSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -251,6 +268,42 @@ export const RequirementEvidenceMapSchema = z.object({
 });
 export type RequirementEvidenceMap = z.infer<typeof RequirementEvidenceMapSchema>;
 
+export const ResumeVariantChangeSchema = z
+  .object({
+    id: z.string().min(1),
+    kind: z.enum(["section_reorder", "entry_reorder"]),
+    path: z.string().startsWith("/sections"),
+    beforeIds: z.array(z.string().min(1)).min(2),
+    afterIds: z.array(z.string().min(1)).min(2),
+    requirementIds: z.array(z.string().min(1)).default([]),
+    claimIds: z.array(z.string().min(1)).default([]),
+    explanation: z.string().min(1),
+  })
+  .superRefine((change, context) => {
+    if (change.beforeIds.length !== change.afterIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Variant reorder must preserve the number of items.",
+      });
+    }
+    if (
+      [...change.beforeIds].sort().join("\u0000") !==
+      [...change.afterIds].sort().join("\u0000")
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Variant reorder must preserve every original item.",
+      });
+    }
+    if (change.beforeIds.join("\u0000") === change.afterIds.join("\u0000")) {
+      context.addIssue({
+        code: "custom",
+        message: "Variant change must describe an actual order difference.",
+      });
+    }
+  });
+export type ResumeVariantChange = z.infer<typeof ResumeVariantChangeSchema>;
+
 export const ResumeVariantSchema = z.object({
   id: z.string().min(1),
   baseResumeId: z.string().min(1),
@@ -260,6 +313,7 @@ export const ResumeVariantSchema = z.object({
   name: z.string().min(1),
   ast: ResumeASTSchema,
   appliedSuggestionIds: z.array(z.string()).default([]),
+  changes: z.array(ResumeVariantChangeSchema).default([]),
 });
 export type ResumeVariant = z.infer<typeof ResumeVariantSchema>;
 

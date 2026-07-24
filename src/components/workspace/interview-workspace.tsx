@@ -3,11 +3,16 @@
 import { useMutation } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowLeft,
   Check,
   ChevronRight,
+  Keyboard,
   LoaderCircle,
+  LockKeyhole,
   Mic,
   MicOff,
+  MonitorCheck,
+  Quote,
   RotateCcw,
   Send,
   ShieldCheck,
@@ -15,21 +20,74 @@ import {
   Square,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { EvaluationResponse } from "@/lib/client/contracts";
 import {
   createInterviewPlan,
   evaluateAnswer,
   transcribeBrowserSpeech,
 } from "@/lib/client/api";
 import { registerClientRuntimeDisposer } from "@/lib/client/runtime-resources";
-import { useAppStore } from "@/lib/client/store";
+import {
+  interviewFollowUpQuestionId,
+  useAppStore,
+} from "@/lib/client/store";
+import type { InterviewQuestion } from "@/lib/domain";
 
 type AnswerSubmission = {
-  questionId: string;
-  question: string;
+  question: InterviewQuestion;
+  followUpRound: number;
   transcript: string;
   source: "speech" | "text";
   speechConfidence?: number;
 };
+
+const DIMENSION_LABELS = {
+  relevance: "问题相关",
+  structure: "表达结构",
+  evidence: "证据支撑",
+  roleCompetency: "岗位能力",
+  clarity: "表达清晰",
+} as const;
+
+function followUpQuestion(
+  question: InterviewQuestion,
+  prompt: string,
+  round: number,
+  askedFollowUps: readonly string[],
+): InterviewQuestion {
+  return {
+    ...question,
+    id: interviewFollowUpQuestionId(question.id, round),
+    prompt,
+    followUps: question.followUps.filter(
+      (candidate) => !askedFollowUps.includes(candidate),
+    ),
+    generated: true,
+    referenceQuestionIds: [
+      ...new Set([...question.referenceQuestionIds, question.id]),
+    ],
+  };
+}
+
+function nextFollowUpPrompt(
+  response: EvaluationResponse,
+  question: InterviewQuestion,
+  askedFollowUps: readonly string[],
+  maxFollowUps: number,
+) {
+  if (askedFollowUps.length >= maxFollowUps) return undefined;
+  const candidates = [
+    response.evaluation.followUpQuestion,
+    ...question.followUps,
+  ];
+  return candidates
+    .find((candidate): candidate is string => {
+      if (!candidate) return false;
+      const normalized = candidate.trim();
+      return Boolean(normalized) && !askedFollowUps.includes(normalized);
+    })
+    ?.trim();
+}
 
 function formatTime(seconds: number) {
   const minutes = Math.floor(seconds / 60);
@@ -72,23 +130,23 @@ function InterviewWorkspaceSession({
   const setPlan = useAppStore((state) => state.setInterviewPlan);
   const evaluations = useAppStore((state) => state.evaluations);
   const addEvaluation = useAppStore((state) => state.addEvaluation);
-  const [questionIndex, setQuestionIndex] = useState(() => {
-    if (!plan) return 0;
-    const evaluatedQuestionIds = new Set(
-      evaluations.map((item) => item.evaluation.questionId),
-    );
-    const firstUnanswered = plan.questions.findIndex(
-      (question) => !evaluatedQuestionIds.has(question.id),
-    );
-    return firstUnanswered === -1 ? plan.questions.length : firstUnanswered;
-  });
-  const [transcript, setTranscript] = useState("");
+  const setupStage = useAppStore((state) => state.interviewSetupStage);
+  const setSetupStage = useAppStore(
+    (state) => state.setInterviewSetupStage,
+  );
+  const progress = useAppStore((state) => state.interviewProgress);
+  const updateProgress = useAppStore(
+    (state) => state.updateInterviewProgress,
+  );
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [permissionError, setPermissionError] = useState<string | null>(null);
-  const [transcriptSource, setTranscriptSource] = useState<"speech" | "text">(
-    "text",
-  );
+  const questionIndex = progress?.questionIndex ?? 0;
+  const transcript = progress?.transcript ?? "";
+  const followUpRound = progress?.followUpRound ?? 0;
+  const askedFollowUps = progress?.askedFollowUps ?? [];
+  const followUpEvaluation = progress?.followUpEvaluation ?? null;
+  const transcriptSource = progress?.transcriptSource ?? "text";
   const speechConfidenceRef = useRef<number | undefined>(undefined);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const unregisterRecognitionDisposerRef = useRef<(() => void) | null>(null);
@@ -134,25 +192,26 @@ function InterviewWorkspaceSession({
               })
             ).transcript
           : submission.transcript;
-      if (isCurrentSession()) setTranscript(answer);
+      if (isCurrentSession()) updateProgress({ transcript: answer });
       const result = await evaluateAnswer({
-        questionId: submission.questionId,
         question: submission.question,
         answer,
         claims: analysis.claims,
       });
-      if (result.evaluation.questionId !== submission.questionId) {
+      if (result.evaluation.questionId !== submission.question.id) {
         throw new Error("评审结果与当前问题不一致，请重试。");
       }
       return result;
     },
-    onSuccess: (result) => {
-      if (isCurrentSession()) addEvaluation(result);
+    onSuccess: (result, submission) => {
+      if (!isCurrentSession()) return;
+      if (submission.followUpRound === 0) addEvaluation(result);
+      else updateProgress({ followUpEvaluation: result });
     },
     onSettled: (_data, _error, submission) => {
       if (
         isCurrentSession() &&
-        submittingQuestionIdRef.current === submission.questionId
+        submittingQuestionIdRef.current === submission.question.id
       ) {
         submittingQuestionIdRef.current = null;
       }
@@ -212,8 +271,10 @@ function InterviewWorkspaceSession({
             confidences.length
           : undefined;
         if (text.trim()) {
-          setTranscript(text.trim());
-          setTranscriptSource("speech");
+          updateProgress({
+            transcript: text.trim(),
+            transcriptSource: "speech",
+          });
         }
       };
       recognition.onerror = () => {
@@ -276,6 +337,123 @@ function InterviewWorkspaceSession({
   }, [sessionIdentity]);
 
   if (!plan) {
+    const speechRecognitionAvailable = Boolean(
+      typeof window !== "undefined" &&
+        (window.SpeechRecognition ?? window.webkitSpeechRecognition),
+    );
+    if (setupStage === "device_check") {
+      return (
+        <div className="mx-auto grid min-h-[calc(100dvh-64px)] max-w-5xl place-items-center px-6 py-10">
+          <section
+            aria-labelledby="device-check-heading"
+            className="w-full max-w-3xl border-y border-line py-10"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                planMutation.reset();
+                setSetupStage("intro");
+              }}
+              className="inline-flex min-h-11 items-center gap-2 rounded-[8px] px-2 text-sm font-medium text-muted transition-colors hover:bg-white hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+            >
+              <ArrowLeft aria-hidden="true" size={17} />
+              返回面试说明
+            </button>
+            <div className="mt-5 grid grid-cols-[minmax(0,1fr)_300px] items-start gap-10">
+              <div>
+                <span className="grid size-12 place-items-center rounded-[8px] bg-ink text-white">
+                  <MonitorCheck aria-hidden="true" size={23} />
+                </span>
+                <h1
+                  id="device-check-heading"
+                  data-module-heading
+                  tabIndex={-1}
+                  className="mt-6 text-2xl font-semibold outline-none"
+                >
+                  设备与隐私检查
+                </h1>
+                <p className="mt-3 text-sm leading-7 text-muted">
+                  现在不会请求麦克风权限。开始面试后，仍可随时选择语音或直接输入文字。
+                </p>
+                <button
+                  type="button"
+                  disabled={planMutation.isPending}
+                  onClick={() => planMutation.mutate()}
+                  className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-5 text-sm font-medium text-white transition-colors hover:bg-[#075bbf] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-wait disabled:opacity-50"
+                >
+                  {planMutation.isPending ? (
+                    <LoaderCircle
+                      aria-hidden="true"
+                      size={18}
+                      className="animate-spin"
+                    />
+                  ) : (
+                    <ChevronRight aria-hidden="true" size={18} />
+                  )}
+                  {planMutation.isPending ? "正在准备题目" : "开始面试"}
+                </button>
+                {planMutation.isError ? (
+                  <p role="alert" className="mt-3 text-sm text-danger">
+                    无法生成面试计划，请重试。
+                  </p>
+                ) : null}
+              </div>
+              <dl className="divide-y divide-line rounded-[8px] border border-line bg-white px-4 shadow-sm">
+                <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 py-4">
+                  {speechRecognitionAvailable ? (
+                    <Check
+                      aria-hidden="true"
+                      size={19}
+                      className="mt-0.5 text-success"
+                    />
+                  ) : (
+                    <MicOff
+                      aria-hidden="true"
+                      size={19}
+                      className="mt-0.5 text-warning"
+                    />
+                  )}
+                  <div>
+                    <dt className="text-sm font-semibold">浏览器语音识别</dt>
+                    <dd className="mt-1 text-xs leading-5 text-muted">
+                      {speechRecognitionAvailable
+                        ? "当前浏览器可用；录音时再请求权限。"
+                        : "当前浏览器不可用，不影响文字回答。"}
+                    </dd>
+                  </div>
+                </div>
+                <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 py-4">
+                  <Keyboard
+                    aria-hidden="true"
+                    size={19}
+                    className="mt-0.5 text-brand"
+                  />
+                  <div>
+                    <dt className="text-sm font-semibold">文字回答</dt>
+                    <dd className="mt-1 text-xs leading-5 text-muted">
+                      始终可用，可直接输入或修正转写内容。
+                    </dd>
+                  </div>
+                </div>
+                <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 py-4">
+                  <LockKeyhole
+                    aria-hidden="true"
+                    size={19}
+                    className="mt-0.5 text-brand"
+                  />
+                  <div>
+                    <dt className="text-sm font-semibold">隐私边界</dt>
+                    <dd className="mt-1 text-xs leading-5 text-muted">
+                      本应用只接收转写文字，不保存音频；浏览器供应商可能处理语音。
+                    </dd>
+                  </div>
+                </div>
+              </dl>
+            </div>
+          </section>
+        </div>
+      );
+    }
     return (
       <div className="mx-auto grid min-h-[calc(100dvh-64px)] max-w-5xl place-items-center px-6 py-10">
         <section className="grid w-full max-w-3xl grid-cols-[1fr_280px] items-center gap-10 border-y border-line py-10">
@@ -296,26 +474,12 @@ function InterviewWorkspaceSession({
             </p>
             <button
               type="button"
-              disabled={planMutation.isPending}
-              onClick={() => planMutation.mutate()}
-              className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-5 text-sm font-medium text-white hover:bg-[#075bbf] disabled:opacity-50"
+              onClick={() => setSetupStage("device_check")}
+              className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-5 text-sm font-medium text-white transition-colors hover:bg-[#075bbf] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
             >
-              {planMutation.isPending ? (
-                <LoaderCircle
-                  aria-hidden="true"
-                  size={18}
-                  className="animate-spin"
-                />
-              ) : (
-                <ChevronRight aria-hidden="true" size={18} />
-              )}
-              {planMutation.isPending ? "正在准备题目" : "进入设备检查"}
+              <ChevronRight aria-hidden="true" size={18} />
+              进入设备检查
             </button>
-            {planMutation.isError ? (
-              <p role="alert" className="mt-3 text-sm text-danger">
-                无法生成面试计划，请重试。
-              </p>
-            ) : null}
           </div>
           <dl className="divide-y divide-line rounded-[8px] border border-line bg-white px-4">
             <div className="flex items-center justify-between py-4">
@@ -336,8 +500,35 @@ function InterviewWorkspaceSession({
     );
   }
 
+  if (!progress) {
+    return (
+      <div className="mx-auto grid min-h-[calc(100dvh-64px)] max-w-4xl place-items-center px-6 py-10">
+        <section className="w-full max-w-xl rounded-[8px] border border-line bg-white p-6 shadow-sm">
+          <h1
+            data-module-heading
+            tabIndex={-1}
+            className="text-xl font-semibold outline-none"
+          >
+            面试进度需要重新初始化
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-muted">
+            当前题目仍然保留，重新开始本轮即可建立可恢复的本机进度。
+          </p>
+          <button
+            type="button"
+            onClick={() => setPlan(plan)}
+            className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf]"
+          >
+            <RotateCcw aria-hidden="true" size={17} />
+            重新开始本轮
+          </button>
+        </section>
+      </div>
+    );
+  }
+
   const question = plan.questions[questionIndex];
-  const evaluation = question
+  const mainEvaluation = question
     ? evaluations.find((item) => item.evaluation.questionId === question.id)
     : undefined;
   const completedEvaluations = plan.questions
@@ -402,8 +593,18 @@ function InterviewWorkspaceSession({
         <button
           type="button"
           onClick={() => {
-            setQuestionIndex(0);
-            setTranscript("");
+            updateProgress({
+              questionIndex: 0,
+              transcript: "",
+              transcriptSource: "text",
+              followUpRound: 0,
+              askedFollowUps: [],
+              followUpEvaluation: null,
+            });
+            speechConfidenceRef.current = undefined;
+            setSeconds(0);
+            setPermissionError(null);
+            evaluationMutation.reset();
           }}
           className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-[8px] border border-line px-4 text-sm font-medium hover:bg-white"
         >
@@ -414,12 +615,32 @@ function InterviewWorkspaceSession({
     );
   }
 
+  const maxFollowUps = Math.min(plan.maxFollowUps, 2);
+  const activeFollowUpPrompt =
+    followUpRound > 0 ? askedFollowUps[followUpRound - 1] : undefined;
+  const activeQuestion = activeFollowUpPrompt
+    ? followUpQuestion(
+        question,
+        activeFollowUpPrompt,
+        followUpRound,
+        askedFollowUps,
+      )
+    : question;
+  const evaluation =
+    followUpRound === 0 ? mainEvaluation : (followUpEvaluation ?? undefined);
+  const nextFollowUp = evaluation
+    ? nextFollowUpPrompt(evaluation, question, askedFollowUps, maxFollowUps)
+    : undefined;
+
   return (
     <div className="mx-auto min-h-[calc(100dvh-64px)] max-w-7xl px-6 py-8">
       <div className="mb-6 flex items-center justify-between gap-4">
         <div>
           <p className="text-sm text-muted">
             问题 {questionIndex + 1} / {plan.questions.length}
+            {followUpRound > 0
+              ? ` · 追问 ${followUpRound} / ${maxFollowUps}`
+              : ""}
           </p>
           <h1
             data-module-heading
@@ -455,7 +676,7 @@ function InterviewWorkspaceSession({
                 <Sparkles aria-hidden="true" size={18} />
               </span>
               <p className="text-lg font-semibold leading-8">
-                {question.prompt}
+                {activeQuestion.prompt}
               </p>
             </div>
           </div>
@@ -532,8 +753,10 @@ function InterviewWorkspaceSession({
               value={transcript}
               readOnly={Boolean(evaluation) || evaluationMutation.isPending}
               onChange={(event) => {
-                setTranscript(event.target.value);
-                setTranscriptSource("text");
+                updateProgress({
+                  transcript: event.target.value,
+                  transcriptSource: "text",
+                });
                 if (evaluationMutation.isError) evaluationMutation.reset();
               }}
               rows={8}
@@ -550,10 +773,10 @@ function InterviewWorkspaceSession({
               }
               onClick={() => {
                 if (evaluation || submittingQuestionIdRef.current) return;
-                submittingQuestionIdRef.current = question.id;
+                submittingQuestionIdRef.current = activeQuestion.id;
                 evaluationMutation.mutate({
-                  questionId: question.id,
-                  question: question.prompt,
+                  question: activeQuestion,
+                  followUpRound,
                   transcript: transcript.trim(),
                   source: transcriptSource,
                   speechConfidence: speechConfidenceRef.current,
@@ -596,13 +819,60 @@ function InterviewWorkspaceSession({
           {evaluation ? (
             <>
               <div className="border-b border-line p-5">
-                <p className="text-xs font-medium text-muted">本题评分</p>
-                <p className="mt-1 text-[34px] font-semibold tabular-nums">
-                  {Math.round(evaluation.evaluation.overallScore)}
-                  <span className="text-sm font-normal text-muted"> / 100</span>
-                </p>
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium text-muted">
+                      {followUpRound > 0
+                        ? `追问 ${followUpRound} 评分`
+                        : "本题评分"}
+                    </p>
+                    <p className="mt-1 text-[34px] font-semibold tabular-nums">
+                      {Math.round(evaluation.evaluation.overallScore)}
+                      <span className="text-sm font-normal text-muted">
+                        {" "}
+                        / 100
+                      </span>
+                    </p>
+                  </div>
+                  <p className="pb-1 text-xs text-muted">五维合计</p>
+                </div>
               </div>
-              <div className="space-y-5 p-5">
+              <div className="border-b border-line p-5">
+                <p className="text-sm font-semibold">评分明细</p>
+                <dl className="mt-3 space-y-2.5">
+                  {(
+                    Object.entries(evaluation.evaluation.dimensions) as Array<
+                      [keyof typeof DIMENSION_LABELS, number]
+                    >
+                  ).map(([id, score]) => (
+                    <div
+                      key={id}
+                      className="grid grid-cols-[64px_minmax(0,1fr)_38px] items-center gap-2"
+                    >
+                      <dt className="text-xs text-muted">
+                        {DIMENSION_LABELS[id]}
+                      </dt>
+                      <dd
+                        role="progressbar"
+                        aria-label={`${DIMENSION_LABELS[id]}评分`}
+                        aria-valuemin={0}
+                        aria-valuemax={20}
+                        aria-valuenow={score}
+                        className="h-1.5 overflow-hidden rounded-full bg-line"
+                      >
+                        <span
+                          className="block h-full rounded-full bg-brand"
+                          style={{ width: `${(score / 20) * 100}%` }}
+                        />
+                      </dd>
+                      <dd className="text-right text-xs font-semibold tabular-nums">
+                        {Math.round(score)} / 20
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+              <div className="space-y-5 border-b border-line p-5">
                 <div>
                   <p className="flex items-center gap-2 text-sm font-semibold">
                     <Check
@@ -613,9 +883,13 @@ function InterviewWorkspaceSession({
                     有效部分
                   </p>
                   <ul className="mt-2 space-y-2 text-sm leading-6 text-muted">
-                    {evaluation.evaluation.strengths.map((item) => (
-                      <li key={item}>• {item}</li>
-                    ))}
+                    {evaluation.evaluation.strengths.length > 0 ? (
+                      evaluation.evaluation.strengths.map((item) => (
+                        <li key={item}>• {item}</li>
+                      ))
+                    ) : (
+                      <li>本轮暂未识别出稳定优势。</li>
+                    )}
                   </ul>
                 </div>
                 <div>
@@ -628,20 +902,91 @@ function InterviewWorkspaceSession({
                     改进重点
                   </p>
                   <ul className="mt-2 space-y-2 text-sm leading-6 text-muted">
-                    {evaluation.evaluation.improvements.map((item) => (
-                      <li key={item}>• {item}</li>
-                    ))}
+                    {evaluation.evaluation.improvements.length > 0 ? (
+                      evaluation.evaluation.improvements.map((item) => (
+                        <li key={item}>• {item}</li>
+                      ))
+                    ) : (
+                      <li>当前回答未发现明显问题。</li>
+                    )}
                   </ul>
                 </div>
+                {evaluation.evaluation.citedAnswerFragments.length > 0 ? (
+                  <div>
+                    <p className="flex items-center gap-2 text-sm font-semibold">
+                      <Quote
+                        aria-hidden="true"
+                        size={16}
+                        className="text-brand"
+                      />
+                      回答引用
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {evaluation.evaluation.citedAnswerFragments.map(
+                        (fragment) => (
+                          <blockquote
+                            key={fragment}
+                            className="border-l-2 border-brand pl-3 text-xs leading-5 text-muted"
+                          >
+                            {fragment}
+                          </blockquote>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              {evaluation.coaching ? (
+                <div className="space-y-4 border-b border-line p-5">
+                  <div>
+                    <p className="text-xs font-medium text-brand">面试教练</p>
+                    <p className="mt-1 text-sm font-semibold leading-6">
+                      {evaluation.coaching.headline}
+                    </p>
+                  </div>
+                  <ul className="space-y-2 text-sm leading-6 text-muted">
+                    {evaluation.coaching.actions.map((action) => (
+                      <li key={action}>• {action}</li>
+                    ))}
+                  </ul>
+                  <div>
+                    <p className="text-xs font-semibold">建议回答结构</p>
+                    <ol className="mt-2 space-y-1.5 text-xs leading-5 text-muted">
+                      {evaluation.coaching.improvedOutline.map(
+                        (item, index) => (
+                          <li key={item}>
+                            <span className="mr-1.5 font-semibold text-ink">
+                              {index + 1}.
+                            </span>
+                            {item}
+                          </li>
+                        ),
+                      )}
+                    </ol>
+                  </div>
+                  <div className="rounded-[8px] bg-surface p-3">
+                    <p className="flex items-center gap-2 text-xs font-semibold">
+                      <ShieldCheck aria-hidden="true" size={15} />
+                      事实边界
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-muted">
+                      {evaluation.coaching.factSafetyReminder}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+              <div className="space-y-4 p-5">
                 {evaluation.consistencyWarnings.length > 0 ? (
                   <div className="rounded-[8px] bg-[#fff7df] p-3">
                     <p className="flex items-center gap-2 text-sm font-semibold text-warning">
                       <AlertTriangle aria-hidden="true" size={16} />
                       口径核对
                     </p>
-                    <p className="mt-1 text-xs leading-5 text-warning">
-                      {evaluation.consistencyWarnings.join("；")}
-                    </p>
+                    <ul className="mt-1 space-y-1 text-xs leading-5 text-warning">
+                      {evaluation.consistencyWarnings.map((warning) => (
+                        <li key={warning}>• {warning}</li>
+                      ))}
+                    </ul>
                   </div>
                 ) : (
                   <p className="flex items-center gap-2 text-xs text-success">
@@ -649,14 +994,27 @@ function InterviewWorkspaceSession({
                     未发现与简历明显冲突
                   </p>
                 )}
-              </div>
-              <div className="border-t border-line p-5">
                 <button
                   type="button"
                   onClick={() => {
-                    setQuestionIndex((value) => value + 1);
-                    setTranscript("");
-                    setTranscriptSource("text");
+                    if (nextFollowUp) {
+                      updateProgress({
+                        askedFollowUps: [...askedFollowUps, nextFollowUp],
+                        followUpRound: followUpRound + 1,
+                        followUpEvaluation: null,
+                        transcript: "",
+                        transcriptSource: "text",
+                      });
+                    } else {
+                      updateProgress({
+                        questionIndex: questionIndex + 1,
+                        followUpRound: 0,
+                        askedFollowUps: [],
+                        followUpEvaluation: null,
+                        transcript: "",
+                        transcriptSource: "text",
+                      });
+                    }
                     speechConfidenceRef.current = undefined;
                     setSeconds(0);
                     setPermissionError(null);
@@ -664,7 +1022,9 @@ function InterviewWorkspaceSession({
                   }}
                   className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] bg-ink px-4 text-sm font-medium text-white hover:bg-black"
                 >
-                  下一题
+                  {nextFollowUp
+                    ? `回答追问 ${followUpRound + 1}/${maxFollowUps}`
+                    : "下一题"}
                   <ChevronRight aria-hidden="true" size={17} />
                 </button>
               </div>

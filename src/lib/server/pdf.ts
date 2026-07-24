@@ -1,5 +1,6 @@
 import { createCanvas } from "@napi-rs/canvas";
 
+import type { SourceBlock } from "@/lib/domain";
 import { getOfflineTesseractOptions } from "@/lib/server/ocr";
 import { loadPdfJs } from "@/lib/server/pdfjs";
 
@@ -19,6 +20,8 @@ export type ParsedSourceBlock = {
   source: "pdf" | "ocr";
   confidence: number;
   bbox: { x: number; y: number; width: number; height: number };
+  role?: SourceBlock["role"];
+  style?: SourceBlock["style"];
 };
 
 export type ParsedPdfPage = {

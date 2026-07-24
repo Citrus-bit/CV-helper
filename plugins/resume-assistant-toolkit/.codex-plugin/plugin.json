@@ -1,0 +1,32 @@
+{
+  "name": "resume-assistant-toolkit",
+  "version": "0.1.0",
+  "description": "Unified Codex skills for developing, reviewing, and evaluating the Resume Analysis Assistant.",
+  "author": {
+    "name": "简历分析助手项目"
+  },
+  "license": "Proprietary",
+  "keywords": [
+    "resume",
+    "pdf",
+    "ats",
+    "job-matching",
+    "interview",
+    "typst",
+    "evaluation"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "简历分析助手 Skill 套件",
+    "shortDescription": "统一开发、评审和验证简历分析助手的专业能力",
+    "longDescription": "通过一个编排入口和六个领域 Skill，统一处理 PDF 文档智能、证据约束简历评审、岗位与职业文案、Typst 排版导出、模拟面试以及安全评测。",
+    "developerName": "简历分析助手项目",
+    "category": "Productivity",
+    "capabilities": ["Analyze", "Review", "Write"],
+    "defaultPrompt": [
+      "审查当前简历分析助手任务，并路由到正确的领域 Skill。",
+      "为一个 Capability 设计实现、回退和验收方案。",
+      "对简历分析助手执行跨领域发布前审计。"
+    ]
+  }
+}

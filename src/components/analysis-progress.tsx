@@ -1,38 +1,37 @@
 "use client";
 
-import {
-  Check,
-  FileSearch,
-  LoaderCircle,
-  ScanText,
-  Sparkles,
-} from "lucide-react";
-import { useEffect, useState } from "react";
+import { FileSearch, LoaderCircle, ScanText, Sparkles } from "lucide-react";
+import { useEffect } from "react";
 import {
   cancelAnalysisRequest,
   retainAnalysisRequest,
 } from "@/lib/client/analysis-request";
 import { useAppStore } from "@/lib/client/store";
 
-const steps = [
-  { label: "校验 PDF", icon: FileSearch },
-  { label: "提取文字层", icon: ScanText },
-  { label: "建立证据链", icon: Sparkles },
-  { label: "生成评分与建议", icon: Sparkles },
+const analysisContents = [
+  {
+    label: "PDF 文字与版面",
+    detail: "优先读取原生文字层",
+    icon: FileSearch,
+  },
+  {
+    label: "扫描内容识别",
+    detail: "仅在文字缺失时启用 OCR",
+    icon: ScanText,
+  },
+  {
+    label: "证据、评分与修改建议",
+    detail: "完整结果生成后统一展示",
+    icon: Sparkles,
+  },
 ];
 
 export function AnalysisProgress() {
-  const [active, setActive] = useState(0);
   const reset = useAppStore((state) => state.reset);
 
   useEffect(() => {
     const releaseRequest = retainAnalysisRequest();
-    const timer = window.setInterval(
-      () => setActive((value) => Math.min(steps.length - 1, value + 1)),
-      1200,
-    );
     return () => {
-      window.clearInterval(timer);
       releaseRequest();
     };
   }, []);
@@ -44,24 +43,28 @@ export function AnalysisProgress() {
 
   return (
     <main className="grid min-h-dvh place-items-center bg-canvas px-8 py-8">
-      <section className="grid w-full max-w-4xl grid-cols-[1.05fr_0.95fr] overflow-hidden rounded-[8px] border border-line bg-surface shadow-panel">
+      <section
+        aria-labelledby="analysis-progress-heading"
+        aria-busy="true"
+        className="grid w-full max-w-4xl grid-cols-[1.05fr_0.95fr] overflow-hidden rounded-[8px] border border-line bg-surface shadow-panel"
+      >
         <div className="border-r border-line bg-[#eceff3] p-7">
           <div className="mx-auto aspect-[210/297] max-h-[560px] w-full max-w-[395px] bg-white p-8 shadow-sm">
-            <div className="h-5 w-40 animate-pulse rounded bg-[#d7dbe1]" />
-            <div className="mt-3 h-3 w-52 animate-pulse rounded bg-[#e7e9ed]" />
-            <div className="mt-8 h-3 w-24 animate-pulse rounded bg-[#cfd5dd]" />
+            <div className="h-5 w-40 animate-pulse rounded bg-[#d7dbe1] motion-reduce:animate-none" />
+            <div className="mt-3 h-3 w-52 animate-pulse rounded bg-[#e7e9ed] motion-reduce:animate-none" />
+            <div className="mt-8 h-3 w-24 animate-pulse rounded bg-[#cfd5dd] motion-reduce:animate-none" />
             {[92, 100, 88, 96].map((width, index) => (
               <div
                 key={`${index}-${width}`}
-                className="mt-3 h-2.5 animate-pulse rounded bg-[#eaecf0]"
+                className="mt-3 h-2.5 animate-pulse rounded bg-[#eaecf0] motion-reduce:animate-none"
                 style={{ width: `${width}%` }}
               />
             ))}
-            <div className="mt-8 h-3 w-28 animate-pulse rounded bg-[#cfd5dd]" />
+            <div className="mt-8 h-3 w-28 animate-pulse rounded bg-[#cfd5dd] motion-reduce:animate-none" />
             {[96, 84, 100, 72, 93, 80].map((width, index) => (
               <div
                 key={`${index}-${width}`}
-                className="mt-3 h-2.5 animate-pulse rounded bg-[#eaecf0]"
+                className="mt-3 h-2.5 animate-pulse rounded bg-[#eaecf0] motion-reduce:animate-none"
                 style={{ width: `${width}%` }}
               />
             ))}
@@ -73,44 +76,55 @@ export function AnalysisProgress() {
             <LoaderCircle
               aria-hidden="true"
               size={21}
-              className="animate-spin"
+              className="animate-spin motion-reduce:animate-none"
             />
           </span>
-          <h1 className="mt-6 text-2xl font-semibold">正在分析简历</h1>
-          <p className="mt-2 text-sm leading-6 text-muted" aria-live="polite">
-            {steps[active].label}。复杂扫描页可能需要更长时间。
+          <h1
+            id="analysis-progress-heading"
+            data-page-heading
+            tabIndex={-1}
+            className="mt-6 text-2xl font-semibold outline-none"
+          >
+            正在分析简历
+          </h1>
+          <p
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            className="mt-2 max-w-sm text-sm leading-6 text-muted"
+          >
+            分析完成后会自动进入结果页。复杂扫描页可能需要更长时间。
           </p>
 
-          <ol className="mt-8 space-y-1">
-            {steps.map((step, index) => {
-              const Icon = step.icon;
-              const complete = index < active;
-              const current = index === active;
-              return (
-                <li
-                  key={step.label}
-                  className={`flex min-h-12 items-center gap-3 rounded-[8px] px-3 text-sm ${current ? "bg-[#edf5ff] text-ink" : "text-muted"}`}
-                >
-                  <span
-                    className={`grid size-7 place-items-center rounded-full ${
-                      complete
-                        ? "bg-success text-white"
-                        : current
-                          ? "bg-brand text-white"
-                          : "bg-[#eceef1]"
-                    }`}
+          <div className="mt-8" aria-labelledby="analysis-contents-heading">
+            <h2
+              id="analysis-contents-heading"
+              className="px-3 text-xs font-medium text-muted"
+            >
+              分析内容
+            </h2>
+            <ul className="mt-2 space-y-1">
+              {analysisContents.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <li
+                    key={item.label}
+                    className="flex min-h-14 items-center gap-3 rounded-[8px] px-3 text-sm text-ink"
                   >
-                    {complete ? (
-                      <Check aria-hidden="true" size={15} />
-                    ) : (
-                      <Icon aria-hidden="true" size={14} />
-                    )}
-                  </span>
-                  {step.label}
-                </li>
-              );
-            })}
-          </ol>
+                    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[#eceef1] text-muted">
+                      <Icon aria-hidden="true" size={15} />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block font-medium">{item.label}</span>
+                      <span className="mt-0.5 block text-xs leading-5 text-muted">
+                        {item.detail}
+                      </span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
 
           <button
             type="button"

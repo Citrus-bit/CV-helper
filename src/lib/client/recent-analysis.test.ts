@@ -3,6 +3,7 @@ import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { AnalysisBundle } from "./contracts";
+import { stableId } from "@/lib/baseline/utils";
 import {
   applyRecentAnalysisPolicy,
   clearRecentAnalyses,
@@ -153,6 +154,83 @@ describe("recent analysis IndexedDB repository", () => {
     expect(record?.pdfSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(record?.payload.analysis.originalPdfBase64).toBeUndefined();
     expect(record?.payload.analysis.pagePreviews).toEqual([]);
+  });
+
+  it("round-trips versioned interview progress without requiring audio data", async () => {
+    const archived = payload("resume-interview");
+    const question = {
+      id: "question-1",
+      locale: "zh-CN" as const,
+      prompt: "请介绍一个项目。",
+      category: "resume" as const,
+      difficulty: "intermediate" as const,
+      roleFamilies: [],
+      skills: [],
+      followUps: ["请说明个人行动。"],
+      scoringAnchors: [],
+      source: "test",
+      generated: false,
+      referenceQuestionIds: [],
+    };
+    const plan = {
+      sourceResumeId: "resume-interview",
+      sourceResumeRevision: 0,
+      questions: [question],
+      stories: [],
+      durationMinutes: 20,
+      maxFollowUps: 2,
+    };
+    archived.module = "interview";
+    archived.interviewPlan = plan;
+    archived.evaluations = [
+      {
+        sourceResumeId: "resume-interview",
+        sourceResumeRevision: 0,
+        evaluation: {
+          questionId: question.id,
+          overallScore: 80,
+          dimensions: {
+            relevance: 16,
+            structure: 16,
+            evidence: 16,
+            roleCompetency: 16,
+            clarity: 16,
+          },
+          strengths: [],
+          improvements: [],
+          citedAnswerFragments: [],
+          followUpQuestion: "请说明个人行动。",
+        },
+        consistencyWarnings: [],
+      },
+    ];
+    archived.interviewSetupStage = "intro";
+    archived.interviewProgress = {
+      schemaVersion: 1,
+      sourceResumeId: "resume-interview",
+      sourceResumeRevision: 0,
+      planFingerprint: stableId("interview_plan", JSON.stringify(plan)),
+      questionIndex: 0,
+      followUpRound: 1,
+      askedFollowUps: ["请说明个人行动。"],
+      followUpEvaluation: null,
+      transcript: "尚未提交的文字草稿",
+      transcriptSource: "text",
+    };
+
+    await saveRecentAnalysis(
+      {
+        payload: archived,
+        expiresAt: new Date(start + 60_000).toISOString(),
+      },
+      start,
+    );
+
+    const record = await getRecentAnalysis("resume-interview", start + 1);
+    expect(record?.payload.interviewProgress).toEqual(
+      archived.interviewProgress,
+    );
+    expect(record?.payload).not.toHaveProperty("audio");
   });
 
   it("keeps only the ten newest unexpired records", async () => {

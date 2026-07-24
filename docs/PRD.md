@@ -1,7 +1,7 @@
 # 简历分析助手 MVP 产品需求文档
 
 版本：`0.1.0`  
-状态：本地桌面 MVP，阶段 6 验证中  
+状态：本地桌面 MVP，阶段 9 交付审计中
 日期：2026-07-23
 
 ## 1. 产品定义
@@ -45,12 +45,13 @@ MVP 的主闭环为：
 - 首页、上传区、安全说明和最近分析统一使用同一 `max-w-5xl` 内容轴线。
 - 工作区固定为 216px 侧栏、文档区和建议区；顶栏返回按钮与侧栏品牌均非破坏性返回首页。
 - 返回首页前保存当前会话，用户可从最近分析恢复；删除当前会话、删除单条历史和清空全部是独立动作。
+- 只要还有未确认建议，岗位匹配与模拟面试在界面和状态层都保持禁用；从会话或历史恢复时也会先回到简历审阅。
 
 ### 2.2 最近分析
 
 - 首页展示最多 10 条记录：文件名、更新时间、页数、简历质量分、待处理数量、至多两行摘要及摘要来源。
-- 记录包含分析、JD、面试和当前模块快照；原 PDF 只存当前设备的 IndexedDB，新版 PDF 按需重新渲染。
-- 所有记录 24 小时过期，总容量最多 50 MB。超限先移除最旧记录的 PDF Blob 并保留结构摘要，再淘汰最旧记录。
+- 记录包含分析、JD 草稿/结果、面试设备阶段/进度和当前模块快照；原 PDF 只存当前设备的 IndexedDB，新版 PDF 按需重新渲染。
+- 所有记录 24 小时后过期，并在应用运行期间或下次打开时清理；总容量最多 50 MB。超限先移除最旧记录的 PDF Blob 并保留结构摘要，再淘汰最旧记录。
 - 原 PDF 已被容量策略清理时仍可恢复分析，但原稿预览会明确要求重新上传。
 - “清空本机记录”经确认后终止未完成请求、释放对象 URL，并清除 IndexedDB、当前会话和旧版存储键。
 
@@ -60,16 +61,16 @@ MVP 的主闭环为：
 
 - 首页首屏直接显示 PDF 拖放区和文件选择按钮，不设置营销式中间页。
 - 支持中英文 PDF，最大 10 MB、5 页；拒绝扩展名伪装、损坏、加密或超限文件。
-- 显示“文件校验、原生解析、必要 OCR、结构化、分析、预览生成”阶段进度和可恢复错误。
-- 原始 PDF 不可变，只保存在当前设备；保留至单条删除、全部清空、容量淘汰或 24 小时 TTL 到期。
+- 分析期间显示诚实的不确定等待状态，说明会处理原生文字、必要 OCR、证据、评分和建议，但不把这些内容伪装成后端已上报的逐阶段进度；完成后一次性进入结果页，失败或取消时提供明确恢复路径。
+- 原始 PDF 不可变，只保存在当前设备；保留至单条删除、全部清空、容量淘汰或 24 小时 TTL 到期。到期后的物理删除在应用运行期间或下次打开时执行。
 
 ### 3.2 解析策略
 
-- 配置 `DOCUMENT_WORKER_URL` 时，当前生产文档路径已由 `/api/analyze` 接入隔离 Python worker：PDFium/pdfplumber 先读取原生文字、坐标和页面信号，再分类为 `digital | scan | mixed`；worker 返回结果经 Schema 校验后进入同一 Resume AST 流程。
+- 配置 `DOCUMENT_WORKER_URL` 时，当前生产文档路径已由 `/api/analyze` 接入隔离 Python worker：PDFium/pdfplumber 先读取原生文字、坐标和页面信号，再分类为 `digital | scan | mixed`；worker 返回结果经 Schema 校验后进入同一 Resume AST 流程。worker 网络不可用、超时、解析失败或返回结构非法时自动切换本机 TypeScript baseline，并向用户显示降级 warning；摘要不一致、413 资源超限和用户取消不允许回退。
 - worker 对 `digital` 页只保留原生提取，对 `scan` 页整页 OCR，对 `mixed` 页只 OCR 未被原生文字覆盖的图片区域。默认 provider 是本地 Tesseract CLI `chi_sim+eng`；PaddleOCR 仅为显式构建、显式配置并预置本地模型后的可选增强，运行时不下载模型。
 - worker 会先去重 OCR 区域，再执行每页 4 个、整份文档 8 个的区域上限，并限制并发、字符、单词、图片框、像素、输出行数和总耗时；超限时返回可解释 warning，同时保留已得到的原生内容和安全 OCR 结果。
 - 未配置 `DOCUMENT_WORKER_URL`（包括无 Docker 的本地运行）时，Next.js Node runtime 回退到 PDF.js + 本地 Tesseract.js baseline：`scan`/`mixed` 整页识别，`mixed` 再按空间覆盖率、邻近文本与模糊相似度过滤重复块。该路径同样不从 CDN 下载模型。
-- 两条路径都不声称完整恢复字体、字号、链接语义或复杂阅读顺序；低置信度和异常版面必须交给用户对照原 PDF。
+- 隔离 worker 会传递有界的块级字体名、字号、字重和字形摘要，供分段与标题识别使用；两条路径都不声称完整还原原稿样式、链接语义或复杂阅读顺序。低置信度和异常版面必须交给用户对照原 PDF。
 - 所有内容统一为带页码、边界框、来源和置信度的 SourceBlock，再映射为 Resume AST。
 - 低置信度和解析警告必须可见；用户可对照原始 PDF，并在逐条建议阶段手工修改。复杂双栏、旋转页和异常阅读顺序仍是需要扩大 fixture 与人工抽检的质量风险。
 
@@ -97,6 +98,7 @@ MVP 的主闭环为：
 ## 4. 岗位匹配
 
 - 用户可粘贴一个 JD，并可选填写职位名、职级、地点和求职语言。
+- 上述字段作为一个可恢复草稿保存在标签页会话和最近分析中；任一字段变化都会立即清除旧矩阵、岗位版和面试计划，不允许旧结果与新输入并存。
 - 系统抽取硬性要求、核心职责、技能工具、加分项、地点及其他限制。
 - 页面以矩阵展示“JD 要求 → 相关证据 → 满足/部分满足/缺口/冲突 → 建议或补充问题”。
 - 始终可显示证据覆盖率；只有材料和偏好足够时才显示更完整的岗位匹配分。
@@ -132,11 +134,13 @@ MVP 的主闭环为：
 ## 6. 模拟面试
 
 - 默认教练模式为 20 分钟、6 道主问题，每题最多 2 次追问，一次只问一个问题。
+- 进入面试后先显示独立设备检查页；该页不生成题目、不申请麦克风，只说明语音可用性、文字备选和隐私边界。用户点击“开始面试”后才创建计划。
 - 出题从 60 个原创双语问题单元、目标 JD、最终简历和故事卡联合检索。
 - AI 生成的临场追问必须标明为生成内容，并保存参考题目 ID。
 - 用户点击麦克风开始/停止浏览器语音识别，单次不超过 3 分钟；应用不保存音频 Blob，转写后可编辑，用户确认文字后才评分。
 - 界面在启动前披露浏览器供应商可能参与语音处理；识别不可用、报错、超时、停止或离开页面时立即结束采集。
 - 无麦克风权限、浏览器不支持或 ASR 不可用时，始终提供文字输入。
+- 当前问题、两轮追问、追问评审和未提交转写草稿会保存至 `sessionStorage` 和 IndexedDB 历史；恢复时必须同时匹配简历 ID/revision 和面试计划指纹，不能跨版本串状态。
 - 当前 baseline 每题反馈相关性、结构、具体证据、岗位能力线索和表达清晰度，并引用用户回答中的可核对片段；领域技术正确性需要后续专项 Skill 与评测集，当前不作专家级承诺。
 - 当前 baseline 检查相关简历声明中的新增数值，以及声明本身是否为 `conflicting/needs_evidence`；日期、角色、实体和更深语义口径属于后续一致性 Skill。提示只要求用户核对，不指控用户欺骗。
 - 不评价口音、性别、音色、情绪或人格；MVP 不提供 AI 语音播报或实时双向语音。
@@ -145,11 +149,13 @@ MVP 的主闭环为：
 
 - 运行时 Capability 契约版本为 `1.0`，MVP 内置实现版本为 `1.0.0`；候选 Skill 必须声明兼容契约及明确回滚目标。
 - 前端只读取 `FeatureAvailability` 的 `available`、`baseline | enhanced | unavailable`、locale 和 fallback 状态，不暴露供应商、密钥或内部实现。
-- 所有核心功能都有内置 baseline。配置本地服务端 provider gateway 后，七项白名单能力 `resume.score`、`resume.suggest`、`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate`、`answer.coach` 可进入增强模式；增强能力超时、异常或输出不合法时回退 baseline，并以 `usedFallback: true` 返回，前端可提示已回退且保留当前操作和 revision。
+- 所有核心功能都有内置 baseline。配置本地服务端 provider gateway 后，九项白名单能力 `resume.score`、`resume.suggest`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate`、`answer.coach` 可进入增强模式；增强能力超时、异常或输出不合法时回退 baseline，并以 `usedFallback: true` 返回，前端可提示已回退且保留当前操作和 revision。
 - 用户不能上传或执行任意 Skill。所有运行时 Skill 由服务器白名单、版本锁定和 feature flag 管理。
-- 任意扩展执行仍默认关闭；只有 canonical Schema、禁网且有 baseline 的受信本地候选可进入评测。`provider_gateway` 只允许上述七项能力，`copy.rewrite.zh/en` 继续作为可替换的版本化 baseline 接口，其余能力也保持确定性 baseline。
+- 任意扩展执行仍默认关闭；只有 canonical Schema、禁网且有 baseline 的受信本地候选可进入评测。`provider_gateway` 只允许上述九项能力，其中 `copy.rewrite.zh/en` 必须通过原文映射、保留术语、数字与高风险事实检查；其余能力保持确定性 baseline。
 - Provider Base URL 必须命中代码内静态批准列表，不能通过环境变量或用户输入扩大；本地默认 `AI_PROVIDER=baseline`，只有配置轮换后的新服务端 Key 才能启用增强模式。
 - 新 Skill 不得绕过事实安全、人工确认、隐私、导出质检或“不承诺录取”的产品底线。
+- 仓库内另有统一的 Codex Development Skill Toolkit，用于帮助开发者实现、审查和评测上述能力。它不会出现在用户界面，不会在产品请求中自动执行，也不改变 FeatureAvailability、数据保留、人工确认或 fallback 行为。
+- 开发套件以一个总入口路由六个领域 Skill，并共享同一份 Capability map；这项组织方式只减少工程规则分散，不新增 MVP 用户功能或外部数据处理方。
 
 ## 8. 隐私、安全与数据生命周期
 
@@ -159,7 +165,7 @@ MVP 的主闭环为：
 - 配置 `DOCUMENT_WORKER_URL` 时，解析/OCR 运行在禁网、非 root、只读根文件系统且受 CPU/内存/进程/时限约束的本地 Python worker；OCR 另有每页/文档区域、并发、字符、像素、输出和 deadline 上限。未配置时仍使用 Next.js TypeScript baseline。Node 请求取消会停止等待，但不能立即终止 Python 已进入 `run_in_threadpool` 的同步 OCR/渲染任务；该残留计算继续受 worker deadline、子进程 timeout 和资源限额约束。浏览器中的原稿比较使用 IndexedDB/当前会话内的本地 PDF。
 - Provider gateway 只接收脱敏、最小化结构 DTO，不接收姓名、电话、邮箱、链接、原 PDF、页面图片或无关证据正文；API Key 只从 Next.js 服务端环境变量读取。
 - 日志只保存 trace、能力版本、阶段、耗时、错误码和用量，不保存简历正文、JD、录音、转写全文或完整提示。
-- MVP 不创建应用侧音频文件；活动状态存于 `sessionStorage`，最近分析存于 IndexedDB。两者通过定时、focus、visibility、rehydrate 和读取时清理保证最长 24 小时，用户可删除单条或立即清空本机记录。
+- MVP 不创建应用侧音频文件；活动状态存于 `sessionStorage`，最近分析存于 IndexedDB。两者在 24 小时后到期，并通过定时、focus、visibility、rehydrate 和读取时在应用运行期间或下次打开时清理；用户可删除单条或立即清空本机记录。
 - `pnpm dev` 的私有配置放在 `.env.local`，Docker Compose 的私有配置放在 `.env`；两者均被 Git 忽略。`.env.example`、客户端 bundle、日志和文档均不得包含 API Key。
 - 本地 `GET /api/health` 只披露 `document`、`ai`、`storage` 的抽象健康状态：`ready | degraded` 和 `baseline | isolated | enhanced | client_local`。不得返回 URL、供应商、模型、密钥、容器名或错误正文；未启用增强依赖时，本地 baseline 视为 `ready`，只有显式配置失效才标记 `degraded`。
 
@@ -173,11 +179,11 @@ MVP 的主闭环为：
 
 ## 10. 发布验收目标
 
-阶段 6 改动后的最终 TypeScript、Vitest、worker pytest、生产构建与容器测试数量待本轮全量验证填写；上一版数字不作为当前实现的最终验收结论。
+阶段 9 自动化验收已通过 TypeScript、ESLint、44 个文件 / 259 项 Web 测试、34 项 document-worker pytest、3 项 loopback proxy pytest、生产构建与 `git diff --check`。拖拽回归覆盖激活重渲染、多次跨子元素、窗口目标与几何边界、框外移动、页面离开、`Escape`、窗口失焦、drop、真实 PDF 单次提交、监听器卸载和非文件 payload；浏览器隔离自动化无法构造操作系统 `DataTransfer`，因此真实页面用于布局、默认状态和最终状态检查，完整拖动事件序列由组件测试验证。Mac 锁定时不绕过系统锁，Finder 物理实拖保留为人工验收项。
 
-当前浏览器验收已覆盖 1024、1280、1440、1920px 首页与工作区，无横向滚动；375、768、1023px 只显示电脑访问提示且不挂载工作台。示例会话的顶栏返回、侧栏品牌返回、历史恢复、当前会话删除、单条删除、清空取消与确认均通过，控制台无应用 error/warn。本地 worker health 确认 Typst 与 Tesseract 可用；未配置轮换后新 Key 时，AI capability 保持 baseline。
+当前浏览器验收已覆盖 1024、1280、1440、1920px 首页与工作区，无横向滚动；375、768、1023px 只显示电脑访问提示且不挂载工作台。示例会话的顶栏返回、侧栏品牌返回、历史恢复、流程门、JD 草稿与证据矩阵、面试设备检查/回答/追问恢复、当前会话删除、单条删除、清空取消与确认均通过，控制台无应用 error/warn。Professional PDF 为 100/100、18/18，预览确认前下载禁用。本地 worker health 确认 Typst 与 Tesseract 可用；未配置轮换后新 Key 时，AI capability 保持 baseline。
 
-本地 Docker 路径可用；安全健康端点已有 4 项 Vitest，覆盖 baseline `ready`、isolated/enhanced `ready` 且无实现细节泄漏、显式配置失效时 `degraded`，以及 `no-store` 的 Schema 合法响应。Vercel、Private Blob 与 Hosted 模式仍延期，不属于本轮发布验收。
+本地 Docker 路径可用；安全健康端点已有 4 项 Vitest，覆盖 baseline `ready`、isolated/enhanced `ready` 且无实现细节泄漏、显式配置失效时 `degraded`，以及 `no-store` 的 Schema 合法响应。Gitleaks 对全部 Git 历史、当前差异、未跟踪源码和提交消息均未发现密钥。Vercel、Private Blob 与 Hosted 模式仍延期，不属于本轮发布验收。
 
 这些结果只代表已登记 fixture、构建和 smoke 范围。Provider gateway 已接线但默认关闭且未使用真实新密钥验收，不得把确定性 baseline 描述成已经具有外部大模型质量。下列生产级门槛仍需完成，包括 40 份文档样本、OCR 召回率、Safari/屏幕阅读器、持久化幂等与对象所有权：
 

@@ -26,7 +26,8 @@ export function App() {
   }, []);
 
   useEffect(
-    () => subscribeRecentAnalysisInvalidations(handleRecentAnalysisInvalidation),
+    () =>
+      subscribeRecentAnalysisInvalidations(handleRecentAnalysisInvalidation),
     [],
   );
 
@@ -47,6 +48,18 @@ export function App() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const frame = window.requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(
+          "[data-page-heading], [data-module-heading]",
+        )
+        ?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [analysis?.resume.id, hydrated, stage]);
 
   if (!hydrated) {
     return <div className="min-h-dvh bg-canvas" aria-hidden="true" />;

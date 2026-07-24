@@ -10,19 +10,16 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify": "pnpm typecheck && pnpm test && pnpm build"
+    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
   },
   "dependencies": {
     "@napi-rs/canvas": "latest",
     "@radix-ui/react-dialog": "latest",
-    "@radix-ui/react-progress": "latest",
     "@radix-ui/react-tabs": "latest",
     "@radix-ui/react-tooltip": "latest",
     "@tanstack/react-query": "latest",
-    "clsx": "latest",
     "gray-matter": "latest",
     "lucide-react": "latest",
-    "nanoid": "latest",
     "next": "latest",
     "pdf-lib": "latest",
     "pdfjs-dist": "latest",
@@ -48,7 +45,6 @@
     "fake-indexeddb": "^6.2.5",
     "jsdom": "latest",
     "postcss": "latest",
-    "prettier": "latest",
     "tailwindcss": "3.4.17",
     "typescript": "^5.9.3",
     "vitest": "latest"

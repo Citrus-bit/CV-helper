@@ -1,7 +1,10 @@
 import type {
   AnalysisBundle,
   EvaluationResponse,
+  InterviewProgress,
   InterviewPlan,
+  InterviewSetupStage,
+  JobDraft,
   JobMatchBundle,
 } from "./contracts";
 
@@ -22,12 +25,17 @@ export type RecentTemplateId = "professional" | "minimal" | "compact";
 
 export type RecentAnalysisPayload = {
   analysis: AnalysisBundle;
+  jobDraft?: JobDraft;
   jobMatch: JobMatchBundle | null;
   interviewPlan: InterviewPlan | null;
   evaluations: EvaluationResponse[];
+  interviewSetupStage?: InterviewSetupStage;
+  interviewProgress?: InterviewProgress | null;
   module: RecentWorkspaceModule;
   selectedSuggestionId: string | null;
   selectedTemplate: RecentTemplateId;
+  activeResumeVariantId?: string | null;
+  resumePanel?: "suggestions" | "templates";
 };
 
 export type RecentAnalysisRecord = {
@@ -141,12 +149,12 @@ function isInvalidation(value: unknown): value is RecentAnalysisInvalidation {
   const event = value as Partial<RecentAnalysisInvalidation>;
   return Boolean(
     event.eventId &&
-      (event.kind === "clear" ||
-        event.kind === "delete" ||
-        event.kind === "generation") &&
-      Number.isInteger(event.generation) &&
-      Number(event.generation) >= 0 &&
-      (event.kind !== "delete" || event.recordId),
+    (event.kind === "clear" ||
+      event.kind === "delete" ||
+      event.kind === "generation") &&
+    Number.isInteger(event.generation) &&
+    Number(event.generation) >= 0 &&
+    (event.kind !== "delete" || event.recordId),
   );
 }
 
@@ -173,10 +181,7 @@ function ensureInvalidationTransport() {
     return;
   }
   window.addEventListener("storage", (storageEvent) => {
-    if (
-      storageEvent.key !== INVALIDATION_STORAGE_KEY ||
-      !storageEvent.newValue
-    )
+    if (storageEvent.key !== INVALIDATION_STORAGE_KEY || !storageEvent.newValue)
       return;
     try {
       const event: unknown = JSON.parse(storageEvent.newValue);
@@ -253,10 +258,10 @@ async function openDatabase(): Promise<IDBDatabase> {
   return requestResult(request);
 }
 
-function readAllRecords(store: IDBObjectStore): Promise<RecentAnalysisRecord[]> {
-  return requestResult(
-    store.getAll() as IDBRequest<RecentAnalysisRecord[]>,
-  );
+function readAllRecords(
+  store: IDBObjectStore,
+): Promise<RecentAnalysisRecord[]> {
+  return requestResult(store.getAll() as IDBRequest<RecentAnalysisRecord[]>);
 }
 
 function replaceAllRecords(
@@ -269,8 +274,7 @@ function replaceAllRecords(
 
 async function readGeneration(store: IDBObjectStore): Promise<number> {
   const result = (await requestResult(store.get(GENERATION_KEY))) as
-    | { key: string; value: number }
-    | undefined;
+    { key: string; value: number } | undefined;
   return Number.isInteger(result?.value) && Number(result?.value) >= 0
     ? Number(result?.value)
     : 0;
@@ -476,12 +480,13 @@ function buildRecord(
     payload: { ...input.payload, analysis },
     pdfBlob,
     pdfBytes: pdfBlob?.size ?? 0,
-    pdfSha256:
-      measuredPdfSha256 ?? input.pdfSha256 ?? existing?.pdfSha256,
+    pdfSha256: measuredPdfSha256 ?? input.pdfSha256 ?? existing?.pdfSha256,
   });
 }
 
-async function withDatabase<T>(operation: (database: IDBDatabase) => Promise<T>) {
+async function withDatabase<T>(
+  operation: (database: IDBDatabase) => Promise<T>,
+) {
   const database = await openDatabase();
   try {
     return await operation(database);

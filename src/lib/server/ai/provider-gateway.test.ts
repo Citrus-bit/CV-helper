@@ -806,6 +806,129 @@ describe("OpenAI-compatible provider gateway", () => {
     ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "answer.coach@1.0.0" });
   });
 
+  it("enhances Chinese and English copy rewrites through minimized structured DTOs", async () => {
+    const zhInput = {
+      text: "主要负责 TypeScript 平台交付，将周期缩短 20%.",
+      preserveTerms: ["TypeScript"],
+    };
+    const enInput = {
+      text: "Was responsible for the TypeScript platform, reducing cycle time by 20%.",
+      preserveTerms: ["TypeScript"],
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(completionResponse({
+        original: zhInput.text.normalize("NFKC"),
+        rewritten: "负责 TypeScript 平台交付，将周期缩短 20%.",
+        changes: ["删除弱化表达"],
+        addedFacts: false,
+      }))
+      .mockResolvedValueOnce(completionResponse({
+        original: enInput.text,
+        rewritten: "Responsible for the TypeScript platform, reducing cycle time by 20%.",
+        changes: ["Removed passive auxiliary wording"],
+        addedFacts: false,
+      }));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    await expect(registry.invoke("copy.rewrite.zh", zhInput, context())).resolves.toMatchObject({
+      usedFallback: false,
+      sourceVersion: "copy.rewrite.zh@2.0.0",
+      data: { original: zhInput.text, rewritten: "负责 TypeScript 平台交付，将周期缩短 20%." },
+    });
+    await expect(registry.invoke("copy.rewrite.en", enInput, {
+      ...context(),
+      locale: "en-US",
+    })).resolves.toMatchObject({
+      usedFallback: false,
+      sourceVersion: "copy.rewrite.en@2.0.0",
+      data: { original: enInput.text, rewritten: "Responsible for the TypeScript platform, reducing cycle time by 20%." },
+    });
+
+    const requests = fetchMock.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+    expect(requests.map((request) => JSON.parse(request.messages[1].content))).toEqual([
+      { ...zhInput, text: zhInput.text.normalize("NFKC") },
+      enInput,
+    ]);
+    expect(requests.every((request) => request.response_format.type === "json_schema")).toBe(true);
+  });
+
+  it("falls back when a copy rewrite adds facts, drops protected terms, or contains redacted PII", async () => {
+    const unsafeFactRegistry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse({
+        original: "负责平台交付",
+        rewritten: "负责平台交付，覆盖 100 万用户并获得行业第一",
+        changes: ["增加结果"],
+        addedFacts: false,
+      })),
+      logger: () => undefined,
+    });
+    await expect(
+      unsafeFactRegistry.invoke(
+        "copy.rewrite.zh",
+        { text: "负责平台交付", preserveTerms: [] },
+        context(),
+      ),
+    ).resolves.toMatchObject({
+      usedFallback: true,
+      sourceVersion: "copy.rewrite.zh@1.0.0",
+      data: { rewritten: "负责平台交付", addedFacts: false },
+    });
+
+    const missingTermRegistry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse({
+        original: "Built the TypeScript platform.",
+        rewritten: "Built the platform.",
+        changes: ["Shortened the sentence"],
+        addedFacts: false,
+      })),
+      logger: () => undefined,
+    });
+    await expect(
+      missingTermRegistry.invoke(
+        "copy.rewrite.en",
+        { text: "Built the TypeScript platform.", preserveTerms: ["TypeScript"] },
+        { ...context(), locale: "en-US" },
+      ),
+    ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "copy.rewrite.en@1.0.0" });
+
+    const piiFetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body));
+      const projected = JSON.parse(request.messages[1].content);
+      return Promise.resolve(completionResponse({
+        original: projected.text,
+        rewritten: projected.text,
+        changes: [],
+        addedFacts: false,
+      }));
+    });
+    const piiRegistry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: piiFetch as typeof fetch,
+      logger: () => undefined,
+    });
+    const privateText = "负责平台交付，可联系 alice@example.com";
+    const piiResult = await piiRegistry.invoke(
+      "copy.rewrite.zh",
+      { text: privateText, preserveTerms: [] },
+      context(),
+    );
+    const piiRequest = JSON.parse(String(piiFetch.mock.calls[0][1]?.body));
+    expect(piiRequest.messages[1].content).toContain("[EMAIL]");
+    expect(piiRequest.messages[1].content).not.toContain("alice@example.com");
+    expect(piiResult).toMatchObject({
+      usedFallback: true,
+      sourceVersion: "copy.rewrite.zh@1.0.0",
+      data: { original: privateText, rewritten: privateText },
+    });
+  });
+
   it("falls back to the baseline when the provider exceeds its capability timeout", async () => {
     vi.useFakeTimers();
     try {
@@ -878,10 +1001,14 @@ describe("OpenAI-compatible provider gateway", () => {
       mode: "baseline",
     });
     expect(registry.getFeatureAvailability().find((item) => item.id === "copy.rewrite.zh")).toMatchObject({
-      mode: "baseline",
+      mode: "enhanced",
+      available: true,
+      fallbackAvailable: true,
     });
     expect(registry.getFeatureAvailability().find((item) => item.id === "copy.rewrite.en")).toMatchObject({
-      mode: "baseline",
+      mode: "enhanced",
+      available: true,
+      fallbackAvailable: true,
     });
     expect(JSON.stringify(registry.getFeatureAvailability())).not.toMatch(/yunwu|test-model|test-secret-key/i);
 

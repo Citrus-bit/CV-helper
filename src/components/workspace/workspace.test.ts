@@ -2,7 +2,13 @@
 
 import "@testing-library/jest-dom/vitest";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -76,6 +82,31 @@ function analysisFixture(): AnalysisBundle {
   };
 }
 
+function analysisWithPendingSuggestion(): AnalysisBundle {
+  const analysis = analysisFixture();
+  return {
+    ...analysis,
+    suggestions: [
+      {
+        id: "suggestion-pending",
+        resumeRevision: 0,
+        sourceBlockIds: [],
+        claimIds: [],
+        kind: "rewrite",
+        status: "pending",
+        originalText: "负责项目交付",
+        proposedText: "负责项目按期交付",
+        rationale: "补全表达",
+        beforeHash: "before-hash",
+        patches: [],
+        affectedDimensions: ["clarity"],
+        factRisk: "none",
+        interviewRisk: "none",
+      },
+    ],
+  };
+}
+
 afterEach(() => {
   cleanup();
   useAppStore.getState().reset();
@@ -91,9 +122,11 @@ describe("Workspace archive failure recovery", () => {
 
     expect(screen.getByRole("main")).toHaveClass("h-dvh", "overflow-hidden");
     expect(document.getElementById("workspace-content")).toHaveClass(
+      "relative",
+      "h-0",
       "min-h-0",
       "flex-1",
-      "overflow-auto",
+      "overflow-hidden",
     );
   });
 
@@ -116,5 +149,29 @@ describe("Workspace archive failure recovery", () => {
       analysis: { resume: { id: "workspace-resume" } },
       error: null,
     });
+  });
+});
+
+describe("Workspace progression gate", () => {
+  it("keeps later modules locked until every suggestion has a decision", () => {
+    useAppStore.getState().setAnalysis(analysisWithPendingSuggestion());
+    useAppStore.getState().setModule("interview");
+    expect(useAppStore.getState().module).toBe("resume");
+
+    render(createElement(Tooltip.Provider, null, createElement(Workspace)));
+
+    const jobButton = screen.getByRole("button", { name: "岗位匹配" });
+    const interviewButton = screen.getByRole("button", { name: "模拟面试" });
+    expect(jobButton).toBeDisabled();
+    expect(interviewButton).toBeDisabled();
+    expect(screen.getByText(/还有 1 条建议待确认/)).toBeInTheDocument();
+
+    act(() => {
+      useAppStore.getState().decideSuggestion("suggestion-pending", "rejected");
+    });
+
+    expect(jobButton).toBeEnabled();
+    fireEvent.click(jobButton);
+    expect(useAppStore.getState().module).toBe("job");
   });
 });
