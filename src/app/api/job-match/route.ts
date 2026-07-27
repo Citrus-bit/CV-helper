@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { invokeBaselineCapability } from "@/lib/baseline";
 import { unwrapUntrustedDocumentText } from "@/lib/baseline/utils";
+import { AI_CAPABILITY_TIMEOUT_MS } from "@/lib/capabilities/catalog";
 import { JobMatchBundleSchema } from "@/lib/client/contracts";
 import {
   ClaimSchema,
@@ -106,6 +107,7 @@ export async function POST(request: Request) {
       capabilityLocale,
       ["job_description", "evidence_graph", "resume_ast"],
       request.signal,
+      AI_CAPABILITY_TIMEOUT_MS,
     );
     const parsedJob = await invokeCapability(
       "jd.parse",

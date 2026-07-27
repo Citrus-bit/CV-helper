@@ -1,11 +1,17 @@
 "use client";
 
 import * as Tabs from "@radix-ui/react-tabs";
-import { BriefcaseBusiness, FilePenLine, LayoutTemplate } from "lucide-react";
+import {
+  BriefcaseBusiness,
+  FilePenLine,
+  LayoutTemplate,
+  MessagesSquare,
+} from "lucide-react";
 import { useState } from "react";
 import { DocumentPreview } from "./document-preview";
 import { ScorePanel } from "./score-panel";
 import { SuggestionReview } from "./suggestion-review";
+import { ResumeChat } from "./resume-chat";
 import { TemplateExport } from "./template-export";
 import { useAppStore, type ResumePanel } from "@/lib/client/store";
 
@@ -108,7 +114,7 @@ export function ResumeWorkspace() {
           className="flex min-h-0 flex-1 flex-col"
         >
           <Tabs.List
-            className="mx-4 my-3 grid h-10 shrink-0 grid-cols-2 rounded-[8px] bg-[#eff0f2] p-1"
+            className="mx-4 my-3 grid h-10 shrink-0 grid-cols-3 rounded-[8px] bg-[#eff0f2] p-1"
             aria-label="简历审阅视图"
           >
             <Tabs.Trigger
@@ -117,6 +123,13 @@ export function ResumeWorkspace() {
             >
               <FilePenLine aria-hidden="true" size={17} />
               修改建议
+            </Tabs.Trigger>
+            <Tabs.Trigger
+              value="chat"
+              className="flex min-w-0 items-center justify-center gap-1.5 rounded-[6px] px-2 text-sm font-medium text-muted transition-colors hover:text-ink data-[state=active]:bg-white data-[state=active]:text-ink data-[state=active]:shadow-sm"
+            >
+              <MessagesSquare aria-hidden="true" size={16} />
+              AI 编辑
             </Tabs.Trigger>
             <Tabs.Trigger
               value="templates"
@@ -135,6 +148,16 @@ export function ResumeWorkspace() {
             className="hidden min-h-0 flex-1 flex-col outline-none data-[state=active]:flex"
           >
             <SuggestionReview />
+          </Tabs.Content>
+          <Tabs.Content
+            value="chat"
+            {...(mountedPanels.has("chat")
+              ? { forceMount: true as const }
+              : {})}
+            style={{ display: resumePanel === "chat" ? "flex" : "none" }}
+            className="hidden min-h-0 flex-1 flex-col outline-none data-[state=active]:flex"
+          >
+            <ResumeChat />
           </Tabs.Content>
           <Tabs.Content
             value="templates"

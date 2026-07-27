@@ -13,7 +13,7 @@
 - 原版/新版真实 PDF 预览、导出质量报告和下载硬门。
 - 60 个双语面试问题单元、设备检查、浏览器语音转文字、两轮追问和可恢复的回答评审。
 - 当前设备最近分析记录；24 小时到期，最多 10 条、总计最多 50 MB。
-- 版本化 Capability Registry；没有 AI Key 时所有核心流程仍使用内置 baseline。
+- 版本化的 31 项 Capability Registry；没有 AI Key 时除持续 AI 编辑对话外的核心流程仍使用内置 baseline，对话会明确提示真实 AI 不可用。
 
 ## 环境要求
 
@@ -60,7 +60,7 @@ AI_MODEL=gpt-5.6-terra
 
 Docker 模式使用仓库根部被忽略的 `.env`，变量名相同。Key 只能进入服务端环境，不要添加 `NEXT_PUBLIC_` 前缀，也不要写入代码、README、`.env.example` 或日志。
 
-AI 只增强白名单内的评分、建议、JD、岗位匹配和面试能力。超时、限流、非法结构或事实检查失败会自动回退 baseline；PDF 解析、证据约束、PII 清理、ATS、渲染与导出审计不会交给外部模型。
+AI 只增强 10 项白名单能力：评分、建议、持续编辑对话、JD、岗位匹配、双语改写、面试规划、回答评估与教练。除持续编辑对话外，超时、限流、非法结构或事实检查失败会自动回退 baseline；对话在没有真实 AI 结果时返回明确错误并保留本地历史供重试，不回退到固定话术。PDF 解析、证据约束、PII 清理、ATS、渲染与导出审计不会交给外部模型。
 
 ## 数据与隐私
 
@@ -96,7 +96,7 @@ Python 测试需要先安装对应锁定依赖；Docker 构建会在镜像内安
 - [技术架构](docs/ARCHITECTURE.md)
 - [Codex 项目约束与 Skill Registry](.codex/PROJECT.md)
 - [统一 Codex Skill 套件入口](plugins/resume-assistant-toolkit/skills/resume-assistant-orchestrator/SKILL.md)
-- [30 项 Capability 归属映射](plugins/resume-assistant-toolkit/skills/resume-assistant-orchestrator/references/capability-map.md)
+- [31 项 Capability 归属映射](plugins/resume-assistant-toolkit/skills/resume-assistant-orchestrator/references/capability-map.md)
 - [面试知识包说明](content/interview/README.md)
 
 项目借鉴 [JobOK](https://github.com/GresonKwan/JobOK) 的证据链、JD 映射和面试一致性思路，但代码、提示、题库、模板和交互均为独立实现。

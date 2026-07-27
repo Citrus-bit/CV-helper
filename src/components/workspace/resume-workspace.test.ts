@@ -32,6 +32,9 @@ vi.mock("./score-panel", () => ({
 vi.mock("./suggestion-review", () => ({
   SuggestionReview: () => createElement("div", null, "建议内容"),
 }));
+vi.mock("./resume-chat", () => ({
+  ResumeChat: () => createElement("div", null, "AI 编辑内容"),
+}));
 vi.mock("./template-export", () => ({
   TemplateExport: () => createElement("input", { "aria-label": "导出草稿" }),
 }));
@@ -58,6 +61,7 @@ describe("ResumeWorkspace layout", () => {
       name: "修改建议",
     });
     const exportTab = screen.getByRole("tab", { name: "排版预览" });
+    expect(screen.getByRole("tab", { name: "AI 编辑" })).toBeVisible();
 
     expect(workspace).toHaveClass("absolute", "inset-0", "min-h-0");
     expect(suggestionPanel).toHaveClass("hidden", "data-[state=active]:flex");

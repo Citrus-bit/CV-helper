@@ -57,7 +57,7 @@ Test all of the following:
 - timeout and exhausted deadline
 - provider 429 and 5xx
 - cancellation without baseline substitution
-- extension failure with baseline fallback and `usedFallback: true`
+- extension failure with baseline fallback and `usedFallback: true`; for `resume.chat`, additionally verify that the user-facing API rejects that fallback and returns an explicit retryable error
 - malformed evidence references
 - unsupported facts, new numbers or changed protected terms
 - repeated invocation and revision safety

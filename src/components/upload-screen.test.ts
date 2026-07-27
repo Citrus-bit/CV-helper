@@ -494,7 +494,10 @@ describe("UploadScreen recent history loading", () => {
 
     render(createElement(UploadScreen));
 
-    expect(screen.getByText("正在读取本机记录…")).toBeInTheDocument();
+    expect(screen.getByText("正在读取本机记录")).toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", { name: "本机记录读取预估进度" }),
+    ).toHaveAttribute("aria-valuenow", "1");
     expect(screen.queryByText("暂无最近分析")).not.toBeInTheDocument();
 
     await act(async () => finishRefresh?.());

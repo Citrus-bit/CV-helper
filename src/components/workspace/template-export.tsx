@@ -14,6 +14,10 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import {
+  EstimatedProgressText,
+  estimatedDurations,
+} from "../estimated-progress";
+import {
   downloadVerifiedResume,
   recommendLayout,
   renderResume,
@@ -249,8 +253,15 @@ export function TemplateExport() {
             </button>
           </div>
         ) : (
-          <p className="mb-4 text-xs leading-5 text-muted" role="status">
-            正在计算模板与密度建议…
+          <p
+            className="mb-4 flex items-center gap-2 text-xs leading-5 text-muted"
+            role="status"
+          >
+            <span>正在计算模板与密度建议</span>
+            <EstimatedProgressText
+              expectedDurationMs={estimatedDurations.layoutRecommendation}
+              label="排版建议预估进度"
+            />
           </p>
         )}
         <div>
@@ -356,6 +367,15 @@ export function TemplateExport() {
                 />
               </button>
             </div>
+            {mutation.isPending ? (
+              <p className="mt-2 flex items-center justify-end gap-2 text-xs text-muted">
+                <span>正在重新生成</span>
+                <EstimatedProgressText
+                  expectedDurationMs={estimatedDurations.pdfGeneration}
+                  label="PDF 重新生成预估进度"
+                />
+              </p>
+            ) : null}
             <details
               key={current.sha256}
               open={auditNeedsAttention || undefined}
@@ -461,7 +481,18 @@ export function TemplateExport() {
               ) : (
                 <Download aria-hidden="true" size={17} />
               )}
-              {downloadMutation.isPending ? "正在复核" : "下载最终 PDF"}
+              {downloadMutation.isPending ? (
+                <>
+                  <span>正在复核</span>
+                  <EstimatedProgressText
+                    expectedDurationMs={estimatedDurations.pdfGeneration}
+                    label="最终 PDF 复核预估进度"
+                    className="text-white/85"
+                  />
+                </>
+              ) : (
+                "下载最终 PDF"
+              )}
             </button>
           </>
         ) : (
@@ -480,9 +511,18 @@ export function TemplateExport() {
             ) : (
               <FileOutput aria-hidden="true" size={17} />
             )}
-            {mutation.isPending
-              ? `正在生成 ${selectedTemplateMeta.name}`
-              : `生成 ${selectedTemplateMeta.name} PDF`}
+            {mutation.isPending ? (
+              <>
+                <span>正在生成 {selectedTemplateMeta.name}</span>
+                <EstimatedProgressText
+                  expectedDurationMs={estimatedDurations.pdfGeneration}
+                  label="PDF 生成预估进度"
+                  className="text-white/85"
+                />
+              </>
+            ) : (
+              `生成 ${selectedTemplateMeta.name} PDF`
+            )}
           </button>
         )}
       </div>

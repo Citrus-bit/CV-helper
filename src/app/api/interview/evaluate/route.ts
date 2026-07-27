@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { invokeBaselineCapability } from "@/lib/baseline";
+import { AI_CAPABILITY_TIMEOUT_MS } from "@/lib/capabilities/catalog";
 import {
   dedupeConsistencyWarnings,
   EvaluationResponseSchema,
@@ -111,6 +112,7 @@ export async function POST(request: Request) {
       locale,
       ["interview_content", "evidence_graph"],
       request.signal,
+      AI_CAPABILITY_TIMEOUT_MS,
     );
     const [evaluationResult, consistencyResult] = await Promise.all([
       invokeCapability(

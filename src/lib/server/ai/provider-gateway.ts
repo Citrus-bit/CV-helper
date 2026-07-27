@@ -10,6 +10,13 @@ const DEFAULT_PROVIDER_ALLOWLIST = ["https://yunwu.ai/v1"] as const;
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_PROVIDER_INPUT_BYTES = 256 * 1024;
 const MAX_PROVIDER_OUTPUT_TOKENS = 4_096;
+const JSON_OBJECT_PREFERRED_CAPABILITIES = new Set<ProviderGatewayCapabilityId>([
+  "resume.score",
+  "resume.suggest",
+  "resume.chat",
+  "jd.parse",
+  "answer.evaluate",
+]);
 
 type ProviderEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -28,6 +35,13 @@ export type ProviderGatewayLogEvent = Readonly<{
   outcome: "success" | "http_error" | "invalid_response" | "network_error";
   resultCode: "OK" | "HTTP_ERROR" | "INVALID_RESPONSE" | "NETWORK_ERROR";
   status?: number;
+  providerError?: {
+    category: "quota" | "rate_limit" | "capacity" | "other";
+    code?: string;
+    type?: string;
+    bodyBytes: number;
+  };
+  requestBytes?: { input: number; schema: number };
   durationMs: number;
   usage?: { inputUnits?: number; outputUnits?: number };
 }>;
@@ -112,12 +126,49 @@ const ProviderErrorBodySchema = z.object({
   error: z
     .object({
       message: z.string().optional(),
-      code: z.union([z.string(), z.number()]).optional(),
+      code: z.union([z.string(), z.number()]).nullable().optional(),
       type: z.string().optional(),
       param: z.string().optional(),
     })
     .optional(),
 });
+
+function providerErrorMetadata(body: string): ProviderGatewayLogEvent["providerError"] {
+  let code: string | undefined;
+  let type: string | undefined;
+  let detail = body.toLowerCase();
+  try {
+    const payload: unknown = JSON.parse(body);
+    const fragments: string[] = [];
+    const collect = (value: unknown, depth = 0): void => {
+      if (depth > 4 || fragments.length >= 40) return;
+      if (typeof value === "string" || typeof value === "number") {
+        fragments.push(String(value));
+      } else if (Array.isArray(value)) {
+        value.forEach((item) => collect(item, depth + 1));
+      } else if (value && typeof value === "object") {
+        Object.values(value).forEach((item) => collect(item, depth + 1));
+      }
+    };
+    collect(payload);
+    detail = [detail, ...fragments].join(" ").toLowerCase();
+    const parsed = ProviderErrorBodySchema.safeParse(payload);
+    if (parsed.success && parsed.data.error) {
+      const error = parsed.data.error;
+      code = error.code == null ? undefined : String(error.code).slice(0, 120);
+      type = error.type?.slice(0, 120);
+      detail = [detail, error.message, code, type].filter(Boolean).join(" ").toLowerCase();
+    }
+  } catch {}
+  const category = /quota|balance|credit|insufficient|余额|额度不足/.test(detail)
+    ? "quota"
+    : /capacity|overloaded|saturated|负载|饱和|上游/.test(detail)
+      ? "capacity"
+      : /rate|too many|rpm|tpm|频率|限流/.test(detail)
+        ? "rate_limit"
+        : "other";
+  return { category, code, type, bodyBytes: Buffer.byteLength(body, "utf8") };
+}
 
 const ChatCompletionResponseSchema = z.object({
   choices: z
@@ -136,7 +187,7 @@ const ChatCompletionResponseSchema = z.object({
 });
 
 function explicitlyRejectsJsonSchema(status: number, body: string): boolean {
-  if (status !== 400 && status !== 422) return false;
+  if (status !== 400 && status !== 422 && status !== 429) return false;
   let detail = body;
   try {
     const parsed = ProviderErrorBodySchema.safeParse(JSON.parse(body));
@@ -156,7 +207,7 @@ function explicitlyRejectsJsonSchema(status: number, body: string): boolean {
   const normalized = detail.toLowerCase();
   return (
     /(json_schema|response_format)/.test(normalized) &&
-    /(unsupported|not supported|does not support|unknown|invalid type)/.test(normalized)
+    /(unsupported|not supported|does not support|unknown|invalid (?:type|schema)|schema .*must|schema .*required)/.test(normalized)
   );
 }
 
@@ -229,7 +280,10 @@ export class OpenAiCompatibleGateway {
       throw new ProviderGatewayError("INPUT_TOO_LARGE");
     }
     const jsonSchema = z.toJSONSchema(input.outputSchema);
-    const first = await this.request(input, serializedDto, jsonSchema, "json_schema", 1);
+    const firstFormat = JSON_OBJECT_PREFERRED_CAPABILITIES.has(input.capabilityId)
+      ? "json_object"
+      : "json_schema";
+    const first = await this.request(input, serializedDto, jsonSchema, firstFormat, 1);
     if (first.retryWithJsonObject) {
       return (await this.request(input, serializedDto, jsonSchema, "json_object", 2)).completion!;
     }
@@ -303,6 +357,11 @@ export class OpenAiCompatibleGateway {
           outcome: "http_error",
           resultCode: "HTTP_ERROR",
           status,
+          providerError: providerErrorMetadata(responseText),
+          requestBytes: {
+            input: Buffer.byteLength(serializedDto, "utf8"),
+            schema: Buffer.byteLength(JSON.stringify(jsonSchema), "utf8"),
+          },
           durationMs: Math.max(0, performance.now() - startedAt),
         });
         if (format === "json_schema" && explicitlyRejectsJsonSchema(status, responseText)) {

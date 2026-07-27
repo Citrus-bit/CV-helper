@@ -1,6 +1,6 @@
 # Capability ownership map
 
-Use this file as the single development-time map for the 30 runtime Capability IDs. Confirm implementation details against `src/lib/capabilities/types.ts`, `src/lib/capabilities/catalog.ts`, and `.codex/PROJECT.md` before changing production code.
+Use this file as the single development-time map for the 31 runtime Capability IDs. Confirm implementation details against `src/lib/capabilities/types.ts`, `src/lib/capabilities/catalog.ts`, and `.codex/PROJECT.md` before changing production code.
 
 ## Dependency flow
 
@@ -27,6 +27,7 @@ Owner: `resume-document-intelligence`.
 | `claim.conflict` | Detect factual or numeric contradictions | `evidence_graph` | `eval.claim.conflict.v1` |
 | `resume.score` | Produce an explainable six-dimension quality score | `resume_ast`, `evidence_graph` | `eval.resume.score.v1` |
 | `resume.suggest` | Produce block-level, evidence-constrained changes | `resume_ast`, `evidence_graph` | `eval.resume.suggest.v1` |
+| `resume.chat` | Continue a revision-bound editing conversation and propose evidence-constrained changes | `resume_ast`, `evidence_graph`, `interview_content` | `eval.resume.chat.v1` |
 | `resume.atsAudit` | Detect machine-readability and structural risks | `resume_ast`, `source_blocks` | `eval.resume.ats.v1` |
 
 Owner: `resume-evidence-review`.
@@ -86,6 +87,7 @@ Owner: `resume-safety-evaluation`.
 - Baseline implementation: `builtin.<capabilityId>@1.0.0`.
 - Extension kinds: `adapter`, `rule_pack`, `knowledge_pack`, `prompt_policy`.
 - Network policies: `none`, `provider_only`, `allowlist`.
-- Provider gateway allowlist: `resume.score`, `resume.suggest`, `jd.parse`, `job.match`, `copy.rewrite.zh`, `copy.rewrite.en`, `interview.plan`, `answer.evaluate`, `answer.coach`.
+- Provider gateway allowlist: `resume.score`, `resume.suggest`, `resume.chat`, `jd.parse`, `job.match`, `copy.rewrite.zh`, `copy.rewrite.en`, `interview.plan`, `answer.evaluate`, `answer.coach`.
+- `resume.chat` is the one user-facing exception to normal runtime fallback: if a real provider result is unavailable, `/api/resume-chat` returns an explicit error and never presents the builtin fixed response as an AI turn.
 - Frontend availability modes: `baseline`, `enhanced`, `unavailable`.
 - A runtime result must include structured data, confidence, evidence references, warnings, source version, duration, usage when applicable, and `usedFallback`.

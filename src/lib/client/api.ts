@@ -5,6 +5,7 @@ import {
   JobMatchBundleSchema,
   LayoutRecommendationSchema,
   RenderResponseSchema,
+  ResumeSuggestionResponseSchema,
   TranscriptionResponseSchema,
   type AnalysisBundle,
   type EvaluationResponse,
@@ -12,6 +13,7 @@ import {
   type JobMatchBundle,
   type LayoutRecommendation,
   type RenderResponse,
+  type ResumeSuggestionResponse,
   type TranscriptionResponse,
 } from "./contracts";
 import type {
@@ -20,7 +22,14 @@ import type {
   InterviewQuestion,
   InterviewStory,
   ResumeAST,
+  ResumeDocument,
 } from "@/lib/domain";
+import {
+  ResumeChatInputSchema,
+  ResumeChatResponseSchema,
+  type ResumeChatInput,
+  type ResumeChatResponse,
+} from "@/lib/resume-chat";
 import { useAppStore, type TemplateId } from "./store";
 import {
   revokeTrackedObjectUrl,
@@ -74,6 +83,34 @@ export async function analyzeResume(
   });
   if (!response.ok) throw new Error(await errorMessage(response));
   return AnalysisBundleSchema.parse(await response.json());
+}
+
+export async function generateResumeSuggestions(
+  input: { resume: ResumeDocument; claims: Claim[] },
+  signal?: AbortSignal,
+): Promise<ResumeSuggestionResponse> {
+  const response = await trackedFetch("/api/resume-suggestions", {
+    method: "POST",
+    headers: apiSessionHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify(input),
+    signal,
+  });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return ResumeSuggestionResponseSchema.parse(await response.json());
+}
+
+export async function sendResumeChatMessage(
+  input: ResumeChatInput,
+  signal?: AbortSignal,
+): Promise<ResumeChatResponse> {
+  const response = await trackedFetch("/api/resume-chat", {
+    method: "POST",
+    headers: apiSessionHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify(ResumeChatInputSchema.parse(input)),
+    signal,
+  });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return ResumeChatResponseSchema.parse(await response.json());
 }
 
 export async function loadDemoAnalysis(

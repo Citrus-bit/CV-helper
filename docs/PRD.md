@@ -88,7 +88,15 @@ MVP 的主闭环为：
 
 每条建议展示原文、新文本、理由、关联评分维度、来源块、事实风险和面试追问风险。用户可接受、拒绝、手改或撤销。修改产生新 revision，旧建议标为 `stale`，不得静默覆盖。
 
-### 3.4 证据模型
+### 3.4 持续 AI 编辑对话
+
+- 审阅区提供与逐条建议并列的 AI 编辑视图，用户可以连续追问、重试失败消息，并从回复中逐条或批量应用安全改写。
+- 对话长期状态由当前设备管理，包含长期摘要、已确认事实、最近修改和最多 100 条消息；每次请求只组装最近 10 条消息、当前 Resume AST、Claim 和上述摘要，避免无限扩张上下文。
+- 对话状态绑定简历 ID 和 revision，并随标签页会话及最近分析快照恢复。应用改写会创建新 revision；旧回复继续可读，但其中与旧 revision 绑定的建议不能直接覆盖当前简历。
+- 等待真实 AI 时显示 0–99% 的估算进度，并明确这是时间估算而非 provider 上报的真实完成度；7 分钟预算耗尽、请求取消或失败后提供可重试路径。
+- `resume.chat` 只接受真实 provider 回复。未配置 provider、超时、限流、5xx、结构非法或事实校验失败时返回明确错误并保留用户消息，不回退到固定话术；重试成功前不得新增 AI 消息或修改简历。
+
+### 3.5 证据模型
 
 - 当前 Claim 支持状态为：`resume_only | user_confirmed | supported | needs_evidence | conflicting`；`needs_proof` 是建议类型，不是 Claim 状态。
 - 简历原文只证明“用户原来这样写”，不自动视为外部材料已验证。
@@ -149,9 +157,9 @@ MVP 的主闭环为：
 
 - 运行时 Capability 契约版本为 `1.0`，MVP 内置实现版本为 `1.0.0`；候选 Skill 必须声明兼容契约及明确回滚目标。
 - 前端只读取 `FeatureAvailability` 的 `available`、`baseline | enhanced | unavailable`、locale 和 fallback 状态，不暴露供应商、密钥或内部实现。
-- 所有核心功能都有内置 baseline。配置本地服务端 provider gateway 后，九项白名单能力 `resume.score`、`resume.suggest`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate`、`answer.coach` 可进入增强模式；增强能力超时、异常或输出不合法时回退 baseline，并以 `usedFallback: true` 返回，前端可提示已回退且保留当前操作和 revision。
+- 所有核心 Capability 都有内置 baseline。配置本地服务端 provider gateway 后，十项白名单能力 `resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate`、`answer.coach` 可进入增强模式。除 `resume.chat` 外，增强能力超时、异常或输出不合法时回退 baseline，并以 `usedFallback: true` 返回，前端可提示已回退且保留当前操作和 revision；`resume.chat` 无真实 AI 结果时必须返回明确错误、保留本地对话供重试，不得显示固定话术冒充模型回复。
 - 用户不能上传或执行任意 Skill。所有运行时 Skill 由服务器白名单、版本锁定和 feature flag 管理。
-- 任意扩展执行仍默认关闭；只有 canonical Schema、禁网且有 baseline 的受信本地候选可进入评测。`provider_gateway` 只允许上述九项能力，其中 `copy.rewrite.zh/en` 必须通过原文映射、保留术语、数字与高风险事实检查；其余能力保持确定性 baseline。
+- 任意扩展执行仍默认关闭；只有 canonical Schema、禁网且有 baseline 的受信本地候选可进入评测。`provider_gateway` 只允许上述十项能力，其中 `resume.chat` 与 `copy.rewrite.zh/en` 必须通过原文映射、保留术语、数字、高风险事实和 revision 检查；其余能力保持确定性 baseline。
 - Provider Base URL 必须命中代码内静态批准列表，不能通过环境变量或用户输入扩大；本地默认 `AI_PROVIDER=baseline`，只有配置轮换后的新服务端 Key 才能启用增强模式。
 - 新 Skill 不得绕过事实安全、人工确认、隐私、导出质检或“不承诺录取”的产品底线。
 - 仓库内另有统一的 Codex Development Skill Toolkit，用于帮助开发者实现、审查和评测上述能力。它不会出现在用户界面，不会在产品请求中自动执行，也不改变 FeatureAvailability、数据保留、人工确认或 fallback 行为。

@@ -10,11 +10,21 @@ import {
   FilePenLine,
   Pencil,
   ShieldAlert,
+  Sparkles,
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Claim, Suggestion, SuggestionKind } from "@/lib/domain";
+import { generateResumeSuggestions } from "@/lib/client/api";
 import { useAppStore } from "@/lib/client/store";
+import {
+  safeAiRewriteSuggestions,
+  suggestionGenerationSource,
+} from "@/lib/client/suggestions";
+import {
+  EstimatedProgressText,
+  estimatedDurations,
+} from "../estimated-progress";
 
 const kindMeta: Record<
   SuggestionKind,
@@ -198,8 +208,14 @@ export function SuggestionReview() {
   const selectedId = useAppStore((state) => state.selectedSuggestionId);
   const selectSuggestion = useAppStore((state) => state.selectSuggestion);
   const decideSuggestion = useAppStore((state) => state.decideSuggestion);
+  const replaceAiSuggestions = useAppStore(
+    (state) => state.replaceAiSuggestions,
+  );
   const [editing, setEditing] = useState(false);
   const [manualText, setManualText] = useState("");
+  const [bulkMessage, setBulkMessage] = useState("");
+  const [bulkError, setBulkError] = useState("");
+  const [optimizing, setOptimizing] = useState(false);
 
   const selectedIndex = Math.max(
     0,
@@ -211,6 +227,11 @@ export function SuggestionReview() {
   ).length;
   const meta = suggestion ? kindMeta[suggestion.kind] : null;
   const Icon = meta?.icon ?? Pencil;
+  const generationSource = suggestionGenerationSource(analysis);
+  const automaticSuggestions = useMemo(
+    () => safeAiRewriteSuggestions(analysis),
+    [analysis],
+  );
 
   const evidenceLabels = useMemo(() => {
     const claimIds = new Set(suggestion?.claimIds ?? []);
@@ -236,43 +257,141 @@ export function SuggestionReview() {
     setEditing(false);
   }
 
+  async function optimizeWithAi() {
+    setBulkMessage("");
+    setBulkError("");
+    setOptimizing(true);
+    try {
+      if (generationSource === "rules") {
+        const result = await generateResumeSuggestions({
+          resume: analysis.resume,
+          claims: analysis.claims,
+        });
+        replaceAiSuggestions(result.suggestions, result.sourceVersion);
+      }
+      const count = useAppStore.getState().applyAiSuggestions();
+      setBulkMessage(
+        count > 0
+          ? `已应用 ${count} 条 AI 改写，可使用顶部撤销按钮恢复。`
+          : "AI 已完成逐条分析，当前没有可在不补充事实的前提下自动应用的改写。",
+      );
+      setEditing(false);
+    } catch (error) {
+      setBulkError(
+        error instanceof Error
+          ? error.message
+          : "AI 优化未完成，请稍后重试。",
+      );
+    } finally {
+      setOptimizing(false);
+    }
+  }
+
   return (
     <section
       className="flex min-h-0 flex-1 flex-col"
       aria-labelledby="suggestions-heading"
     >
-      <div className="flex items-center justify-between border-b border-line px-5 py-3">
-        <div>
-          <h2 id="suggestions-heading" className="text-sm font-semibold">
-            逐条审阅
-          </h2>
-          <p className="mt-0.5 text-xs text-muted">
-            待处理 {pending} · 共 {analysis.suggestions.length} 条
+      <div className="border-b border-line">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 id="suggestions-heading" className="text-sm font-semibold">
+                逐条审阅
+              </h2>
+              <span
+                className={`inline-flex items-center gap-1 rounded-[6px] px-2 py-0.5 text-[11px] font-medium ${
+                  generationSource === "ai"
+                    ? "bg-[#edf5ff] text-brand"
+                    : "bg-[#fff7df] text-warning"
+                }`}
+              >
+                {generationSource === "ai" ? (
+                  <Sparkles aria-hidden="true" size={12} />
+                ) : (
+                  <AlertTriangle aria-hidden="true" size={12} />
+                )}
+                {generationSource === "ai" ? "AI 分析" : "本地规则"}
+              </span>
+            </div>
+            <p className="mt-0.5 text-xs text-muted">
+              待处理 {pending} · 共 {analysis.suggestions.length} 条
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {generationSource === "rules" || automaticSuggestions.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => void optimizeWithAi()}
+                disabled={optimizing}
+                className="inline-flex min-h-11 min-w-[184px] items-center justify-center gap-2 rounded-[8px] bg-brand px-3.5 text-sm font-medium text-white hover:bg-[#075bbf] active:bg-[#064e9f] disabled:cursor-wait disabled:opacity-70"
+              >
+                {optimizing ? (
+                  <>
+                    <span>AI 优化中</span>
+                    <EstimatedProgressText
+                      expectedDurationMs={estimatedDurations.aiRewrite}
+                      label="AI 简历优化预估进度"
+                      className="text-white/85"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Sparkles aria-hidden="true" size={16} />
+                    {generationSource === "rules"
+                      ? "AI 重新分析并优化"
+                      : `AI 一键优化 ${automaticSuggestions.length} 条`}
+                  </>
+                )}
+              </button>
+            ) : null}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                aria-label="上一条建议"
+                disabled={selectedIndex === 0}
+                onClick={() => move(-1)}
+                className="grid size-11 place-items-center rounded-[8px] text-muted hover:bg-[#f0f1f3] disabled:opacity-30"
+              >
+                <ChevronLeft aria-hidden="true" size={18} />
+              </button>
+              <span className="w-12 text-center text-xs tabular-nums text-muted">
+                {selectedIndex + 1}/{analysis.suggestions.length}
+              </span>
+              <button
+                type="button"
+                aria-label="下一条建议"
+                disabled={selectedIndex === analysis.suggestions.length - 1}
+                onClick={() => move(1)}
+                className="grid size-11 place-items-center rounded-[8px] text-muted hover:bg-[#f0f1f3] disabled:opacity-30"
+              >
+                <ChevronRight aria-hidden="true" size={18} />
+              </button>
+            </div>
+          </div>
+        </div>
+        {bulkError ? (
+          <p
+            className="border-t border-line bg-[#fff0ef] px-5 py-2 text-xs leading-5 text-danger"
+            role="alert"
+          >
+            {bulkError}
           </p>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            aria-label="上一条建议"
-            disabled={selectedIndex === 0}
-            onClick={() => move(-1)}
-            className="grid size-11 place-items-center rounded-[8px] text-muted hover:bg-[#f0f1f3] disabled:opacity-30"
+        ) : generationSource === "rules" ? (
+          <p
+            className="border-t border-line bg-[#fffaf0] px-5 py-2 text-xs leading-5 text-warning"
+            role="status"
           >
-            <ChevronLeft aria-hidden="true" size={18} />
-          </button>
-          <span className="w-12 text-center text-xs tabular-nums text-muted">
-            {selectedIndex + 1}/{analysis.suggestions.length}
-          </span>
-          <button
-            type="button"
-            aria-label="下一条建议"
-            disabled={selectedIndex === analysis.suggestions.length - 1}
-            onClick={() => move(1)}
-            className="grid size-11 place-items-center rounded-[8px] text-muted hover:bg-[#f0f1f3] disabled:opacity-30"
+            本次 AI 调用未产出有效建议，当前显示的是本地规则结果。
+          </p>
+        ) : bulkMessage ? (
+          <p
+            className="border-t border-line bg-[#eef8f2] px-5 py-2 text-xs leading-5 text-success"
+            role="status"
           >
-            <ChevronRight aria-hidden="true" size={18} />
-          </button>
-        </div>
+            {bulkMessage}
+          </p>
+        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
@@ -339,7 +458,9 @@ export function SuggestionReview() {
         </div>
 
         <div className="mt-5 border-l-2 border-brand pl-3">
-          <p className="text-xs font-medium text-muted">为什么这样改</p>
+          <p className="text-xs font-medium text-muted">
+            {generationSource === "ai" ? "AI 分析依据" : "规则判断依据"}
+          </p>
           <p className="mt-1 text-sm leading-6">{suggestion.rationale}</p>
         </div>
 

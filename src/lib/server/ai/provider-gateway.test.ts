@@ -14,6 +14,7 @@ import {
   ProviderGatewayConfigurationError,
   type ProviderGatewayLogEvent,
 } from "./provider-gateway";
+import { providerInstructions } from "./provider-capabilities";
 
 const providerEnvironment = {
   AI_PROVIDER: "provider_gateway",
@@ -134,6 +135,15 @@ function completionResponse(data: unknown, status = 200): Response {
 }
 
 describe("OpenAI-compatible provider gateway", () => {
+  it("describes resume review as a contextual editing task instead of a generic checklist", () => {
+    const instruction = providerInstructions["resume.suggest"];
+
+    expect(instruction).toContain("review each supplied experience or project bullet");
+    expect(instruction).toContain("complete, ready-to-paste replacement sentence");
+    expect(instruction).toContain("Do not reuse stock rationales");
+    expect(instruction).toContain("do not demand a metric when the source contains none");
+  });
+
   it("uses the default HTTPS allowlist and rejects unapproved bases without echoing them", () => {
     expect(loadProviderGatewayConfig({})).toBeNull();
     expect(loadProviderGatewayConfig({ AI_PROVIDER: "baseline" })).toBeNull();
@@ -178,7 +188,7 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(url).toBe("https://yunwu.ai/v1/chat/completions");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer test-secret-key");
     const requestBody = JSON.parse(String(init.body));
-    expect(requestBody.response_format).toMatchObject({ type: "json_schema", json_schema: { strict: true } });
+    expect(requestBody.response_format).toEqual({ type: "json_object" });
     expect(requestBody.max_tokens).toBe(4_096);
     const projected = requestBody.messages[1].content as string;
     expect(projected).toContain("block-result");
@@ -471,7 +481,7 @@ describe("OpenAI-compatible provider gateway", () => {
     const gateway = new OpenAiCompatibleGateway(config, fetchMock, () => undefined);
 
     const result = await gateway.complete({
-      capabilityId: "resume.score",
+      capabilityId: "copy.rewrite.zh",
       context: context(),
       dto: { safe: "input" },
       outputSchema: z.object({ ok: z.boolean() }),
@@ -481,6 +491,41 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(result.data).toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).response_format.type).toBe("json_schema");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).response_format.type).toBe("json_object");
+  });
+
+  it("retries with json_object when a provider mislabels an invalid schema as 429", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              message: "Invalid schema for response_format 'resume_score': required is missing.",
+              type: "invalid_request_error",
+              param: "response_format",
+              code: null,
+            },
+          }),
+          { status: 429 },
+        ),
+      )
+      .mockResolvedValueOnce(completionResponse({ ok: true }));
+    const gateway = new OpenAiCompatibleGateway(
+      loadProviderGatewayConfig(providerEnvironment)!,
+      fetchMock,
+      () => undefined,
+    );
+
+    await expect(gateway.complete({
+      capabilityId: "copy.rewrite.zh",
+      context: context(),
+      dto: { safe: "input" },
+      outputSchema: z.object({ ok: z.boolean() }),
+      instruction: "Return the fixture.",
+    })).resolves.toMatchObject({ data: { ok: true } });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).response_format.type).toBe("json_object");
   });
 
@@ -632,7 +677,7 @@ describe("OpenAI-compatible provider gateway", () => {
     ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "resume.suggest@1.0.0" });
   });
 
-  it("rejects ungrounded score evidence and scores above their dimension maximum", async () => {
+  it("filters ungrounded score evidence and caps scores at their dimension maximum", async () => {
     const invalidScore = scoreOutput();
     invalidScore.dimensions[0].score = 26;
     invalidScore.dimensions[0].evidence = ["从未出现在简历中的亿元营收成果"];
@@ -644,12 +689,21 @@ describe("OpenAI-compatible provider gateway", () => {
     });
 
     await expect(registry.invoke("resume.score", { resume, claims }, context())).resolves.toMatchObject({
-      usedFallback: true,
-      sourceVersion: "resume.score@1.0.0",
+      usedFallback: false,
+      sourceVersion: "resume.score@2.0.0",
+      data: {
+        total: 85,
+        dimensions: [
+          expect.objectContaining({ id: "impact", score: 25, evidence: [] }),
+          ...invalidScore.dimensions.slice(1).map((dimension) =>
+            expect.objectContaining({ id: dimension.id }),
+          ),
+        ],
+      },
     });
   });
 
-  it("rejects a score summary that asserts a new number absent from the resume", async () => {
+  it("replaces the provider score summary with a grounded local summary", async () => {
     const invalidScore = scoreOutput();
     invalidScore.summary = "候选人曾直接管理 999 人团队。";
     const registry = createServerCapabilityRegistry({
@@ -658,10 +712,13 @@ describe("OpenAI-compatible provider gateway", () => {
       logger: () => undefined,
     });
 
-    await expect(registry.invoke("resume.score", { resume, claims }, context())).resolves.toMatchObject({
-      usedFallback: true,
-      sourceVersion: "resume.score@1.0.0",
+    const result = await registry.invoke("resume.score", { resume, claims }, context());
+
+    expect(result).toMatchObject({
+      usedFallback: false,
+      sourceVersion: "resume.score@2.0.0",
     });
+    expect(ScorecardSchema.parse(result.data).summary).not.toContain("999");
   });
 
   it("requires JD requirements to be excerpts of the supplied posting", async () => {
@@ -785,6 +842,29 @@ describe("OpenAI-compatible provider gateway", () => {
         grantedDataScopes: ["interview_content", "evidence_graph"],
       }),
     ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "answer.evaluate@1.0.0" });
+
+    const dynamicFollowUp = {
+      ...inconsistentEvaluation,
+      overallScore: 50,
+      followUpQuestion: "你具体如何定位流程中的等待节点？",
+    };
+    const dynamicFollowUpFetch = vi.fn().mockResolvedValue(completionResponse(dynamicFollowUp));
+    const dynamicFollowUpRegistry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: dynamicFollowUpFetch,
+      logger: () => undefined,
+    });
+    await expect(
+      dynamicFollowUpRegistry.invoke("answer.evaluate", { question, answer, expectedKeywords: [] }, {
+        ...context(),
+        grantedDataScopes: ["interview_content", "evidence_graph"],
+      }),
+    ).resolves.toMatchObject({
+      usedFallback: false,
+      sourceVersion: "answer.evaluate@2.0.0",
+      data: { followUpQuestion: dynamicFollowUp.followUpQuestion },
+    });
+    expect(JSON.parse(String(dynamicFollowUpFetch.mock.calls[0][1]?.body)).response_format.type).toBe("json_object");
 
     const validEvaluation = { ...inconsistentEvaluation, overallScore: 50 };
     const unsafeCoaching = {

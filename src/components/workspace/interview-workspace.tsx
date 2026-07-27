@@ -22,6 +22,10 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { EvaluationResponse } from "@/lib/client/contracts";
 import {
+  EstimatedProgressText,
+  estimatedDurations,
+} from "../estimated-progress";
+import {
   createInterviewPlan,
   evaluateAnswer,
   transcribeBrowserSpeech,
@@ -390,7 +394,18 @@ function InterviewWorkspaceSession({
                   ) : (
                     <ChevronRight aria-hidden="true" size={18} />
                   )}
-                  {planMutation.isPending ? "正在准备题目" : "开始面试"}
+                  {planMutation.isPending ? (
+                    <>
+                      <span>正在准备题目</span>
+                      <EstimatedProgressText
+                        expectedDurationMs={estimatedDurations.interviewPlan}
+                        label="面试题生成预估进度"
+                        className="text-white/85"
+                      />
+                    </>
+                  ) : (
+                    "开始面试"
+                  )}
                 </button>
                 {planMutation.isError ? (
                   <p role="alert" className="mt-3 text-sm text-danger">
@@ -793,11 +808,20 @@ function InterviewWorkspaceSession({
               ) : (
                 <Send aria-hidden="true" size={18} />
               )}
-              {evaluationMutation.isPending
-                ? "正在评审"
-                : evaluation
-                  ? "本题已完成"
-                  : "提交回答"}
+              {evaluationMutation.isPending ? (
+                <>
+                  <span>正在评审</span>
+                  <EstimatedProgressText
+                    expectedDurationMs={estimatedDurations.answerEvaluation}
+                    label="回答评审预估进度"
+                    className="text-white/85"
+                  />
+                </>
+              ) : evaluation ? (
+                "本题已完成"
+              ) : (
+                "提交回答"
+              )}
             </button>
             {evaluationMutation.isError ? (
               <p

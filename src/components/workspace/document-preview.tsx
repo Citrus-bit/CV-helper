@@ -9,8 +9,12 @@ import {
   Plus,
   Upload,
 } from "lucide-react";
+import {
+  EstimatedProgressText,
+  estimatedDurations,
+} from "../estimated-progress";
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { SourceBlock, Suggestion } from "@/lib/domain";
+import type { BoundingBox, SourceBlock, Suggestion } from "@/lib/domain";
 import { pdfDataUrl } from "@/lib/client/api";
 import { useAppStore } from "@/lib/client/store";
 import { ClientPdfPreview } from "./client-pdf-preview";
@@ -19,36 +23,233 @@ function normalizedMatchText(value: string) {
   return value.toLowerCase().replace(/[\s，。；、,.!?！？:：()（）\[\]]+/g, "");
 }
 
-export function selectSuggestionSourceBlock(
-  suggestion: Pick<Suggestion, "sourceBlockIds" | "originalText"> | undefined,
-  sourceBlocks: readonly SourceBlock[],
-) {
-  if (!suggestion) return undefined;
-  const sourceIds = new Set(suggestion.sourceBlockIds);
-  const candidates = sourceBlocks.filter((block) => sourceIds.has(block.id));
-  const original = normalizedMatchText(suggestion.originalText);
-  if (!original) return candidates[0];
+type SuggestionSourceReference = Pick<
+  Suggestion,
+  "sourceBlockIds" | "originalText"
+>;
 
+function sourceBlockMatchScore(original: string, block: SourceBlock) {
+  const text = normalizedMatchText(block.text);
+  const overlap = [...new Set(original)].filter((character) =>
+    text.includes(character),
+  ).length;
+  const similarity = overlap / Math.max(1, new Set(original).size);
+  const containment =
+    text === original
+      ? 4
+      : text.includes(original)
+        ? 3
+        : original.includes(text) && text.length >= 4
+          ? 2
+          : 0;
+  return containment + similarity;
+}
+
+function bestSuggestionSourceBlock(
+  original: string,
+  candidates: readonly SourceBlock[],
+) {
   return candidates
-    .map((block, index) => {
-      const text = normalizedMatchText(block.text);
-      const overlap = [...new Set(original)].filter((character) =>
-        text.includes(character),
-      ).length;
-      const similarity = overlap / Math.max(1, new Set(original).size);
-      const containment =
-        text === original
-          ? 4
-          : text.includes(original)
-            ? 3
-            : original.includes(text) && text.length >= 4
-              ? 2
-              : 0;
-      return { block, index, score: containment + similarity };
-    })
+    .map((block, index) => ({
+      block,
+      index,
+      score: sourceBlockMatchScore(original, block),
+    }))
     .sort(
       (left, right) => right.score - left.score || left.index - right.index,
     )[0]?.block;
+}
+
+function matchOccurrences(original: string, text: string) {
+  const occurrences: number[] = [];
+  let fromIndex = 0;
+  while (occurrences.length < 32) {
+    const index = original.indexOf(text, fromIndex);
+    if (index < 0) break;
+    occurrences.push(index);
+    fromIndex = index + 1;
+  }
+  return occurrences;
+}
+
+export function selectSuggestionSourceBlocks(
+  suggestion: Pick<Suggestion, "sourceBlockIds" | "originalText"> | undefined,
+  sourceBlocks: readonly SourceBlock[],
+) {
+  if (!suggestion) return [];
+  const sourceIds = new Set(suggestion.sourceBlockIds);
+  const candidates = sourceBlocks.filter((block) => sourceIds.has(block.id));
+  const original = normalizedMatchText(suggestion.originalText);
+  if (!original) return candidates.slice(0, 1);
+
+  const containing = candidates.filter((block) =>
+    normalizedMatchText(block.text).includes(original),
+  );
+  if (containing.length > 0) {
+    const best = bestSuggestionSourceBlock(original, containing);
+    return best ? [best] : [];
+  }
+
+  const candidatesByPage = new Map<number, SourceBlock[]>();
+  for (const block of candidates) {
+    const text = normalizedMatchText(block.text);
+    const minimumLength = /\p{Script=Han}/u.test(text) ? 2 : 4;
+    if (text.length < minimumLength || !original.includes(text)) continue;
+    candidatesByPage.set(block.pageIndex, [
+      ...(candidatesByPage.get(block.pageIndex) ?? []),
+      block,
+    ]);
+  }
+
+  let bestPageMatch:
+    | { blocks: SourceBlock[]; coveredCharacters: number }
+    | undefined;
+  for (const pageBlocks of candidatesByPage.values()) {
+    const coverage = Array.from({ length: original.length }, () => false);
+    const matched: SourceBlock[] = [];
+    const longestFirst = pageBlocks.slice().sort((left, right) => {
+      const lengthDifference =
+        normalizedMatchText(right.text).length -
+        normalizedMatchText(left.text).length;
+      return lengthDifference || left.order - right.order;
+    });
+
+    for (const block of longestFirst) {
+      const text = normalizedMatchText(block.text);
+      let bestStart = -1;
+      let bestGain = 0;
+      for (const start of matchOccurrences(original, text)) {
+        let gain = 0;
+        for (let index = start; index < start + text.length; index += 1) {
+          if (!coverage[index]) gain += 1;
+        }
+        if (gain > bestGain) {
+          bestGain = gain;
+          bestStart = start;
+        }
+      }
+      if (bestStart < 0 || bestGain === 0) continue;
+      for (
+        let index = bestStart;
+        index < bestStart + text.length;
+        index += 1
+      ) {
+        coverage[index] = true;
+      }
+      matched.push(block);
+    }
+
+    const coveredCharacters = coverage.filter(Boolean).length;
+    if (
+      coveredCharacters > (bestPageMatch?.coveredCharacters ?? 0) ||
+      (coveredCharacters === bestPageMatch?.coveredCharacters &&
+        matched.length < (bestPageMatch?.blocks.length ?? Number.POSITIVE_INFINITY))
+    ) {
+      bestPageMatch = { blocks: matched, coveredCharacters };
+    }
+  }
+
+  if (
+    bestPageMatch &&
+    bestPageMatch.coveredCharacters >= Math.max(2, original.length * 0.25)
+  ) {
+    return bestPageMatch.blocks.sort(
+      (left, right) =>
+        left.bbox.y - right.bbox.y ||
+        left.bbox.x - right.bbox.x ||
+        left.order - right.order,
+    );
+  }
+
+  const fallback = bestSuggestionSourceBlock(original, candidates);
+  return fallback ? [fallback] : [];
+}
+
+export function selectSuggestionSourceBlock(
+  suggestion: SuggestionSourceReference | undefined,
+  sourceBlocks: readonly SourceBlock[],
+) {
+  return selectSuggestionSourceBlocks(suggestion, sourceBlocks)[0];
+}
+
+type HighlightRectangle = {
+  id: string;
+  pageIndex: number;
+  bbox: BoundingBox;
+};
+
+function paddedHighlightBox(bbox: BoundingBox): BoundingBox {
+  const minimumWidth = 0.008;
+  const minimumHeight = 0.014;
+  const width = Math.max(bbox.width, minimumWidth);
+  const height = Math.max(bbox.height, minimumHeight);
+  const horizontalPadding = Math.min(0.006, Math.max(0.0015, height * 0.12));
+  const verticalPadding = Math.min(0.004, Math.max(0.001, height * 0.12));
+  const x = Math.max(0, bbox.x - horizontalPadding);
+  const y = Math.max(0, bbox.y - verticalPadding);
+  return {
+    x,
+    y,
+    width: Math.min(1 - x, width + horizontalPadding * 2),
+    height: Math.min(1 - y, height + verticalPadding * 2),
+  };
+}
+
+export function sourceBlockHighlightRectangles(
+  blocks: readonly SourceBlock[],
+): HighlightRectangle[] {
+  const lines: HighlightRectangle[] = [];
+  const sorted = blocks.slice().sort(
+    (left, right) =>
+      left.pageIndex - right.pageIndex ||
+      left.bbox.y - right.bbox.y ||
+      left.bbox.x - right.bbox.x ||
+      left.order - right.order,
+  );
+
+  for (const block of sorted) {
+    const blockBottom = block.bbox.y + block.bbox.height;
+    const line = lines.findLast((candidate) => {
+      if (candidate.pageIndex !== block.pageIndex) return false;
+      const candidateBottom = candidate.bbox.y + candidate.bbox.height;
+      const verticalOverlap =
+        Math.min(candidateBottom, blockBottom) -
+        Math.max(candidate.bbox.y, block.bbox.y);
+      const minimumHeight = Math.min(candidate.bbox.height, block.bbox.height);
+      const horizontalGap = block.bbox.x - (candidate.bbox.x + candidate.bbox.width);
+      return (
+        verticalOverlap >= minimumHeight * 0.35 &&
+        horizontalGap <= Math.max(0.025, minimumHeight * 1.5)
+      );
+    });
+
+    if (!line) {
+      lines.push({
+        id: block.id,
+        pageIndex: block.pageIndex,
+        bbox: { ...block.bbox },
+      });
+      continue;
+    }
+
+    const left = Math.min(line.bbox.x, block.bbox.x);
+    const top = Math.min(line.bbox.y, block.bbox.y);
+    const right = Math.max(
+      line.bbox.x + line.bbox.width,
+      block.bbox.x + block.bbox.width,
+    );
+    const bottom = Math.max(
+      line.bbox.y + line.bbox.height,
+      block.bbox.y + block.bbox.height,
+    );
+    line.id = `${line.id}:${block.id}`;
+    line.bbox = { x: left, y: top, width: right - left, height: bottom - top };
+  }
+
+  return lines.map((line) => ({
+    ...line,
+    bbox: paddedHighlightBox(line.bbox),
+  }));
 }
 
 export function DocumentPreview() {
@@ -82,16 +283,16 @@ export function DocumentPreview() {
   const suggestion = analysis.suggestions.find(
     (item) => item.id === selectedSuggestionId,
   );
-  const highlightTarget = useMemo(() => {
-    return selectSuggestionSourceBlock(
+  const highlightTargets = useMemo(() => {
+    return selectSuggestionSourceBlocks(
       suggestion,
       analysis.resume.sourceBlocks,
     );
   }, [analysis.resume.sourceBlocks, suggestion]);
-  const highlightTargetKey = highlightTarget
-    ? `${suggestion?.id ?? "unknown"}:${highlightTarget.id}`
+  const highlightTargetKey = highlightTargets.length
+    ? `${suggestion?.id ?? "unknown"}:${highlightTargets.map((block) => block.id).join(":")}`
     : null;
-  const suggestedPage = highlightTarget?.pageIndex;
+  const suggestedPage = highlightTargets[0]?.pageIndex;
   const unboundedPage =
     pageSelection.targetKey === highlightTargetKey
       ? pageSelection.page
@@ -120,8 +321,13 @@ export function DocumentPreview() {
     },
     [analysis.resume.pageCount, highlightTargetKey, suggestedPage],
   );
-  const highlight =
-    highlightTarget?.pageIndex === page ? highlightTarget : undefined;
+  const highlights = useMemo(
+    () =>
+      sourceBlockHighlightRectangles(
+        highlightTargets.filter((block) => block.pageIndex === page),
+      ),
+    [highlightTargets, page],
+  );
   const preview = analysis.pagePreviews[page];
   const lowConfidencePages = useMemo(() => {
     const pages = new Map<number, number>();
@@ -367,18 +573,22 @@ export function DocumentPreview() {
               alt={`原始简历第 ${page + 1} 页`}
               className="h-auto w-full"
             />
-            {highlight ? (
+            {highlights.map((highlight, index) => (
               <span
-                aria-label="当前建议对应的原文位置"
-                className="pointer-events-none absolute border-2 border-brand bg-[#cfe5ff]/35"
+                key={highlight.id}
+                aria-label={
+                  index === 0 ? "当前建议对应的原文位置" : undefined
+                }
+                aria-hidden={index === 0 ? undefined : "true"}
+                className="pointer-events-none absolute bg-[#cfe5ff]/20 outline outline-2 outline-brand"
                 style={{
                   left: `${highlight.bbox.x * 100}%`,
                   top: `${highlight.bbox.y * 100}%`,
-                  width: `${Math.max(4, highlight.bbox.width * 100)}%`,
-                  height: `${Math.max(2, highlight.bbox.height * 100)}%`,
+                  width: `${highlight.bbox.width * 100}%`,
+                  height: `${highlight.bbox.height * 100}%`,
                 }}
               />
-            ) : null}
+            ))}
           </div>
         ) : !originalPdf ? (
           <div className="mx-auto grid aspect-[210/297] max-w-[620px] place-items-center bg-white p-8 text-center shadow-panel">
@@ -414,9 +624,18 @@ export function DocumentPreview() {
                 className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf] disabled:cursor-not-allowed disabled:opacity-45"
               >
                 <Upload aria-hidden="true" size={17} />
-                {attachingPdf
-                  ? "正在恢复"
-                  : `重新附加 ${analysis.resume.originalFileName}`}
+                {attachingPdf ? (
+                  <>
+                    <span>正在恢复</span>
+                    <EstimatedProgressText
+                      expectedDurationMs={estimatedDurations.localOperation}
+                      label="原 PDF 恢复预估进度"
+                      className="text-white/85"
+                    />
+                  </>
+                ) : (
+                  `重新附加 ${analysis.resume.originalFileName}`
+                )}
               </button>
               {attachError ? (
                 <p className="mt-3 text-xs leading-5 text-danger" role="alert">

@@ -35,6 +35,15 @@ export const AnalysisBundleSchema = z.object({
 });
 export type AnalysisBundle = z.infer<typeof AnalysisBundleSchema>;
 
+export const ResumeSuggestionResponseSchema = z.object({
+  suggestions: z.array(SuggestionSchema),
+  sourceVersion: z.string().min(1),
+  durationMs: z.number().nonnegative(),
+});
+export type ResumeSuggestionResponse = z.infer<
+  typeof ResumeSuggestionResponseSchema
+>;
+
 export const JobMatchBundleSchema = z
   .object({
     sourceResumeId: z.string().min(1),

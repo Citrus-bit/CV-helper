@@ -44,7 +44,7 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 - 文档解析：配置 `DOCUMENT_WORKER_URL` 后，`/api/analyze` 把 PDF 发送到 `services/document-worker`，由 PDFium/pdfplumber 完成原生提取、页面分类、必要 OCR 和页面预览；返回值经 Zod 转换为同一 `DocumentParseOutput`。未配置时使用上一节的 TypeScript baseline；配置后若 worker 网络不可用、超时、解析失败或响应结构非法，会降级到同机 TypeScript baseline，并把降级 warning 展示给用户。文件摘要不一致、413 资源硬门和用户取消必须失败关闭，不能通过 fallback 绕过。
 - OCR：worker、镜像和 Compose 均默认使用本地 Tesseract CLI，语言为 `chi_sim+eng`；PaddleOCR 仅是通过构建参数、显式 `OCR_PROVIDER=paddleocr` 和预置本地模型启用的可选增强，禁止运行时下载模型。
 - OCR 资源门：worker 每页最多处理 4 个去重区域、每份文档最多 8 个区域，并限制并发、字符、单词、图片框、像素、TSV/文本输出和 block 展开；文档预算默认 45 秒（最大 60 秒），单次 Tesseract 默认 12 秒（最大 20 秒）。超限返回稳定 warning，不丢弃已取得的原生结果。
-- AI：允许的九项生成式能力 `resume.score`、`resume.suggest`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate`、`answer.coach` 已接入服务端 OpenAI-compatible provider gateway。网关只接收最小化、脱敏、guard 后 DTO；两项改写能力还会校验原文映射、保留术语、数字和高风险事实。未配置、超时、限流、5xx 或非法结果自动回退 baseline，用户取消除外。当前默认 `AI_PROVIDER=baseline`，等待轮换后的新密钥再启用增强模式。
+- AI：允许的十项生成式能力 `resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate`、`answer.coach` 已接入服务端 OpenAI-compatible provider gateway。网关只接收最小化、脱敏、guard 后 DTO；两项改写能力还会校验原文映射、保留术语、数字和高风险事实。除 `resume.chat` 外，未配置、超时、限流、5xx 或非法结果自动回退 baseline，用户取消除外；`resume.chat` 在未获得真实 provider 结果时返回明确错误，不把固定 baseline 话术展示为 AI 回复。当前默认 `AI_PROVIDER=baseline`，等待轮换后的新密钥再启用增强模式。
 - 渲染：配置 worker 时，Web 优先调用 `/render-preview`；失败时可回退 Web 本地 Typst。Web 运行镜像固定携带校验过的 Typst `0.15.1`、`font-noto-cjk` 和 `templates/typst` 下三套模板；worker 内 `/usr/local/bin/typst` 读取只读 `/app/templates/typst` 与同类 CJK 字体。两条路径使用同一三模板和质量硬门。
 - 容器边界：Compose 中 Web/worker 均为非 root、只读根文件系统、移除 Linux capabilities 并使用独立临时目录；worker 位于 internal backend 网络且无外网出口，并设置 CPU、内存、进程、文件大小和执行时限。
 - 取消边界：Node 的请求取消会停止等待并阻止陈旧结果提交，但 Python 已进入 `run_in_threadpool` 的同步 OCR/渲染任务不能被该 `AbortSignal` 立即终止；遗留计算仍由 worker deadline、子进程 timeout、并发和资源限额约束。
@@ -53,7 +53,7 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 - 未来基础设施：PostgreSQL、Redis 和 MinIO 仅保留在 `future-infra` Compose profile，当前业务不依赖也不连接这些服务。
 - 切换方式：文档服务和 AI 通过 adapter + 环境配置切换，不改变领域模型或客户端协议。
 
-隔离文档解析、OCR、渲染 adapter 与九项 AI provider gateway 均已接入服务端 Capability 路径；当前简历建议流使用 `resume.suggest`，两项 `copy.rewrite` 能力可被独立调用但未重复串入该建议流。AI 默认关闭且尚未用真实供应商密钥验收。PostgreSQL、Redis/BullMQ、MinIO/S3、服务端 ASR、Vercel/Private Blob/Hosted 模式与任何其他云部署仍是后续目标，不得描述为已经投入使用。
+隔离文档解析、OCR、渲染 adapter 与十项 AI provider gateway 均已接入服务端 Capability 路径；当前简历建议流使用 `resume.suggest`，持续编辑对话使用 `resume.chat`，两项 `copy.rewrite` 能力可被独立调用但未重复串入建议流。AI 默认关闭且尚未用真实供应商密钥验收；因此默认配置下编辑对话会明确报错并保留本地会话供重试。PostgreSQL、Redis/BullMQ、MinIO/S3、服务端 ASR、Vercel/Private Blob/Hosted 模式与任何其他云部署仍是后续目标，不得描述为已经投入使用。
 
 ## Skill Extension Registry
 
@@ -61,7 +61,7 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 
 - `status` 仅允许 `baseline | candidate | evaluating | enabled | rejected | deprecated`。
 - 当前所有条目均为 `baseline`；外部 Skill 未经许可证、安全和回归评测不得设为 `enabled`。
-- 生产默认 Registry 的任意扩展执行模式为 `disabled`；`trusted_local` 只用于受控评测且禁止网络、要求 canonical Schema 和已注册 baseline。`provider_gateway` 只允许静态名单内的九项能力通过服务端受控网关执行，包含经过额外事实安全校验的 `copy.rewrite.zh/en`。该模式不能用于用户上传代码或扩大数据范围。
+- 生产默认 Registry 的任意扩展执行模式为 `disabled`；`trusted_local` 只用于受控评测且禁止网络、要求 canonical Schema 和已注册 baseline。`provider_gateway` 只允许静态名单内的十项能力通过服务端受控网关执行，包含经过额外事实安全校验的 `resume.chat` 与 `copy.rewrite.zh/en`。该模式不能用于用户上传代码或扩大数据范围。
 - `data scope` 是最大授权，不代表每次调用都会传入全部数据；调用方仍必须执行最小化和 PII 脱敏。
 - `network` 的 `none` 表示 baseline 不需要联网；候选 Skill 若需联网，必须重新审批 manifest。
 - provider gateway 只接受代码内静态批准的供应商 Base URL；不存在可由 `AI_API_ALLOWLIST` 或用户输入扩张的运行时白名单。
@@ -78,6 +78,7 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 | `claim.conflict`        | 相似声明间数值不一致启发式                                                                                                                                                              | 日期、角色、实体、语义冲突与跨附件核对                             | `evidence_graph` / none                   | `eval.claim.conflict.v1`        | baseline / `builtin.claim.conflict@1.0.0`        |
 | `resume.score`          | 六维 rubric 与可追溯扣分项                                                                                                                                                              | 行业/职级标定与评分校准                                            | `resume_ast,evidence_graph` / none        | `eval.resume.score.v1`          | baseline / `builtin.resume.score@1.0.0`          |
 | `resume.suggest`        | 证据约束的规则化改写建议                                                                                                                                                                | 专业招聘判断、自然表达、多语言                                     | `resume_ast,evidence_graph` / none        | `eval.resume.suggest.v1`        | baseline / `builtin.resume.suggest@1.0.0`        |
+| `resume.chat`           | 固定、不可冒充真实 AI 的契约占位输出                                                                                                                                                    | 有界多轮上下文、revision 绑定、证据约束的持续编辑                  | `resume_ast,evidence_graph,interview_content` / none | `eval.resume.chat.v1` | baseline / `builtin.resume.chat@1.0.0` |
 | `resume.atsAudit`       | 联系方式、标准板块、表格角色与低置信文字规则                                                                                                                                            | 主流 ATS 差异、真实文件阅读顺序/搜索性与图标识别                   | `resume_ast,source_blocks` / none         | `eval.resume.ats.v1`            | baseline / `builtin.resume.atsAudit@1.0.0`       |
 | `jd.parse`              | 标题、职责、技能、硬条件词典解析                                                                                                                                                        | 行业本体、隐含要求、中文长句                                       | `job_description` / none                  | `eval.jd.parse.v1`              | baseline / `builtin.jd.parse@1.0.0`              |
 | `job.match`             | JD 要求到声明的关键词 overlap 映射                                                                                                                                                      | 同义/语义能力、职级权重与校准                                      | `job_description,evidence_graph` / none   | `eval.job.match.v1`             | baseline / `builtin.job.match@1.0.0`             |
@@ -115,6 +116,7 @@ Registry 运行时按 `Capability ID` 保存一个 baseline 和最多一个 exte
 | `claim.conflict`        | `tests/capabilities/domain-behavior.test.ts`、`src/app/api/routes.test.ts`、`src/lib/server/analysis.test.ts`                                                                                                                | builtin / Proprietary  | 无外部 provider                                                   | 独立数值冲突集及“先评估、后叠加冲突”回归通过                                           | baseline 保留 / 2026-07-23 |
 | `resume.score`          | `tests/capabilities/baseline.test.ts`                                                                                                                                                                                        | builtin / Proprietary  | 无外部 provider                                                   | 六维评分 fixture 通过                                                                  | baseline 保留 / 2026-07-22 |
 | `resume.suggest`        | `tests/capabilities/baseline.test.ts`、`tests/client/resume.test.ts`                                                                                                                                                         | builtin / Proprietary  | 无外部 provider                                                   | 事实约束与精确 patch fixture 通过                                                      | baseline 保留 / 2026-07-22 |
+| `resume.chat`           | `src/app/api/resume-chat/route.test.ts`、`src/lib/client/store.chat.test.ts`、`src/components/workspace/resume-chat.test.ts`                                                                                                | builtin / Proprietary  | 仅静态批准的服务端 provider；无真实结果时 API 显式失败            | 多轮上下文、刷新恢复、revision 绑定、应用修改和拒绝固定话术回归通过                   | baseline 契约保留 / 2026-07-27 |
 | `resume.atsAudit`       | `tests/capabilities/domain-behavior.test.ts`、`src/app/api/routes.test.ts` 分析链                                                                                                                                            | builtin / Proprietary  | 无 ATS 厂商背书或兼容承诺                                         | 独立规则与 API 集成回归通过；需补 ATS 厂商样本                                         | baseline 保留 / 2026-07-23 |
 | `jd.parse`              | `tests/capabilities/baseline.test.ts`、`src/app/api/routes.test.ts`                                                                                                                                                          | builtin / Proprietary  | 无外部 provider                                                   | JD 解析 fixture 通过                                                                   | baseline 保留 / 2026-07-22 |
 | `job.match`             | `tests/capabilities/baseline.test.ts`、`src/app/api/routes.test.ts`                                                                                                                                                          | builtin / Proprietary  | 无录取概率或招聘平台背书                                          | 要求到证据映射 fixture 通过                                                            | baseline 保留 / 2026-07-22 |
@@ -155,7 +157,7 @@ Registry 运行时按 `Capability ID` 保存一个 baseline 和最多一个 exte
 
 - 总入口：`skills/resume-assistant-orchestrator/`，负责跨领域任务拆分和顺序编排。
 - 领域入口：`resume-document-intelligence`、`resume-evidence-review`、`resume-job-writing`、`resume-layout-export`、`resume-interview-coach`、`resume-safety-evaluation`。
-- 单一映射：30 项运行时 Capability 的归属、最大数据范围和 eval suite 只维护在 `resume-assistant-orchestrator/references/capability-map.md`。
+- 单一映射：31 项运行时 Capability 的归属、最大数据范围和 eval suite 只维护在 `resume-assistant-orchestrator/references/capability-map.md`。
 - 接入协议：候选运行时 adapter、规则包、知识包或提示策略包必须遵守 `resume-assistant-orchestrator/references/extension-protocol.md`，再进入本文件的 Registry 生命周期。
 - 边界：Codex Skill 只提供工程工作流、检查清单和验收方法；实际执行仍由服务器静态 Capability Registry、canonical Zod Schema、最小 data scope、feature flag 和 builtin fallback 控制。
 - 维护规则：新增专业领域时优先扩充现有领域 Skill；只有职责无法合理归属时才新增入口。不得在页面组件、提示词或临时文档中另建平行 Capability 清单。

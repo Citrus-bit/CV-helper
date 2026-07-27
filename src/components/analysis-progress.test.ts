@@ -3,7 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   beginAnalysisRequest,
@@ -16,13 +16,10 @@ afterEach(() => {
   cleanup();
   useAppStore.getState().reset();
   window.sessionStorage.clear();
-  vi.restoreAllMocks();
 });
 
 describe("AnalysisProgress", () => {
-  it("shows an honest indeterminate state without simulated step completion", () => {
-    const intervalSpy = vi.spyOn(window, "setInterval");
-
+  it("shows an explicitly estimated progress state without simulated step completion", () => {
     render(createElement(AnalysisProgress));
 
     expect(
@@ -37,9 +34,12 @@ describe("AnalysisProgress", () => {
     expect(screen.getByText("PDF 文字与版面")).toBeInTheDocument();
     expect(screen.getByText("仅在文字缺失时启用 OCR")).toBeInTheDocument();
     expect(screen.getByText("完整结果生成后统一展示")).toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", { name: "简历分析预估进度" }),
+    ).toHaveAttribute("aria-valuenow", "1");
+    expect(screen.getByText("预估进度")).toBeInTheDocument();
     expect(screen.queryByText("校验 PDF")).not.toBeInTheDocument();
     expect(screen.queryByText("生成评分与建议")).not.toBeInTheDocument();
-    expect(intervalSpy).not.toHaveBeenCalled();
   });
 
   it("cancels the active request and returns to the upload screen", () => {

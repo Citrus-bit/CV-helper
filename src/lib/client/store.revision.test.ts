@@ -417,7 +417,7 @@ describe("resume-derived state revisions", () => {
     });
   });
 
-  it("stales every other pending suggestion and binds regenerated suggestions to the new revision", () => {
+  it("keeps other valid AI suggestions pending after applying one rewrite", () => {
     const analysis = analysisFixture();
     analysis.resume.ast.sections[0].entries.push({
       id: "entry-2",
@@ -462,20 +462,123 @@ describe("resume-derived state revisions", () => {
     ).toBe("accepted");
     expect(
       revised.suggestions.find((item) => item.id === "suggestion-2")?.status,
-    ).toBe("stale");
-    const regenerated = revised.suggestions.filter(
+    ).toBe("pending");
+    const remaining = revised.suggestions.filter(
       (item) => item.status === "pending",
     );
-    expect(regenerated.length).toBeGreaterThan(0);
-    expect(regenerated.every((item) => item.resumeRevision === 1)).toBe(true);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).toMatchObject({
+      id: "suggestion-2",
+      resumeRevision: 1,
+      rationale: "删除弱化表达。",
+    });
 
-    useAppStore.getState().decideSuggestion("suggestion-2", "rejected");
+    useAppStore.getState().decideSuggestion("suggestion-2", "accepted");
     expect(
       useAppStore
         .getState()
         .analysis!.suggestions.find((item) => item.id === "suggestion-2")
         ?.status,
-    ).toBe("stale");
+    ).toBe("accepted");
+    expect(useAppStore.getState().analysis?.resume.revision).toBe(2);
+  });
+
+  it("applies every safe AI rewrite in one revision with one undo snapshot", () => {
+    const analysis = analysisFixture();
+    analysis.processing.capabilityVersions["resume.suggest"] =
+      "resume.suggest@2.0.0";
+    analysis.resume.ast.sections[0].entries.push({
+      id: "entry-2",
+      title: "工程师",
+      current: false,
+      bullets: ["主要负责数据平台"],
+      keywords: ["数据平台"],
+      sourceBlockIds: ["block-2"],
+    });
+    analysis.suggestions.push(
+      SuggestionSchema.parse({
+        id: "suggestion-2",
+        resumeRevision: 0,
+        sourceBlockIds: ["block-2"],
+        claimIds: [],
+        kind: "rewrite",
+        status: "pending",
+        originalText: "主要负责数据平台",
+        proposedText: "负责数据平台",
+        rationale: "删去“主要”这一弱化词，让职责表达更直接。",
+        beforeHash: stableId("hash", "主要负责数据平台"),
+        patches: [
+          {
+            operation: "replace",
+            path: "/sections/0/entries/1/bullets/0",
+            value: "负责数据平台",
+          },
+        ],
+        affectedDimensions: ["clarity", "language"],
+        factRisk: "none",
+        interviewRisk: "none",
+      }),
+    );
+    useAppStore.getState().setAnalysis(analysis);
+
+    const count = useAppStore.getState().applyAiSuggestions();
+
+    const revised = useAppStore.getState();
+    expect(count).toBe(2);
+    expect(revised.analysis?.resume).toMatchObject({
+      revision: 1,
+      ast: {
+        sections: [
+          {
+            entries: [
+              { bullets: ["负责核心平台开发"] },
+              { bullets: ["负责数据平台"] },
+            ],
+          },
+        ],
+      },
+    });
+    expect(revised.analysis?.suggestions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "suggestion-1", status: "accepted" }),
+        expect.objectContaining({ id: "suggestion-2", status: "accepted" }),
+      ]),
+    );
+    expect(revised.analysis?.processing.capabilityVersions["resume.suggest"])
+      .toBe("resume.suggest@2.0.0");
+    expect(revised.undoStack).toHaveLength(1);
+  });
+
+  it("replaces pending rule output with regenerated AI suggestions", () => {
+    const analysis = analysisFixture();
+    analysis.processing.capabilityVersions["resume.suggest"] =
+      "resume.suggest@1.0.0";
+    const generated = SuggestionSchema.parse({
+      ...analysis.suggestions[0],
+      id: "suggestion-ai-1",
+      rationale:
+        "“负责平台开发”没有说明职责边界；在不增加新事实的前提下，保留原动作并强化核心对象。",
+    });
+    useAppStore.getState().setAnalysis(analysis);
+
+    useAppStore
+      .getState()
+      .replaceAiSuggestions([generated], "resume.suggest@2.0.0");
+
+    expect(useAppStore.getState().analysis).toMatchObject({
+      suggestions: [
+        {
+          id: "suggestion-ai-1",
+          status: "pending",
+        },
+      ],
+      processing: {
+        capabilityVersions: {
+          "resume.suggest": "resume.suggest@2.0.0",
+        },
+      },
+    });
+    expect(useAppStore.getState().selectedSuggestionId).toBe("suggestion-ai-1");
   });
 
   it("recomputes the score and creates verified evidence for a manual factual rewrite", () => {

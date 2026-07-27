@@ -44,6 +44,8 @@ vi.mock("@/lib/client/store", () => ({
 import {
   DocumentPreview,
   selectSuggestionSourceBlock,
+  selectSuggestionSourceBlocks,
+  sourceBlockHighlightRectangles,
 } from "./document-preview";
 
 afterEach(() => {
@@ -100,5 +102,55 @@ describe("selectSuggestionSourceBlock", () => {
         blocks,
       )?.id,
     ).toBe("matching-bullet");
+  });
+
+  it("keeps every referenced line that contributes to a wrapped sentence", () => {
+    const blocks = [
+      SourceBlockSchema.parse({
+        id: "label",
+        pageIndex: 0,
+        order: 0,
+        role: "heading",
+        text: "项目描述",
+        source: "native",
+        confidence: 1,
+        bbox: { x: 0.02, y: 0.2, width: 0.08, height: 0.03 },
+      }),
+      SourceBlockSchema.parse({
+        id: "line-one",
+        pageIndex: 0,
+        order: 1,
+        role: "paragraph",
+        text: "为大众点评的本地生活服务平台，涵盖用户认证、商户查询、",
+        source: "native",
+        confidence: 1,
+        bbox: { x: 0.12, y: 0.2, width: 0.82, height: 0.03 },
+      }),
+      SourceBlockSchema.parse({
+        id: "line-two",
+        pageIndex: 0,
+        order: 2,
+        role: "paragraph",
+        text: "优惠券秒杀等业务，并对高并发场景进行深度优化。",
+        source: "native",
+        confidence: 1,
+        bbox: { x: 0.02, y: 0.24, width: 0.7, height: 0.03 },
+      }),
+    ];
+
+    const selected = selectSuggestionSourceBlocks(
+      {
+        sourceBlockIds: blocks.map((block) => block.id),
+        originalText:
+          "为大众点评的本地生活服务平台，涵盖用户认证、商户查询、优惠券秒杀等业务，并对高并发场景进行深度优化。",
+      },
+      blocks,
+    );
+
+    expect(selected.map((block) => block.id)).toEqual([
+      "line-one",
+      "line-two",
+    ]);
+    expect(sourceBlockHighlightRectangles(selected)).toHaveLength(2);
   });
 });

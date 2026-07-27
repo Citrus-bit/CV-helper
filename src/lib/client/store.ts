@@ -49,6 +49,7 @@ import {
   type RecentAnalysisSummary,
 } from "./recent-analysis";
 import { applySuggestion, suggestionBeforeHashMatches } from "./resume";
+import { safeAiRewriteSuggestions } from "./suggestions";
 import { clearApiSessionId } from "./privacy";
 import { reanalyzeResumeRevision } from "@/lib/resume-reanalysis";
 import {
@@ -57,6 +58,19 @@ import {
   disposeRegisteredClientRuntimeActivities,
   revokeAllTrackedObjectUrls,
 } from "./runtime-resources";
+import {
+  RESUME_CHAT_CONTEXT_WINDOW,
+  RESUME_CHAT_MAX_MESSAGES,
+  ResumeChatContextSchema,
+  ResumeChatInputSchema,
+  emptyResumeChatContext,
+  normalizeResumeChatContext,
+  resumeChatConfirmedFacts,
+  type ResumeChatContext,
+  type ResumeChatInput,
+  type ResumeChatMessage,
+  type ResumeChatResponse,
+} from "@/lib/resume-chat";
 
 export const SESSION_STORAGE_KEY_V2 = "resume-assistant-session-v2";
 export const SESSION_STORAGE_KEY_V3 = "resume-assistant-session-v3";
@@ -66,7 +80,7 @@ export type WorkspaceModule = "resume" | "job" | "interview";
 export type WorkspaceStage = "upload" | "analyzing" | "workspace";
 export type TemplateId = "professional" | "minimal" | "compact";
 export type PreviewMode = "original" | "locate" | "current" | "compare";
-export type ResumePanel = "suggestions" | "templates";
+export type ResumePanel = "suggestions" | "chat" | "templates";
 export type InterviewProgressUpdate = Partial<
   Pick<
     InterviewProgress,
@@ -101,6 +115,7 @@ export type AppState = {
   evaluations: EvaluationResponse[];
   interviewSetupStage: InterviewSetupStage;
   interviewProgress: InterviewProgress | null;
+  resumeChat: ResumeChatContext | null;
   selectedSuggestionId: string | null;
   activeResumeVariantId: string | null;
   resumePanel: ResumePanel;
@@ -125,6 +140,17 @@ export type AppState = {
     status: SuggestionStatus,
     manualText?: string,
   ) => void;
+  replaceAiSuggestions: (
+    suggestions: Suggestion[],
+    sourceVersion: string,
+  ) => void;
+  applyAiSuggestions: () => number;
+  beginResumeChatTurn: (content: string) => ResumeChatMessage | null;
+  completeResumeChatTurn: (
+    userMessageId: string,
+    response: ResumeChatResponse,
+  ) => boolean;
+  clearResumeChat: () => void;
   confirmClaim: (id: string, content?: string) => void;
   undo: () => void;
   updateJobDraft: (update: Partial<JobDraft>) => void;
@@ -160,6 +186,65 @@ function defaultJobDraft(locale?: string): JobDraft {
   };
 }
 
+function resumeChatMessageId(role: ResumeChatMessage["role"]) {
+  const unique =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `resume-chat-${role}-${unique}`;
+}
+
+export function resumeChatInputForMessage(
+  analysis: AnalysisBundle,
+  context: ResumeChatContext,
+  userMessageId: string,
+): ResumeChatInput {
+  const messageIndex = context.messages.findIndex(
+    (message) => message.id === userMessageId && message.role === "user",
+  );
+  if (messageIndex < 0) {
+    throw new Error("无法读取本轮对话，请重新输入。");
+  }
+  const userMessage = context.messages[messageIndex];
+  const recentMessages = context.messages
+    .slice(0, messageIndex)
+    .slice(-RESUME_CHAT_CONTEXT_WINDOW)
+    .map(({ role, content, resumeRevision }) => ({
+      role,
+      content,
+      resumeRevision,
+    }));
+  return ResumeChatInputSchema.parse({
+    resume: analysis.resume,
+    claims: analysis.claims,
+    summary: context.summary,
+    confirmedFacts: resumeChatConfirmedFacts(context, analysis.claims),
+    recentChanges: context.recentChanges,
+    recentMessages,
+    userMessage: userMessage.content,
+  });
+}
+
+function resumeChatAfterRevision(
+  context: ResumeChatContext | null,
+  analysis: AnalysisBundle,
+  change: string,
+): ResumeChatContext {
+  const current = normalizeResumeChatContext(
+    context,
+    analysis.resume.id,
+    analysis.resume.revision,
+  );
+  return {
+    ...current,
+    sourceResumeRevision: analysis.resume.revision,
+    confirmedFacts: resumeChatConfirmedFacts(current, analysis.claims),
+    recentChanges: [...current.recentChanges, change.trim()]
+      .filter(Boolean)
+      .slice(-50),
+  };
+}
+
 function emptySessionState(
   state: AppState,
   recentAnalyses = state.recentAnalyses,
@@ -176,6 +261,7 @@ function emptySessionState(
     evaluations: [],
     interviewSetupStage: "intro" as const,
     interviewProgress: null,
+    resumeChat: null,
     selectedSuggestionId: null,
     activeResumeVariantId: null,
     resumePanel: "suggestions" as const,
@@ -227,6 +313,28 @@ function clearPersistedSessionKeys() {
 
 function snapshot(analysis: AnalysisBundle): Snapshot {
   return structuredClone(analysis);
+}
+
+function rebindPendingSuggestion(
+  suggestion: Suggestion,
+  ast: ResumeAST,
+  resumeRevision: number,
+): Suggestion {
+  const rebound = { ...suggestion, resumeRevision };
+  return suggestionBeforeHashMatches(ast, rebound)
+    ? rebound
+    : { ...suggestion, status: "stale" };
+}
+
+function mergeLocalReanalysisVersions(
+  current: Record<string, string>,
+  local: Record<string, string>,
+) {
+  const suggestionVersion = current["resume.suggest"];
+  const merged = { ...current, ...local };
+  if (suggestionVersion) merged["resume.suggest"] = suggestionVersion;
+  else delete merged["resume.suggest"];
+  return merged;
 }
 
 function persistedSnapshot(snapshotValue: Snapshot): Snapshot {
@@ -688,11 +796,13 @@ function normalizeJobDraft(
   };
 }
 
-function invalidatedDerivedState() {
+function invalidatedDerivedState(
+  resumePanel: ResumePanel = "suggestions",
+) {
   return {
     jobMatch: null,
     activeResumeVariantId: null,
-    resumePanel: "suggestions" as const,
+    resumePanel,
     interviewPlan: null,
     evaluations: [],
     interviewSetupStage: "intro" as const,
@@ -771,7 +881,9 @@ export function mergePersistedSessionState(
       ? merged.activeResumeVariantId
       : null;
   const resumePanel =
-    merged.resumePanel === "templates" || merged.resumePanel === "suggestions"
+    merged.resumePanel === "templates" ||
+    merged.resumePanel === "suggestions" ||
+    merged.resumePanel === "chat"
       ? merged.resumePanel
       : "suggestions";
   const parsedInterviewPlan = merged.interviewPlan
@@ -807,6 +919,13 @@ export function mergePersistedSessionState(
     merged.analysis,
     jobMatch,
   );
+  const resumeChat = merged.analysis
+    ? normalizeResumeChatContext(
+        merged.resumeChat,
+        merged.analysis.resume.id,
+        merged.analysis.resume.revision,
+      )
+    : null;
   const requestedModule = ["resume", "job", "interview"].includes(merged.module)
     ? merged.module
     : "resume";
@@ -828,6 +947,7 @@ export function mergePersistedSessionState(
       merged.interviewSetupStage,
     ),
     interviewProgress,
+    resumeChat,
     archiveSuppressedForResumeId,
   };
 }
@@ -870,6 +990,7 @@ function recentPayload(state: AppState): RecentAnalysisPayload | null {
     evaluations: state.evaluations,
     interviewSetupStage: state.interviewSetupStage,
     interviewProgress: state.interviewProgress,
+    resumeChat: state.resumeChat,
     module: state.module,
     selectedSuggestionId: state.selectedSuggestionId,
     selectedTemplate: state.selectedTemplate,
@@ -941,6 +1062,7 @@ export const useAppStore = create<AppState>()(
       evaluations: [],
       interviewSetupStage: "intro",
       interviewProgress: null,
+      resumeChat: null,
       selectedSuggestionId: null,
       activeResumeVariantId: null,
       resumePanel: "suggestions",
@@ -977,6 +1099,10 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           ...invalidatedDerivedState(),
           analysis,
+          resumeChat: emptyResumeChatContext(
+            analysis.resume.id,
+            analysis.resume.revision,
+          ),
           jobDraft: defaultJobDraft(analysis.resume.locale),
           sourcePdfBlob,
           interviewSessionVersion: state.interviewSessionVersion + 1,
@@ -1088,40 +1214,49 @@ export const useAppStore = create<AppState>()(
               manualText:
                 status === "manual" ? normalizedManualText : undefined,
             });
-            const historicalSuggestions = state.analysis.suggestions.map(
-              (item) => {
-                if (item.id === id) return decided;
-                return item.status === "pending"
-                  ? { ...item, status: "stale" as const }
-                  : item;
+            const suggestions = state.analysis.suggestions.map((item) => {
+              if (item.id === id) return decided;
+              return item.status === "pending"
+                ? rebindPendingSuggestion(item, nextAst, resume.revision)
+                : item;
+            });
+            const nextAnalysis = {
+              ...state.analysis,
+              resume,
+              claims: reanalysis.claims,
+              evidence: reanalysis.evidence,
+              scorecard: reanalysis.scorecard,
+              suggestions,
+              stories: reanalysis.stories,
+              processing: {
+                ...state.analysis.processing,
+                capabilityVersions: mergeLocalReanalysisVersions(
+                  state.analysis.processing.capabilityVersions,
+                  reanalysis.capabilityVersions,
+                ),
               },
-            );
-            const suggestions = [
-              ...historicalSuggestions,
-              ...reanalysis.suggestions,
-            ];
+            };
+            const finalText =
+              status === "manual"
+                ? normalizedManualText
+                : decided.proposedText ?? "";
+            const changeSummary =
+              decided.kind === "remove"
+                ? `已移除：${decided.originalText}`
+                : `已将“${decided.originalText}”改为“${finalText}”`;
             return {
-              analysis: {
-                ...state.analysis,
-                resume,
-                claims: reanalysis.claims,
-                evidence: reanalysis.evidence,
-                scorecard: reanalysis.scorecard,
-                suggestions,
-                stories: reanalysis.stories,
-                processing: {
-                  ...state.analysis.processing,
-                  capabilityVersions: {
-                    ...state.analysis.processing.capabilityVersions,
-                    ...reanalysis.capabilityVersions,
-                  },
-                },
-              },
+              analysis: nextAnalysis,
+              resumeChat: resumeChatAfterRevision(
+                state.resumeChat,
+                nextAnalysis,
+                changeSummary,
+              ),
               selectedSuggestionId:
-                reanalysis.suggestions.find((item) => item.status === "pending")
-                  ?.id ?? id,
+                suggestions.find((item) => item.status === "pending")?.id ?? id,
               undoStack,
-              ...invalidatedDerivedState(),
+              ...invalidatedDerivedState(
+                state.resumePanel === "chat" ? "chat" : "suggestions",
+              ),
               interviewSessionVersion: state.interviewSessionVersion + 1,
             };
           }
@@ -1130,13 +1265,21 @@ export const useAppStore = create<AppState>()(
           );
           const selectedSuggestionId =
             suggestions.find((item) => item.status === "pending")?.id ?? id;
+          const nextAnalysis = {
+            ...state.analysis,
+            resume,
+            suggestions,
+            ...(synchronizedGraph ?? {}),
+          };
           return {
-            analysis: {
-              ...state.analysis,
-              resume,
-              suggestions,
-              ...(synchronizedGraph ?? {}),
-            },
+            analysis: nextAnalysis,
+            resumeChat: synchronizedGraph
+              ? resumeChatAfterRevision(
+                  state.resumeChat,
+                  nextAnalysis,
+                  `已确认事实：${updated.proposedText ?? updated.originalText}`,
+                )
+              : state.resumeChat,
             selectedSuggestionId,
             undoStack,
             ...(synchronizedGraph
@@ -1147,6 +1290,267 @@ export const useAppStore = create<AppState>()(
               : {}),
           };
         }),
+      replaceAiSuggestions: (incoming, sourceVersion) =>
+        set((state) => {
+          if (
+            !state.analysis ||
+            state.homeNavigationPending ||
+            !/^resume\.suggest@(?:[2-9]|\d{2,})\./.test(sourceVersion)
+          ) {
+            return state;
+          }
+          const resumeRevision = state.analysis.resume.revision;
+          const generated = incoming.filter(
+            (suggestion) =>
+              suggestion.status === "pending" &&
+              suggestion.resumeRevision === resumeRevision &&
+              suggestionBeforeHashMatches(
+                state.analysis!.resume.ast,
+                suggestion,
+              ),
+          );
+          const appliedHistory = state.analysis.suggestions.filter(
+            (suggestion) =>
+              suggestion.status === "accepted" ||
+              suggestion.status === "manual",
+          );
+          const suggestions = [...appliedHistory, ...generated];
+          return {
+            analysis: {
+              ...state.analysis,
+              suggestions,
+              processing: {
+                ...state.analysis.processing,
+                capabilityVersions: {
+                  ...state.analysis.processing.capabilityVersions,
+                  "resume.suggest": sourceVersion,
+                },
+              },
+            },
+            selectedSuggestionId:
+              generated[0]?.id ?? appliedHistory.at(-1)?.id ?? null,
+            error: null,
+          };
+        }),
+      applyAiSuggestions: () => {
+        let appliedCount = 0;
+        set((state) => {
+          if (!state.analysis || state.homeNavigationPending) return state;
+          const candidates = safeAiRewriteSuggestions(state.analysis);
+          if (candidates.length === 0) return state;
+
+          let nextAst = state.analysis.resume.ast;
+          const applied = new Map<string, Suggestion>();
+          for (const suggestion of candidates) {
+            const accepted = {
+              ...suggestion,
+              status: "accepted" as const,
+            };
+            const candidateAst = applySuggestion(nextAst, accepted);
+            if (candidateAst === nextAst) continue;
+            nextAst = candidateAst;
+            applied.set(suggestion.id, accepted);
+          }
+          appliedCount = applied.size;
+          if (appliedCount === 0) return state;
+
+          const resume = {
+            ...state.analysis.resume,
+            revision: state.analysis.resume.revision + 1,
+            ast: nextAst,
+          };
+          const firstApplied = applied.values().next().value!;
+          const reanalysis = reanalyzeResumeRevision({
+            analysis: state.analysis,
+            resume,
+            appliedSuggestion: firstApplied,
+          });
+          const suggestions = state.analysis.suggestions.map((suggestion) => {
+            const accepted = applied.get(suggestion.id);
+            if (accepted) return accepted;
+            return suggestion.status === "pending"
+              ? rebindPendingSuggestion(suggestion, nextAst, resume.revision)
+              : suggestion;
+          });
+          const undoStack = [
+            ...state.undoStack,
+            snapshot(state.analysis),
+          ].slice(-20);
+
+          const nextAnalysis = {
+            ...state.analysis,
+            resume,
+            claims: reanalysis.claims,
+            evidence: reanalysis.evidence,
+            scorecard: reanalysis.scorecard,
+            suggestions,
+            stories: reanalysis.stories,
+            processing: {
+              ...state.analysis.processing,
+              capabilityVersions: mergeLocalReanalysisVersions(
+                state.analysis.processing.capabilityVersions,
+                reanalysis.capabilityVersions,
+              ),
+            },
+          };
+          return {
+            analysis: nextAnalysis,
+            resumeChat: resumeChatAfterRevision(
+              state.resumeChat,
+              nextAnalysis,
+              `已一键应用 ${appliedCount} 条 AI 改写。`,
+            ),
+            selectedSuggestionId:
+              suggestions.find((suggestion) => suggestion.status === "pending")
+                ?.id ?? firstApplied.id,
+            undoStack,
+            ...invalidatedDerivedState(),
+            interviewSessionVersion: state.interviewSessionVersion + 1,
+          };
+        });
+        return appliedCount;
+      },
+      beginResumeChatTurn: (content) => {
+        const normalized = content.trim();
+        if (!normalized || normalized.length > 4_000) return null;
+        let created: ResumeChatMessage | null = null;
+        set((state) => {
+          if (!state.analysis || state.homeNavigationPending) return state;
+          const current = normalizeResumeChatContext(
+            state.resumeChat,
+            state.analysis.resume.id,
+            state.analysis.resume.revision,
+          );
+          created = {
+            id: resumeChatMessageId("user"),
+            role: "user",
+            content: normalized,
+            createdAt: new Date().toISOString(),
+            resumeRevision: state.analysis.resume.revision,
+            suggestionIds: [],
+          };
+          return {
+            resumeChat: ResumeChatContextSchema.parse({
+              ...current,
+              sourceResumeRevision: state.analysis.resume.revision,
+              confirmedFacts: resumeChatConfirmedFacts(
+                current,
+                state.analysis.claims,
+              ),
+              messages: [...current.messages, created].slice(
+                -RESUME_CHAT_MAX_MESSAGES,
+              ),
+            }),
+          };
+        });
+        return created;
+      },
+      completeResumeChatTurn: (userMessageId, response) => {
+        let completed = false;
+        set((state) => {
+          if (
+            !state.analysis ||
+            !state.resumeChat ||
+            state.homeNavigationPending ||
+            !/^resume\.chat@(?:[2-9]|\d{2,})\./.test(response.sourceVersion)
+          ) {
+            return state;
+          }
+          const userMessage = state.resumeChat.messages.find(
+            (message) =>
+              message.id === userMessageId && message.role === "user",
+          );
+          if (!userMessage) return state;
+
+          const stale =
+            userMessage.resumeRevision !== state.analysis.resume.revision;
+          const incoming = response.suggestions.map((suggestion) =>
+            stale ||
+            suggestion.resumeRevision !== state.analysis!.resume.revision ||
+            !suggestionBeforeHashMatches(
+              state.analysis!.resume.ast,
+              suggestion,
+            )
+              ? { ...suggestion, status: "stale" as const }
+              : suggestion,
+          );
+          const incomingById = new Map(incoming.map((item) => [item.id, item]));
+          const suggestions = state.analysis.suggestions.map((item) => {
+            const replacement = incomingById.get(item.id);
+            if (!replacement) return item;
+            incomingById.delete(item.id);
+            return item.status === "accepted" || item.status === "manual"
+              ? item
+              : replacement;
+          });
+          suggestions.push(...incomingById.values());
+          const assistantMessage: ResumeChatMessage = {
+            id: resumeChatMessageId("assistant"),
+            role: "assistant",
+            content: response.reply,
+            createdAt: new Date().toISOString(),
+            resumeRevision: userMessage.resumeRevision,
+            suggestionIds: incoming.map((suggestion) => suggestion.id),
+          };
+          const context = normalizeResumeChatContext(
+            state.resumeChat,
+            state.analysis.resume.id,
+            state.analysis.resume.revision,
+          );
+          completed = true;
+          return {
+            analysis: {
+              ...state.analysis,
+              suggestions,
+              processing: {
+                ...state.analysis.processing,
+                capabilityVersions: {
+                  ...state.analysis.processing.capabilityVersions,
+                  "resume.chat": response.sourceVersion,
+                },
+              },
+            },
+            resumeChat: ResumeChatContextSchema.parse({
+              ...context,
+              sourceResumeRevision: state.analysis.resume.revision,
+              summary: response.summary,
+              confirmedFacts: [
+                ...new Set([
+                  ...resumeChatConfirmedFacts(context, state.analysis.claims),
+                  ...response.confirmedFacts,
+                ]),
+              ].slice(-100),
+              messages: [...context.messages, assistantMessage].slice(
+                -RESUME_CHAT_MAX_MESSAGES,
+              ),
+            }),
+            error: null,
+          };
+        });
+        if (completed) {
+          void saveCurrentSessionToRecent().then(
+            (recentAnalyses) => set({ recentAnalyses }),
+            () => undefined,
+          );
+        }
+        return completed;
+      },
+      clearResumeChat: () => {
+        set((state) =>
+          state.analysis
+            ? {
+                resumeChat: emptyResumeChatContext(
+                  state.analysis.resume.id,
+                  state.analysis.resume.revision,
+                ),
+              }
+            : state,
+        );
+        void saveCurrentSessionToRecent().then(
+          (recentAnalyses) => set({ recentAnalyses }),
+          () => undefined,
+        );
+      },
       confirmClaim: (id, content) =>
         set((state) => {
           if (!state.analysis || state.homeNavigationPending) return state;
@@ -1221,8 +1625,19 @@ export const useAppStore = create<AppState>()(
             ),
             userStatement,
           ];
+          const nextAnalysis = {
+            ...state.analysis,
+            claims,
+            suggestions,
+            evidence,
+          };
           return {
-            analysis: { ...state.analysis, claims, suggestions, evidence },
+            analysis: nextAnalysis,
+            resumeChat: resumeChatAfterRevision(
+              state.resumeChat,
+              nextAnalysis,
+              `已确认事实：${confirmedText}`,
+            ),
             undoStack,
             ...invalidatedDerivedState(),
             interviewSessionVersion: state.interviewSessionVersion + 1,
@@ -1246,6 +1661,11 @@ export const useAppStore = create<AppState>()(
             evidenceGraphChanged(state.analysis, previous);
           return {
             analysis: restored,
+            resumeChat: resumeChatAfterRevision(
+              state.resumeChat,
+              restored,
+              `已撤销到简历版本 ${restored.resume.revision}。`,
+            ),
             selectedSuggestionId:
               restored.suggestions.find((item) => item.status === "pending")
                 ?.id ??
@@ -1636,9 +2056,15 @@ export const useAppStore = create<AppState>()(
             ? record.payload.activeResumeVariantId
             : null;
         const resumePanel =
-          record.payload.resumePanel === "templates"
-            ? "templates"
+          record.payload.resumePanel === "templates" ||
+          record.payload.resumePanel === "chat"
+            ? record.payload.resumePanel
             : "suggestions";
+        const resumeChat = normalizeResumeChatContext(
+          record.payload.resumeChat,
+          analysis.resume.id,
+          analysis.resume.revision,
+        );
 
         set((state) => ({
           stage: "workspace",
@@ -1654,6 +2080,7 @@ export const useAppStore = create<AppState>()(
             record.payload.interviewSetupStage,
           ),
           interviewProgress,
+          resumeChat,
           selectedSuggestionId,
           activeResumeVariantId,
           resumePanel,
@@ -1686,6 +2113,7 @@ export const useAppStore = create<AppState>()(
                 evaluations: [],
                 interviewSetupStage: "intro",
                 interviewProgress: null,
+                resumeChat: null,
                 selectedSuggestionId: null,
                 activeResumeVariantId: null,
                 resumePanel: "suggestions",
@@ -1794,6 +2222,7 @@ export const useAppStore = create<AppState>()(
         evaluations: state.evaluations,
         interviewSetupStage: state.interviewSetupStage,
         interviewProgress: state.interviewProgress,
+        resumeChat: state.resumeChat,
         selectedSuggestionId: state.selectedSuggestionId,
         activeResumeVariantId: state.activeResumeVariantId,
         resumePanel: state.resumePanel,

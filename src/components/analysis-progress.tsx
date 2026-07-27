@@ -7,6 +7,10 @@ import {
   retainAnalysisRequest,
 } from "@/lib/client/analysis-request";
 import { useAppStore } from "@/lib/client/store";
+import {
+  EstimatedProgressBar,
+  estimatedDurations,
+} from "./estimated-progress";
 
 const analysisContents = [
   {
@@ -96,7 +100,13 @@ export function AnalysisProgress() {
             分析完成后会自动进入结果页。复杂扫描页可能需要更长时间。
           </p>
 
-          <div className="mt-8" aria-labelledby="analysis-contents-heading">
+          <EstimatedProgressBar
+            expectedDurationMs={estimatedDurations.resumeAnalysis}
+            label="简历分析预估进度"
+            className="mt-6 max-w-sm"
+          />
+
+          <div className="mt-7" aria-labelledby="analysis-contents-heading">
             <h2
               id="analysis-contents-heading"
               className="px-3 text-xs font-medium text-muted"

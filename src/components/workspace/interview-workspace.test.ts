@@ -392,6 +392,9 @@ describe("InterviewWorkspace session identity", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
     await waitFor(() => expect(apiMocks.evaluateAnswer).toHaveBeenCalledOnce());
+    expect(
+      screen.getByRole("progressbar", { name: "回答评审预估进度" }),
+    ).toBeInTheDocument();
 
     const replacement = planFixture("替换后");
     replacement.questions[0] = {
@@ -431,6 +434,9 @@ describe("InterviewWorkspace session identity", () => {
     await waitFor(() =>
       expect(apiMocks.createInterviewPlan).toHaveBeenCalledOnce(),
     );
+    expect(
+      screen.getByRole("progressbar", { name: "面试题生成预估进度" }),
+    ).toBeInTheDocument();
     act(() => useAppStore.getState().setAnalysis(analysisFixture()));
     await act(async () => {
       finishPlan?.(planFixture("过期计划"));

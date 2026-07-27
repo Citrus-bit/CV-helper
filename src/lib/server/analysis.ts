@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { invokeBaselineCapability } from "@/lib/baseline";
 import type { CapabilityContext, DataScope } from "@/lib/capabilities";
+import { AI_CAPABILITY_TIMEOUT_MS } from "@/lib/capabilities/catalog";
 import { AnalysisBundleSchema, type AnalysisBundle } from "@/lib/client/contracts";
 import {
   ResumeASTSchema,
@@ -384,6 +385,7 @@ export async function analyzeParsedResume(
     resume.locale,
     ["source_blocks", "resume_ast", "evidence_graph"],
     options.signal,
+    AI_CAPABILITY_TIMEOUT_MS,
   );
   const evidenceResult = await invokeBaselineCapability("evidence.mine", { resume }, context);
   const assessmentResults = await Promise.all(
@@ -401,11 +403,13 @@ export async function analyzeParsedResume(
   const claims = assessedClaims.map((claim) =>
     conflictingIds.has(claim.id) ? { ...claim, status: "conflicting" as const, confidence: Math.min(claim.confidence, 0.65) } : claim,
   );
-  const [scoreResult, suggestionResult, atsResult] = await Promise.all([
-    invokeCapability("resume.score", { resume, claims }, context),
-    invokeCapability("resume.suggest", { resume, claims }, context),
-    invokeBaselineCapability("resume.atsAudit", { resume }, context),
-  ]);
+  const atsResultPromise = invokeBaselineCapability("resume.atsAudit", { resume }, context);
+  // Provider gateways commonly enforce token budgets across concurrent requests.
+  // Keep the two large structured completions serial so one analysis cannot
+  // reject both enhancements at once while the local ATS audit runs in parallel.
+  const scoreResult = await invokeCapability("resume.score", { resume, claims }, context);
+  const suggestionResult = await invokeCapability("resume.suggest", { resume, claims }, context);
+  const atsResult = await atsResultPromise;
   const storyResults = await Promise.all(
     claims.slice(0, 8).map((claim) =>
       invokeBaselineCapability(

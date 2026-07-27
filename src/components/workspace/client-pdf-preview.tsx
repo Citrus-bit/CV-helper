@@ -2,6 +2,10 @@
 
 import { AlertCircle, LoaderCircle, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import {
+  EstimatedProgressText,
+  estimatedDurations,
+} from "../estimated-progress";
 import { renderPdfFirstPage } from "./pdf-first-page-renderer";
 
 type ClientPdfPreviewProps = {
@@ -70,7 +74,12 @@ export function ClientPdfPreview({
               size={24}
               className="mx-auto mb-3 animate-spin text-brand"
             />
-            正在验证新版 PDF 首屏
+            <p>正在验证新版 PDF 首屏</p>
+            <EstimatedProgressText
+              expectedDurationMs={estimatedDurations.pdfVerification}
+              label="PDF 首屏验证预估进度"
+              className="mt-1 min-w-0 text-center text-xs font-normal"
+            />
           </div>
         </div>
       ) : null}

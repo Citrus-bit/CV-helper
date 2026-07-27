@@ -1,5 +1,18 @@
 # 进度日志
 
+## 会话：2026-07-24（阶段 12 本地持久化的简历 AI 编辑对话）
+
+### 阶段 12：本地持久化的简历 AI 编辑对话
+
+- **状态：** complete
+- 用户明确要求简历修改必须支持持续 AI 对话，并由本地管理上下文。
+- 已恢复规划文件，完成 UI/UX 设计系统、长任务反馈、无障碍与 Next.js 约束检索。
+- 已完成消息/摘要/事实/修改/revision 契约、`resume.chat` 与 `/api/resume-chat`、PII 投影、严格输出校验、7 分钟预算和本地有界上下文持久化。
+- 审阅区已接入持续追问、失败重试、0–99% 估算进度、逐条/批量应用和旧 revision 标记；真实 AI 不可用时返回错误，不以固定 baseline 话术冒充回复。
+- 正式文档与统一 Skill 套件已更新为 31 项 Capability 和 10 项 provider 白名单；共享 map 31/31、无重复，`resume.chat` 归属证据评审 Skill，两个修改后 Skill 与插件官方校验通过。
+- 聚焦回归 5 个文件 / 48 项通过；最终 `pnpm typecheck`、`pnpm lint`、50 个文件 / 279 项 `pnpm test`、`pnpm build` 与 `git diff --check` 全部通过。
+- 浏览器使用真实 provider 完成两轮上下文对话；四条消息与建议刷新后恢复，应用建议使 revision 1→2 并标记旧回复，第二次刷新仍保留版本、消息和已应用状态，console 无 error/warn。
+
 ## 会话：2026-07-23（阶段 10 最终作品独立终验）
 
 ### 阶段 10：最终作品独立终验
@@ -75,7 +88,7 @@
 - 已完成增量结构审计并实施：移动端工作台已移除；AI provider gateway 已接入分析、JD 与面试能力，未配置新 Key 时仍运行 baseline。
 - 用户随后暂停 Vercel 部署准备；已停止 Hosted/Blob 实现并要求清除本轮 Vercel 专属依赖，只保留本地运行路径。
 - 已完成一次全仓旧 Key 泄漏扫描（无命中）。
-- 已同步三份长期文档中的本地版边界：1024px 桌面门、IndexedDB 24 小时历史、七项 AI provider 能力、两项 baseline 改写接口与确定性安全硬门。
+- 已同步三份长期文档中的本地版边界：1024px 桌面门、IndexedDB 24 小时历史、当前十项 AI provider 能力与确定性安全硬门。
 - 已清除 `@vercel/blob`，本轮不实施 Vercel；本地 Web 已重建为镜像 `sha256:b0353ce369df9bfbb8efa9711b51d4bae5dc45a0e2e7efd9884f097439419e03`，当前运行于 `127.0.0.1:3000`。
 - 当前并行合并态已通过一次 `pnpm typecheck`；最近记录已补显式 AI/规则摘要来源和无长度变化时的 PDF 剥离持久化。
 - 桌面边界/历史/客户端会话 4 个新增测试文件共 15 项通过，覆盖恢复、删除、清空、v2→v3、请求取消、PDF 重新附加和窄屏不挂载；全仓 ESLint 通过。
@@ -125,7 +138,7 @@
   - 初始化 Git、Next.js/TypeScript 配置并安装依赖。
   - 下载项目本地 Typst 0.15.1，并确认 PingFang SC 等中文字体可用。
   - 后续通过 Homebrew 安装 Docker CLI、`docker-compose`、Colima/Lima，并启动 Colima Docker context。
-  - 完成 `.codex/PROJECT.md`、PRD、架构文档和 30 项 Skill Registry。
+  - 完成 `.codex/PROJECT.md`、PRD、架构文档和当前 31 项 Skill Registry。
   - 创建 60 个原创双语面试问题单元并通过结构校验。
 - 创建/修改的文件：
   - `task_plan.md`
@@ -229,8 +242,8 @@
 
 | 问题           | 答案                                           |
 | -------------- | ---------------------------------------------- |
-| 我在哪里？     | 阶段 11：统一 Skill 套件                       |
-| 我要去哪里？   | 完成统一插件入口与七个可验证的开发期 Skill     |
+| 我在哪里？     | 阶段 12：本地持久化的简历 AI 编辑对话（完成）  |
+| 我要去哪里？   | 保持当前工作树可提交，等待用户决定提交或继续验收 |
 | 目标是什么？   | 交付可运行、可扩展、证据约束的简历分析助手 MVP |
 | 我学到了什么？ | 见 `findings.md`                               |
 | 我做了什么？   | 见上方记录                                     |
@@ -243,10 +256,10 @@
 - 计划采用一个编排入口加六个领域 Skill，共享 Capability 映射、安全边界和验收协议。
 - 已用官方脚手架创建插件入口和七个 Skill 目录；其中三个 Skill 完整初始化，四个因中文短描述不足 25 字符只生成了 `SKILL.md`，后续改用元数据生成器补齐，避免覆盖目录。
 - 元数据生成器直接读取 frontmatter 时发现系统 Python 缺少 PyYAML；将使用其显式 `--name` 参数继续，不为项目引入无关依赖。
-- 已完成统一插件 manifest、总入口 Skill、30 项 Capability 单一映射和运行时扩展协议；总入口按文档→证据→岗位/文案→排版→面试→安全顺序路由跨域任务。
+- 已完成统一插件 manifest、总入口 Skill、31 项 Capability 单一映射和运行时扩展协议；总入口按文档→证据→岗位/文案→排版→面试→安全顺序路由跨域任务。
 - 已确认 document-worker 项目虚拟环境包含 PyYAML 6.0.3，后续 Skill 校验使用该隔离环境，不修改系统 Python。
 - 已完成六个领域 Skill 及各自 Rubric：文档智能、证据评审、岗位与中英文文案、Typst 排版导出、面试与语音、安全与评测；全部通过官方 `quick_validate.py`，插件通过 `validate_plugin.py`。
-- Capability map 与运行时源码程序化比对为 30/30，无缺失、额外或重复归属；全部相对链接有效，frontmatter 仅含 `name`/`description`，无 TODO、动态脚本入口、MCP 或网络权限声明。
+- Capability map 与运行时源码程序化比对为 31/31，无缺失、额外或重复归属；全部相对链接有效，frontmatter 仅含 `name`/`description`，无 TODO、动态脚本入口、MCP 或网络权限声明。
 - 两轮独立 forward test 覆盖 mixed PDF 缺陷、导出审计失败和外部 Skill 启用审查，并据此澄清页面分类/抽取模式、OCR 编排、自动/人工导出评分、下载授权、provider host allowlist、影子计划和领域 Rubric 叠加规则。
 - 独立审查发现并闭环两项契约边界：`document.ocr` v1 仍固定 `tesseract.js` engine，非 Tesseract extension 需先版本化 Schema；`pii.redact` 当前不输出姓名 detection，姓名与上下文 PII 由 provider projection 外围控制。
 - 已同步 `.codex/PROJECT.md`、`docs/ARCHITECTURE.md`、`docs/PRD.md` 和根 README；最终 Skill/插件验证、敏感占位扫描、链接检查及 `git diff --check` 通过。本阶段未安装到个人 marketplace、未暂存、未提交。
@@ -259,7 +272,7 @@
 
 ### 2026-07-23 阶段 9 完整交付审计（完成）
 
-- 需求矩阵、组件运行时和 Git 交付审计已完成；30 个 Capability ID 均有 baseline。
+- 需求矩阵、组件运行时和 Git 交付审计已完成；当前 31 个 Capability ID 均有 baseline 契约。
 - 已修复未确认建议的后续模块门控、撤销栈持久化 PDF/预览泄漏、“不归档”被首页刷新反转，以及 PDF 字体元数据在 Web Schema 中丢失。
 - 面试设备检查/追问进度与 JD 元信息/草稿持久化已完成；全量 Web、worker、构建、容器、安全与桌面浏览器回归均已通过。
 - 面试设备检查与 `InterviewProgress` v1 已完成；主问题、两轮追问、追问评审和文字草稿可跨模块、返回首页和历史恢复继续，并按简历 revision/计划指纹防串状态。

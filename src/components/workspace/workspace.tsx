@@ -15,6 +15,10 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { useEffect, useRef, useState } from "react";
 import { useAppStore, type WorkspaceModule } from "@/lib/client/store";
+import {
+  EstimatedProgressText,
+  estimatedDurations,
+} from "../estimated-progress";
 import { ResumeWorkspace } from "./resume-workspace";
 import { JobWorkspace } from "./job-workspace";
 import { InterviewWorkspace } from "./interview-workspace";
@@ -270,7 +274,17 @@ export function Workspace() {
                       onClick={() => void deleteCurrentSession()}
                       className="min-h-11 rounded-[8px] bg-danger px-4 text-sm font-medium text-white hover:bg-[#a82b26]"
                     >
-                      {deletingCurrent ? "正在删除" : "删除"}
+                      {deletingCurrent ? (
+                        <span className="inline-flex items-center gap-2">
+                          正在删除
+                          <EstimatedProgressText
+                            expectedDurationMs={estimatedDurations.localOperation}
+                            label="当前会话删除预估进度"
+                          />
+                        </span>
+                      ) : (
+                        "删除"
+                      )}
                     </button>
                   </div>
                   {deleteError ? (
@@ -349,8 +363,12 @@ export function Workspace() {
           className="fixed inset-0 z-50 grid place-items-center bg-white/55 backdrop-blur-[2px]"
           role="status"
         >
-          <span className="rounded-[8px] bg-white px-4 py-3 text-sm font-medium shadow-panel">
-            正在保存当前会话
+          <span className="inline-flex min-w-64 items-center justify-between gap-3 rounded-[8px] bg-white px-4 py-3 text-sm font-medium shadow-panel">
+            <span>正在保存当前会话</span>
+            <EstimatedProgressText
+              expectedDurationMs={estimatedDurations.localOperation}
+              label="当前会话保存预估进度"
+            />
           </span>
         </div>
       ) : null}

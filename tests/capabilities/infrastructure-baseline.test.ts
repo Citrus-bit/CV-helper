@@ -100,9 +100,9 @@ beforeAll(async () => {
 });
 
 describe("infrastructure capability contracts", () => {
-  it("publishes JSON schemas and a baseline for all 30 capabilities", () => {
+  it("publishes JSON schemas and a baseline for all 31 capabilities", () => {
     const registry = createDefaultCapabilityRegistry();
-    expect(CAPABILITY_IDS).toHaveLength(30);
+    expect(CAPABILITY_IDS).toHaveLength(31);
     for (const id of CAPABILITY_IDS) {
       const description = registry.describe(id);
       expect(description.available, id).toBe(true);

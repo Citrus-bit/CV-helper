@@ -5,7 +5,7 @@ import { isIP } from "node:net";
 
 import { isProviderGatewayConfigured } from "./ai/provider-gateway";
 
-export type AiRateLimitKind = "analysis" | "jd" | "interview";
+export type AiRateLimitKind = "analysis" | "chat" | "jd" | "interview";
 
 export type RateLimitDecision = Readonly<{
   allowed: boolean;
@@ -57,12 +57,14 @@ export class AiRateLimitError extends Error {
 
 const DEFAULT_LIMITS: Record<AiRateLimitKind, number> = {
   analysis: 10,
+  chat: 60,
   jd: 20,
   interview: 60,
 };
 
 const limitEnvironmentNames: Record<AiRateLimitKind, string> = {
   analysis: "AI_RATE_LIMIT_ANALYSIS_PER_HOUR",
+  chat: "AI_RATE_LIMIT_CHAT_PER_HOUR",
   jd: "AI_RATE_LIMIT_JD_PER_HOUR",
   interview: "AI_RATE_LIMIT_INTERVIEW_PER_HOUR",
 };

@@ -11,6 +11,7 @@ export const CAPABILITY_IDS = [
   "claim.conflict",
   "resume.score",
   "resume.suggest",
+  "resume.chat",
   "resume.atsAudit",
   "jd.parse",
   "job.match",
@@ -38,6 +39,7 @@ export const CAPABILITY_IDS = [
 export const PROVIDER_GATEWAY_CAPABILITY_IDS = [
   "resume.score",
   "resume.suggest",
+  "resume.chat",
   "jd.parse",
   "job.match",
   "copy.rewrite.zh",

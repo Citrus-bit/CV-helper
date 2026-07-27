@@ -18,6 +18,11 @@ import {
   SourceBlockSchema,
   SuggestionSchema,
 } from "@/lib/domain";
+import {
+  ResumeChatInputSchema,
+  ResumeChatOutputSchema,
+  type ResumeChatInput,
+} from "@/lib/resume-chat";
 
 export const Base64DataSchema = z.base64().min(4);
 
@@ -314,6 +319,8 @@ export const ResumeSuggestInputSchema = z.object({
 });
 export const ResumeSuggestOutputSchema = z.object({ suggestions: z.array(SuggestionSchema) });
 
+export { ResumeChatInputSchema, ResumeChatOutputSchema };
+
 export const ResumeAtsAuditInputSchema = z.object({ resume: ResumeDocumentSchema });
 export const ResumeAtsAuditOutputSchema = AtsAuditSchema.omit({
   sourceVersion: true,
@@ -481,6 +488,7 @@ export type ClaimAssessInput = z.infer<typeof ClaimAssessInputSchema>;
 export type ClaimConflictInput = z.infer<typeof ClaimConflictInputSchema>;
 export type ResumeScoreInput = z.infer<typeof ResumeScoreInputSchema>;
 export type ResumeSuggestInput = z.infer<typeof ResumeSuggestInputSchema>;
+export type { ResumeChatInput };
 export type ResumeAtsAuditInput = z.infer<typeof ResumeAtsAuditInputSchema>;
 export type JdParseInput = z.infer<typeof JdParseInputSchema>;
 export type JobMatchInput = z.infer<typeof JobMatchInputSchema>;
@@ -515,6 +523,7 @@ export type BaselineCapabilityInputMap = {
   "claim.conflict": ClaimConflictInput;
   "resume.score": ResumeScoreInput;
   "resume.suggest": ResumeSuggestInput;
+  "resume.chat": ResumeChatInput;
   "resume.atsAudit": ResumeAtsAuditInput;
   "jd.parse": JdParseInput;
   "job.match": JobMatchInput;
@@ -548,6 +557,7 @@ export type BaselineCapabilityOutputMap = {
   "claim.conflict": z.infer<typeof ClaimConflictOutputSchema>;
   "resume.score": z.infer<typeof ResumeScoreOutputSchema>;
   "resume.suggest": z.infer<typeof ResumeSuggestOutputSchema>;
+  "resume.chat": z.infer<typeof ResumeChatOutputSchema>;
   "resume.atsAudit": z.infer<typeof ResumeAtsAuditOutputSchema>;
   "jd.parse": z.infer<typeof JdParseOutputSchema>;
   "job.match": z.infer<typeof JobMatchOutputSchema>;

@@ -16,6 +16,10 @@ import {
 } from "lucide-react";
 import { matchJob } from "@/lib/client/api";
 import { useAppStore } from "@/lib/client/store";
+import {
+  EstimatedProgressText,
+  estimatedDurations,
+} from "../estimated-progress";
 
 const statusMeta = {
   met: { label: "已覆盖", icon: Check, className: "bg-[#eef8f2] text-success" },
@@ -240,7 +244,18 @@ export function JobWorkspace() {
             ) : (
               <ArrowRight aria-hidden="true" size={18} />
             )}
-            {mutation.isPending ? "正在建立证据矩阵" : "分析岗位匹配"}
+            {mutation.isPending ? (
+              <>
+                <span>正在建立证据矩阵</span>
+                <EstimatedProgressText
+                  expectedDurationMs={estimatedDurations.jobMatch}
+                  label="岗位匹配预估进度"
+                  className="text-white/85"
+                />
+              </>
+            ) : (
+              "分析岗位匹配"
+            )}
           </button>
           {mutation.isError ? (
             <p

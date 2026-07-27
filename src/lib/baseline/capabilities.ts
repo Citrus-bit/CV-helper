@@ -46,6 +46,8 @@ import {
   QuestionRetrieveOutputSchema,
   ResumeAtsAuditInputSchema,
   ResumeAtsAuditOutputSchema,
+  ResumeChatInputSchema,
+  ResumeChatOutputSchema,
   ResumeInterviewCheckInputSchema,
   ResumeInterviewCheckOutputSchema,
   ResumeScoreInputSchema,
@@ -69,6 +71,7 @@ import {
   type PromptGuardInput,
   type QuestionRetrieveInput,
   type ResumeAtsAuditInput,
+  type ResumeChatInput,
   type ResumeInterviewCheckInput,
   type ResumeScoreInput,
   type ResumeSuggestInput,
@@ -415,6 +418,28 @@ export const resumeScoreCapability = defineCapability(
       evidenceReferences: input.resume.sourceBlocks.map((block) => block.id),
     };
   },
+);
+
+export const resumeChatCapability = defineCapability(
+  "resume.chat",
+  ResumeChatInputSchema,
+  ResumeChatOutputSchema,
+  (input: ResumeChatInput) => ({
+    data: {
+      reply: "AI 编辑对话当前不可用。",
+      summary: input.summary.trim() || "尚未建立 AI 编辑对话摘要。",
+      confirmedFacts: [],
+      suggestions: [],
+    },
+    confidence: 0,
+    evidenceReferences: [],
+    warnings: [
+      {
+        code: "AI_CHAT_UNAVAILABLE",
+        message: "AI 编辑对话需要已配置的外部模型，不使用本地话术代替。",
+      },
+    ],
+  }),
 );
 
 function conservativeRewrite(
@@ -1553,6 +1578,7 @@ export const BUILTIN_BASELINE_CAPABILITIES = [
   claimConflictCapability,
   resumeScoreCapability,
   resumeSuggestCapability,
+  resumeChatCapability,
   resumeAtsAuditCapability,
   jdParseCapability,
   jobMatchCapability,

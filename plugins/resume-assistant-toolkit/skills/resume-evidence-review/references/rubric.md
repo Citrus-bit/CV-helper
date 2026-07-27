@@ -1,6 +1,6 @@
 # 简历证据评审量表
 
-使用本量表评审 `evidence.mine`、`claim.assess`、`claim.conflict`、`resume.score`、`resume.suggest` 和 `resume.atsAudit`。先执行事实安全硬门，再计算质量分；硬门失败时禁止启用候选 Skill 或接受其建议。
+使用本量表评审 `evidence.mine`、`claim.assess`、`claim.conflict`、`resume.score`、`resume.suggest`、`resume.chat` 和 `resume.atsAudit`。先执行事实安全硬门，再计算质量分；硬门失败时禁止启用候选 Skill 或接受其建议。`resume.chat` 还必须验证上下文裁剪、revision 绑定、刷新恢复，以及真实 AI 不可用时显式失败而非返回固定话术。
 
 ## 导航
 

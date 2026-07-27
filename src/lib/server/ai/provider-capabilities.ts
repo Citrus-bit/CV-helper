@@ -17,6 +17,8 @@ import {
   JobMatchOutputSchema,
   ResumeScoreInputSchema,
   ResumeScoreOutputSchema,
+  ResumeChatInputSchema,
+  ResumeChatOutputSchema,
   ResumeSuggestInputSchema,
   ResumeSuggestOutputSchema,
   type BaselineCapabilityInputMap,
@@ -55,7 +57,7 @@ export const PROVIDER_GATEWAY_MANIFEST: SkillManifest = {
 };
 
 function projectorForInput<K extends ProviderGatewayCapabilityId>(id: K, input: GatewayInputMap[K]): PiiProjector {
-  if (id !== "resume.score" && id !== "resume.suggest") return new PiiProjector();
+  if (id !== "resume.score" && id !== "resume.suggest" && id !== "resume.chat") return new PiiProjector();
   const resumeInput = input as GatewayInputMap["resume.score"];
   return new PiiProjector({
     names: [resumeInput.resume.ast.contact.name],
@@ -87,7 +89,10 @@ function minimalClaim(claim: Claim, sanitize: (value: string) => string) {
 }
 
 function minimalResume(
-  input: GatewayInputMap["resume.score"] | GatewayInputMap["resume.suggest"],
+  input:
+    | GatewayInputMap["resume.score"]
+    | GatewayInputMap["resume.suggest"]
+    | GatewayInputMap["resume.chat"],
   projector: PiiProjector,
 ) {
   const sanitize = (value: string) => projector.redact(value);
@@ -165,6 +170,23 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
     case "resume.score":
     case "resume.suggest":
       return minimalResume(input as GatewayInputMap["resume.score"], projector);
+    case "resume.chat": {
+      const chatInput = input as GatewayInputMap["resume.chat"];
+      return {
+        ...minimalResume(chatInput, projector),
+        conversation: {
+          summary: sanitize(chatInput.summary),
+          confirmedFacts: chatInput.confirmedFacts.map(sanitize),
+          recentChanges: chatInput.recentChanges.map(sanitize),
+          recentMessages: chatInput.recentMessages.map((message) => ({
+            role: message.role,
+            content: sanitize(message.content),
+            resumeRevision: message.resumeRevision,
+          })),
+          latestUserMessage: sanitize(chatInput.userMessage),
+        },
+      };
+    }
     case "jd.parse": {
       const jobInput = input as GatewayInputMap["jd.parse"];
       return {
@@ -293,13 +315,27 @@ function sourceIdsForPath(ast: ResumeAST, path: string): string[] {
   return entryMatch ? section.entries[Number(entryMatch[1])]?.sourceBlockIds ?? [] : section.sourceBlockIds;
 }
 
-function unsupportedKeywords(candidate: string, supportedText: string): string[] {
-  const supported = new Set(extractKeywords(supportedText).map((keyword) => keyword.toLowerCase()));
-  return extractKeywords(candidate).filter((keyword) => !supported.has(keyword.toLowerCase()));
-}
-
 function normalizedGroundingText(value: string): string {
   return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+}
+
+function reconcileUniqueSubstringRewrite(
+  current: string,
+  original: string,
+  replacement: string,
+): string | undefined {
+  const normalizedCurrent = current.normalize("NFKC");
+  const normalizedOriginal = original.normalize("NFKC");
+  if (
+    !normalizedOriginal ||
+    normalizedCurrent.length !== current.length ||
+    normalizedOriginal.length !== original.length
+  ) {
+    return undefined;
+  }
+  const start = normalizedCurrent.indexOf(normalizedOriginal);
+  if (start < 0 || normalizedCurrent.indexOf(normalizedOriginal, start + 1) >= 0) return undefined;
+  return `${current.slice(0, start)}${replacement}${current.slice(start + original.length)}`;
 }
 
 function isGroundedFragment(fragment: string, source: string): boolean {
@@ -384,10 +420,15 @@ function validateCopyRewriteOutput(
 }
 
 function validateSuggestionOutput(
-  input: GatewayInputMap["resume.suggest"],
+  input: GatewayInputMap["resume.suggest"] | GatewayInputMap["resume.chat"],
   output: GatewayOutputMap["resume.suggest"],
+  confirmedFacts: readonly string[] = [],
 ): GatewayOutputMap["resume.suggest"] {
-  if (output.suggestions.length > 40) throw new ProviderGatewayError("INVALID_RESPONSE");
+  const reject = (reason: string): never => {
+    console.warn("ai_resume_suggestion_validation_rejected", { reason });
+    throw new ProviderGatewayError("INVALID_RESPONSE");
+  };
+  if (output.suggestions.length > 40) reject("TOO_MANY_SUGGESTIONS");
   const sourceBlockIds = new Set(input.resume.sourceBlocks.filter((block) => block.role !== "contact").map((block) => block.id));
   const claims = new Map(input.claims.map((claim) => [claim.id, claim]));
   const seenPaths = new Set<string>();
@@ -399,24 +440,34 @@ function validateSuggestionOutput(
       suggestion.sourceBlockIds.length + suggestion.claimIds.length === 0 ||
       suggestion.patches.length !== expectedPatchCount
     ) {
-      throw new ProviderGatewayError("INVALID_RESPONSE");
+      reject("INVALID_REFERENCE_OR_PATCH_COUNT");
     }
     let original = suggestion.originalText;
+    let reconciledPatchValue: string | undefined;
     for (const patch of suggestion.patches) {
       if (patch.operation !== "replace" || typeof patch.value !== "string" || seenPaths.has(patch.path)) {
-        throw new ProviderGatewayError("INVALID_RESPONSE");
+        reject("INVALID_OR_DUPLICATE_PATCH");
       }
-      const current = resolveStringPath(input.resume.ast, patch.path);
-      if (current === undefined || current !== suggestion.originalText) {
-        throw new ProviderGatewayError("INVALID_RESPONSE");
-      }
+      const replacement =
+        typeof patch.value === "string"
+          ? patch.value
+          : reject("PATCH_VALUE_NOT_TEXT");
+      const current =
+        resolveStringPath(input.resume.ast, patch.path) ??
+        reject("UNKNOWN_PATCH_PATH");
+      const reconciledValue =
+        reconcileUniqueSubstringRewrite(
+          current,
+          suggestion.originalText,
+          replacement,
+        ) ?? reject("ORIGINAL_TEXT_NOT_UNIQUE_IN_TARGET");
       const targetSourceIds = sourceIdsForPath(input.resume.ast, patch.path);
       const citedClaimSourceIds = suggestion.claimIds.flatMap((id) => claims.get(id)?.sourceBlockIds ?? []);
       if (
         targetSourceIds.length > 0 &&
         ![...suggestion.sourceBlockIds, ...citedClaimSourceIds].some((id) => targetSourceIds.includes(id))
       ) {
-        throw new ProviderGatewayError("INVALID_RESPONSE");
+        reject("CITATION_NOT_LINKED_TO_TARGET");
       }
       original = current;
       seenPaths.add(patch.path);
@@ -431,29 +482,37 @@ function validateSuggestionOutput(
       const supportedText = [
         current,
         ...targetClaims.map((claim) => claim.text),
+        ...confirmedFacts,
       ].join(" ");
-      const introducedNumbers = numericTokens(patch.value).filter((number) => !numericTokens(supportedText).includes(number));
-      const introducedKeywords = unsupportedKeywords(patch.value, supportedText);
-      if (introducedNumbers.length || introducedKeywords.length) throw new ProviderGatewayError("INVALID_RESPONSE");
+      const introducedNumbers = numericTokens(reconciledValue).filter((number) => !numericTokens(supportedText).includes(number));
+      const supportedLexemes = factualLexemes(supportedText);
+      const introducedLexemes = [...factualLexemes(reconciledValue)].filter((lexeme) => !supportedLexemes.has(lexeme));
+      if (introducedNumbers.length || introducedLexemes.length) {
+        reject(introducedNumbers.length ? "INTRODUCED_NUMBER" : "INTRODUCED_FACT_LEXEME");
+      }
       const hasUnsupportedClaim = suggestion.claimIds.some((id) => {
         const claim = claims.get(id);
         return !claim || !validFactClaim(claim);
       });
-      if ((suggestion.factRisk === "medium" || suggestion.factRisk === "high") && hasUnsupportedClaim && patch.value !== current) {
-        throw new ProviderGatewayError("INVALID_RESPONSE");
+      if ((suggestion.factRisk === "medium" || suggestion.factRisk === "high") && hasUnsupportedClaim && reconciledValue !== current) {
+        reject("UNSUPPORTED_CLAIM_USED_IN_REWRITE");
       }
-      if ((suggestion.kind === "needs_proof" || suggestion.kind === "ask_user") && patch.value !== current) {
-        throw new ProviderGatewayError("INVALID_RESPONSE");
+      if ((suggestion.kind === "needs_proof" || suggestion.kind === "ask_user") && reconciledValue !== current) {
+        reject("UNVERIFIED_SUGGESTION_CHANGES_TEXT");
       }
-      if (suggestion.kind === "rewrite" && suggestion.proposedText !== patch.value) {
-        throw new ProviderGatewayError("INVALID_RESPONSE");
+      if (suggestion.kind === "rewrite" && suggestion.proposedText !== replacement) {
+        reject("PROPOSED_TEXT_PATCH_MISMATCH");
       }
+      reconciledPatchValue = reconciledValue;
     }
     if (suggestion.kind === "use_as_is" && suggestion.proposedText !== undefined) {
-      throw new ProviderGatewayError("INVALID_RESPONSE");
+      reject("USE_AS_IS_HAS_PROPOSED_TEXT");
     }
     return {
       ...suggestion,
+      originalText: original,
+      proposedText: suggestion.kind === "rewrite" ? reconciledPatchValue : suggestion.proposedText,
+      patches: suggestion.patches.map((patch) => ({ ...patch, value: reconciledPatchValue })),
       id: stableId("suggestion-ai", `${input.resume.id}:${input.resume.revision}:${suggestion.kind}:${original}:${suggestion.patches[0]?.path ?? "none"}`),
       resumeRevision: input.resume.revision,
       beforeHash: stableId("hash", original),
@@ -483,7 +542,6 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
         ["language", 15],
       ]);
       const groundedResume = resumeGroundingCorpus(scoreInput, projector);
-      const groundedNumbers = numericTokens(groundedResume);
       if (
         score.resumeId !== scoreInput.resume.id ||
         score.resumeRevision !== scoreInput.resume.revision ||
@@ -491,16 +549,12 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
         score.dimensions.some((dimension) => expectedMax.get(dimension.id) !== dimension.maxScore) ||
         score.dimensions.some(
           (dimension) =>
-            dimension.score > dimension.maxScore ||
             dimension.label.length > 80 ||
             dimension.evidence.length > 8 ||
             dimension.deductions.length > 8 ||
-            [...dimension.evidence, ...dimension.deductions].some((item) => item.length > 500) ||
-            dimension.evidence.some((evidence) => !isGroundedFragment(evidence, groundedResume)),
+            [...dimension.evidence, ...dimension.deductions].some((item) => item.length > 500),
         ) ||
-        score.summary.length > 1_000 ||
-        numericTokens(score.summary).some((number) => !groundedNumbers.includes(number)) ||
-        Math.abs(score.total - score.dimensions.reduce((sum, dimension) => sum + dimension.score, 0)) > 0.2
+        score.summary.length > 1_000
       ) {
         throw new ProviderGatewayError("INVALID_RESPONSE");
       }
@@ -523,21 +577,52 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
               ["language", "语言"],
             ],
       );
-      const ordered = [...score.dimensions].sort(
+      const dimensions = score.dimensions.map((dimension) => ({
+        ...dimension,
+        score: Math.min(dimension.score, dimension.maxScore),
+        evidence: dimension.evidence.filter((evidence) => isGroundedFragment(evidence, groundedResume)),
+        label: dimensionLabels.get(dimension.id)!,
+      }));
+      const ordered = [...dimensions].sort(
         (left, right) => right.score / right.maxScore - left.score / left.maxScore,
       );
       const strongest = dimensionLabels.get(ordered[0].id)!;
       const weakest = dimensionLabels.get(ordered.at(-1)!.id)!;
       return {
         ...score,
-        dimensions: score.dimensions.map((dimension) => ({
-          ...dimension,
-          label: dimensionLabels.get(dimension.id)!,
-        })),
+        total: dimensions.reduce((sum, dimension) => sum + dimension.score, 0),
+        dimensions,
         summary:
           scoreInput.resume.locale === "en-US"
             ? `The resume is relatively stronger in ${strongest}; prioritize improving ${weakest}.`
             : `当前简历在${strongest}维度相对较好，建议优先改善${weakest}。`,
+      } as GatewayOutputMap[K];
+    }
+    case "resume.chat": {
+      const chatInput = input as GatewayInputMap["resume.chat"];
+      const chatOutput = output as GatewayOutputMap["resume.chat"];
+      const projectedUserMessage = projector.redact(chatInput.userMessage);
+      const confirmedFacts = chatOutput.confirmedFacts.filter(
+        (fact) => projectedUserMessage.includes(fact),
+      );
+      if (
+        confirmedFacts.length !== chatOutput.confirmedFacts.length ||
+        new Set(confirmedFacts).size !== confirmedFacts.length ||
+        chatOutput.reply.length > 6_000 ||
+        chatOutput.summary.length > 4_000 ||
+        chatOutput.suggestions.length > 8
+      ) {
+        throw new ProviderGatewayError("INVALID_RESPONSE");
+      }
+      const validatedSuggestions = validateSuggestionOutput(
+        chatInput,
+        { suggestions: chatOutput.suggestions },
+        [...chatInput.confirmedFacts, ...confirmedFacts],
+      );
+      return {
+        ...chatOutput,
+        confirmedFacts,
+        suggestions: validatedSuggestions.suggestions,
       } as GatewayOutputMap[K];
     }
     case "resume.suggest":
@@ -694,7 +779,7 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
         evaluation.strengths.length > 8 ||
         evaluation.improvements.length > 8 ||
         [...evaluation.strengths, ...evaluation.improvements].some((item) => item.length > 500) ||
-        (evaluation.followUpQuestion !== undefined && !answerInput.question.followUps.includes(evaluation.followUpQuestion)) ||
+        (evaluation.followUpQuestion !== undefined && !evaluation.followUpQuestion.trim()) ||
         Math.abs(evaluation.overallScore - dimensionTotal) > 0.2
       ) {
         throw new ProviderGatewayError("INVALID_RESPONSE");
@@ -732,9 +817,32 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
   }
 }
 
-const instructions: Record<ProviderGatewayCapabilityId, string> = {
-  "resume.score": "Score only the supplied resume content. Evidence strings must be grounded in supplied sections or source blocks.",
-  "resume.suggest": "Every suggestion must cite supplied sourceBlockIds or claimIds and use at most one replace JSON Pointer patch targeting an existing resume text field. Never add unsupported numbers or facts.",
+export const providerInstructions: Record<ProviderGatewayCapabilityId, string> = {
+  "resume.score": [
+    "Score only the supplied resume content.",
+    "Return exactly these six dimensions and maxima: impact 25, completeness 15, clarity 15, structure 15, ats 15, language 15.",
+    "Each score must be between zero and its dimension maximum, and total must equal the sum of all six scores.",
+    "Every evidence string must be an exact verbatim substring of a supplied section, claim, or source block; put interpretation only in deductions.",
+  ].join(" "),
+  "resume.suggest": [
+    "Task: act as a senior resume editor and review each supplied experience or project bullet in its section and entry context; cover each reviewable bullet at most once, up to 40 suggestions.",
+    "For every item, diagnose that exact sentence rather than applying a generic checklist. rationale must identify the concrete wording or information issue in originalText, explain its effect on a recruiter, and state what the proposed change improves. Do not reuse stock rationales, repeated sentence templates, or the same question across unrelated bullets.",
+    "When a fact-preserving improvement is possible, return kind rewrite with a complete, ready-to-paste replacement sentence. Prefer concise action-method-result ordering and remove weak, repetitive, or vague phrasing, but do not demand a metric when the source contains none.",
+    "Use ask_user or needs_proof only when a specific missing or unsupported fact materially blocks a useful edit. question must name the exact project, action, result, or phrase that needs clarification and must not be a generic request for metrics.",
+    "Every suggestion must cite supplied sourceBlockIds or claimIds and use at most one replace JSON Pointer patch targeting an existing resume text field.",
+    "originalText must exactly equal the current value at the patch path, including punctuation and whitespace, and proposedText must exactly equal the patch value.",
+    "A rewrite may only rearrange factual words already present in originalText or cited valid claims; never introduce new numbers, achievements, responsibilities, tools, credentials, ranking, business scope, or implied ownership.",
+    "If the original is already strong or no fully supported rewrite is possible, return kind use_as_is with no patch and no proposedText, plus a sentence-specific rationale explaining why it should stay.",
+  ].join(" "),
+  "resume.chat": [
+    "Task: continue an editing conversation about the supplied current resume. The conversation.latestUserMessage is the user's current request; use the summary, recent messages, confirmed facts, recent changes, resume sections, and claims as context.",
+    "Reply directly and specifically in the resume locale. Explain what you understood, answer questions about the resume, ask one precise clarification only when a missing fact blocks the requested edit, and never use generic resume-advice boilerplate.",
+    "Return a concise updated summary that preserves durable user preferences, unresolved questions, confirmed facts, and important editing decisions from the previous summary and this turn. Do not copy the whole transcript.",
+    "confirmedFacts may contain only exact verbatim substrings of latestUserMessage that are affirmative first-person facts supplied by the user. Do not treat hypotheticals, examples, questions, negations, or instructions to omit content as facts.",
+    "Return suggestions only when the user requested a concrete change that can be applied safely. Each suggestion must follow all resume.suggest patch, citation, originalText, proposedText, and factual-grounding rules and target the current resume revision.",
+    "A rewrite may use only facts in the current target text, cited valid claims, conversation.confirmedFacts, or this turn's confirmedFacts. Never invent or infer numbers, achievements, responsibilities, tools, credentials, rankings, business scope, dates, or ownership.",
+    "If the user asks for analysis or discussion without requesting a change, return no suggestions. Limit suggestions to the smallest set needed for the latest request, at most eight.",
+  ].join(" "),
   "jd.parse": "Parse only explicit job requirements. Preserve the supplied locale and do not infer employer facts.",
   "job.match": "Map every supplied requirement exactly once. Cite only supplied claim IDs and leave evidenceAssetIds empty.",
   "copy.rewrite.zh": "Rewrite the supplied Chinese text for clarity and professional tone. Preserve every preserveTerms value exactly, keep all numbers unchanged, and do not add achievements, scope, credentials, rankings, or any other facts. Set original to the supplied text and addedFacts to false.",
@@ -747,6 +855,7 @@ const instructions: Record<ProviderGatewayCapabilityId, string> = {
 const schemas = {
   "resume.score": [ResumeScoreInputSchema, ResumeScoreOutputSchema],
   "resume.suggest": [ResumeSuggestInputSchema, ResumeSuggestOutputSchema],
+  "resume.chat": [ResumeChatInputSchema, ResumeChatOutputSchema],
   "jd.parse": [JdParseInputSchema, JdParseOutputSchema],
   "job.match": [JobMatchInputSchema, JobMatchOutputSchema],
   "copy.rewrite.zh": [CopyRewriteInputSchema, CopyRewriteOutputSchema],
@@ -786,17 +895,17 @@ function providerCapability<K extends ProviderGatewayCapabilityId>(
         context,
         dto,
         outputSchema,
-        instruction: instructions[id],
+        instruction: providerInstructions[id],
       });
       const data = validateOutput(id, input, completion.data);
       return {
         data,
         confidence: 0.76,
         evidenceReferences:
-          id === "resume.suggest"
+          id === "resume.suggest" || id === "resume.chat"
             ? [
                 ...new Set(
-                  (data as GatewayOutputMap["resume.suggest"]).suggestions.flatMap((suggestion) => [
+                  (data as GatewayOutputMap["resume.suggest"] | GatewayOutputMap["resume.chat"]).suggestions.flatMap((suggestion) => [
                     ...suggestion.sourceBlockIds,
                     ...suggestion.claimIds,
                   ]),

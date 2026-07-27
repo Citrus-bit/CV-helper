@@ -26,7 +26,7 @@ Next.js Node runtime
   ├─ PDF.js native extraction + page PNG rendering
   ├─ offline Tesseract.js for scan/mixed pages
   ├─ static Capability Registry + deterministic baselines
-  ├─ optional provider gateway for nine allowlisted capabilities
+  ├─ optional provider gateway for ten allowlisted capabilities
   └─ local Typst compilation
        └─ .tools/typst/typst (0.15.1)
 ```
@@ -83,6 +83,7 @@ Immutable original PDF
   → deduplicated SourceBlocks             │
   → Resume AST                            │
   ├─ claim/evidence relations → scoring/suggestions
+  ├─ revision-bound local chat context → provider-only editing turns
   ├─ JD requirements → evidence matrix
   ├─ accepted revision → story cards
   └─ template render → PDF audit → preview/download
@@ -110,6 +111,7 @@ worker 在调用 OCR 前按 85% 较小区域覆盖率去重，每页最多 4 个
 - `Claim`：文本、主体、动作、方法、结果、来源引用和支持状态。
 - 逻辑 EvidenceGraph：当前不是单独持久化对象，而由 Claim 的 `sourceBlockIds/evidenceAssetIds` 与 EvidenceAsset 的 `sourceBlockIds` 共同表达；生产 adapter 可据此物化为图或关系表。
 - `Suggestion`：`resumeRevision/sourceBlockIds/claimIds/kind/status/originalText/proposedText/rationale/beforeHash/patches/factRisk/interviewRisk`。
+- `ResumeChatContext`：版本化的长期摘要、已确认事实、最近修改和最多 100 条本地消息；每次请求只发送最近 10 条消息，并与当前简历 ID/revision 绑定。会话随活动状态进入 `sessionStorage`，随最近分析快照进入 IndexedDB；刷新恢复后仍按当前 revision 过滤可应用建议。
 - `JobDraft/JobPosting/JDRequirement`：可恢复的职位名、职级、地点、语言和原始 JD 草稿，以及结构化岗位要求。
 - `RequirementEvidenceMap`：要求、证据、覆盖状态、解释和追问。
 - `ResumeVariant`：基线 revision 的岗位分支，不复制或覆盖原稿。
@@ -174,7 +176,7 @@ type CapabilityResult<T> = {
 ### 4.2 调用与回退
 
 1. 未配置 AI 时 Registry 只选择内置 baseline；受信本地扩展仅在显式评测模式启用，且必须使用 canonical Schema、禁网并保留 baseline。
-2. `provider_gateway` 只增强九项能力：`resume.score`、`resume.suggest`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate` 和 `answer.coach`；其余能力只能调用确定性 baseline。两项 copy 能力只发送脱敏后的选中文本与保留术语，返回值必须保持原文映射、指定术语和数字，不得新增排名、资质或成果，否则回退 baseline。
+2. `provider_gateway` 只增强十项能力：`resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate` 和 `answer.coach`；其余能力只能调用确定性 baseline。两项 copy 能力只发送脱敏后的选中文本与保留术语，返回值必须保持原文映射、指定术语和数字，不得新增排名、资质或成果，否则回退 baseline。`resume.chat` 同样执行最小字段投影、严格 Schema、证据引用、数字和 revision 校验，但它在 provider 不可用或返回非法结果时由 `/api/resume-chat` 返回 503，不把 Registry 的固定 baseline 输出交给用户。
 3. Gateway 在 Next.js 服务端完成字段投影与 PII 清理，只从环境变量注入 URL、Key 和模型。前端 bundle、FeatureAvailability、日志与响应不包含供应商细节。
    Base URL 还必须命中代码内静态批准列表；系统不读取可配置的 `AI_API_ALLOWLIST`，避免部署者通过环境变量无审查扩权。
 4. 首次请求使用 JSON Schema；供应商明确不支持时只重试一次 `json_object`。返回值随后通过 canonical Zod Schema、引用、JSON Pointer、数字新增和事实证据检查。
@@ -192,7 +194,7 @@ type CapabilityResult<T> = {
 2. 领域 Skill 可以指导创建 adapter、rule pack、knowledge pack 或 prompt policy；产物仍须通过 manifest 审查、静态注册、Zod 契约测试、固定 fixture、feature flag 和 fallback 测试。
 3. Codex Skill 不持有产品密钥，不自动读取用户数据，不因文档内容获取网络或工具权限，也不能提交 revision 或签发导出。
 4. 用户上传的 PDF、JD、转写和任意第三方 Skill 文本始终是不可信输入；开发工具说明不能覆盖运行时权限、事实安全、人工确认、取消语义或导出硬门。
-5. 30 项 Capability 的开发期归属只在 `skills/resume-assistant-orchestrator/references/capability-map.md` 维护；运行时状态与回滚版本仍以 `.codex/PROJECT.md` 和静态 Registry 为准。
+5. 31 项 Capability 的开发期归属只在 `skills/resume-assistant-orchestrator/references/capability-map.md` 维护；运行时状态与回滚版本仍以 `.codex/PROJECT.md` 和静态 Registry 为准。
 
 ## 5. API 边界
 
@@ -212,7 +214,7 @@ type CapabilityResult<T> = {
 - `POST /api/interview/transcribe`：只标准化浏览器已识别的文字，不接收或保存音频。
 - `POST /api/interview/evaluate`：评审回答并执行简历口径检查。
 
-当前 API 通过 Zod 校验输入并把 `request.signal` 传入 CapabilityContext；隔离文档响应另经 Zod 校验。上述九项生成式 capability 可调用已接线的 provider gateway；默认配置仍只运行 baseline。简历分析链在冲突检查前逐条调用 `claim.assess`，再把冲突状态叠加到已评估声明上。当前不声称已经完成真实供应商质量验收、持久化幂等键、资源所有权或队列 worker 恢复。
+当前 API 通过 Zod 校验输入并把 `request.signal` 传入 CapabilityContext；隔离文档响应另经 Zod 校验。上述十项生成式 capability 可调用已接线的 provider gateway；默认配置仍只运行 baseline，因此 `resume.chat` 默认明确不可用，其他九项可按各自路径使用 baseline。简历分析链在冲突检查前逐条调用 `claim.assess`，再把冲突状态叠加到已评估声明上。当前不声称已经完成真实供应商质量验收、持久化幂等键、资源所有权或队列 worker 恢复。
 
 健康端点采用 `no-store` 响应并以本地可用性为准：未配置 worker 或 provider 时，document/AI baseline 与 `client_local` storage 都是 `ready`，不会因为未启用增强依赖而误报降级；只有显式配置隔离文档或增强 AI 且该配置不可用时，对应组件及整体状态才为 `degraded`。该端点不执行真实 AI 内容请求，也不改变 Vercel、Private Blob 与 Hosted 模式仍延期的边界。
 
@@ -287,7 +289,7 @@ baseline 检索先按语言、领域、岗位族、级别、题型和技能过�
 阶段 9 自动化验证通过 `typecheck`、lint、44 个文件 / 259 项 Vitest、34 项 document-worker pytest、3 项 loopback proxy pytest、生产构建和 `git diff --check`。浏览器回归覆盖：1024/1280/1440/1920px 首页与工作区无横向滚动或底部空洞；375/768/1023px 只显示设备提示且不挂载工作台；两个返回入口、历史恢复、流程门、JD 草稿/证据矩阵、面试设备检查/回答/追问恢复和 Professional 100/100、18/18 质量门均通过。拖拽状态以窗口级文件 `dragover` 的目标归属与真实坐标边界为真值，页面离开、`Escape`、drop、dragend 与 blur 负责收尾；激活重渲染、多次跨子元素、窗口目标、框外移动、真实 PDF 单次提交和监听器卸载由组件事件序列验证。Mac 锁定时 Finder 物理拖拽保留为人工验收项。Gitleaks 对历史、差异、未跟踪源码和提交消息均无发现。该结论仅覆盖固定 fixture、构建与 smoke，不等同生产 OCR 准确率、第三方安全认证或外部 AI 质量。
 
 - 安全健康端点：4 项 Vitest 覆盖自包含 baseline 不发起 worker 探测、可用 isolated/enhanced 仅返回抽象字段、显式配置失效时 fail closed，以及 HTTP 响应为 `no-store` 且通过 Schema。当前本地 Docker 路径可用；Vercel 验证仍延期。
-- 契约：30 个 Capability 的 Zod/JSON Schema、权限、超时、取消、非法输出和 fallback 测试。
+- 契约：31 个 Capability 的 Zod/JSON Schema、权限、超时、取消、非法输出和 fallback/显式失败测试。
 - 文档：至少 40 份合成/脱敏 PDF；数字文本、扫描 OCR、双栏顺序、旋转、混合页和恶意文件。
 - 事实安全：数字、日期、角色、团队成果、`needs_proof` 和 revision 冲突 fixture。
 - 导出：三模板内容哈希、字体、搜索文本、阅读顺序、裁切、重叠、缺字和预览下载一致性。

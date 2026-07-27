@@ -278,6 +278,9 @@ describe("TemplateExport resume target", () => {
     );
     expect(screen.getByRole("button", { name: /^Minimal/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^Compact/ })).toBeDisabled();
+    expect(
+      screen.getByRole("progressbar", { name: "PDF 生成预估进度" }),
+    ).toBeInTheDocument();
   });
 
   it("locks template and regeneration controls while download review is pending", async () => {
@@ -331,6 +334,9 @@ describe("TemplateExport resume target", () => {
     expect(screen.getByRole("button", { name: "重新生成预览" })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^Minimal/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^Compact/ })).toBeDisabled();
+    expect(
+      screen.getByRole("progressbar", { name: "最终 PDF 复核预估进度" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("checkbox", {
         name: /已对照原版，确认将当前模板用于最终下载/,

@@ -1,6 +1,6 @@
 ---
 name: resume-evidence-review
-description: 基于 Resume AST、SourceBlock 和 EvidenceGraph 分析、实现或评审简历证据链、声明支持状态、事实冲突、六维评分、安全修改建议与 ATS 机器可读性审计。处理证据挖掘、数字或经历真实性、可追溯扣分、needs_proof/ask_user 流程、JSON Patch/revision 安全，或修改 evidence.mine、claim.assess、claim.conflict、resume.score、resume.suggest、resume.atsAudit Capability 时使用。
+description: 基于 Resume AST、SourceBlock 和 EvidenceGraph 分析、实现或评审简历证据链、声明支持状态、事实冲突、六维评分、持续 AI 编辑对话、安全修改建议与 ATS 机器可读性审计。处理证据挖掘、数字或经历真实性、可追溯扣分、对话上下文、needs_proof/ask_user 流程、JSON Patch/revision 安全，或修改 evidence.mine、claim.assess、claim.conflict、resume.score、resume.suggest、resume.chat、resume.atsAudit Capability 时使用。
 ---
 
 # 简历证据评审
@@ -16,7 +16,7 @@ description: 基于 Resume AST、SourceBlock 和 EvidenceGraph 分析、实现�
 
 ## 明确任务边界
 
-- 把 `evidence.mine`、`claim.assess`、`claim.conflict`、`resume.score`、`resume.suggest`、`resume.atsAudit` 作为本 Skill 的主能力。
+- 把 `evidence.mine`、`claim.assess`、`claim.conflict`、`resume.score`、`resume.suggest`、`resume.chat`、`resume.atsAudit` 作为本 Skill 的主能力。
 - 需要重新解析 PDF、修复阅读顺序或 OCR 时转交 `resume-document-intelligence`。
 - 需要解析 JD、岗位匹配或中英文专项写作时转交 `resume-job-writing`。
 - 需要 Typst 排版、真实 PDF 预览或导出硬门时转交 `resume-layout-export`。
@@ -29,8 +29,9 @@ description: 基于 Resume AST、SourceBlock 和 EvidenceGraph 分析、实现�
 3. 对每条声明分别调用 `claim.assess`，先确定支持状态。
 4. 对已评估声明调用 `claim.conflict`，再把冲突状态叠加到涉及声明；不要让冲突检查覆盖其他声明的正常支持状态。
 5. 使用同一批已评估声明调用 `resume.score` 和 `resume.suggest`。
-6. 独立调用确定性的 `resume.atsAudit`；不要让生成式模型接管 ATS 或事实安全底线。
-7. 将所有结果绑定输入 `resumeRevision`，拒绝陈旧结果覆盖新 revision。
+6. 持续编辑时，以长期摘要、已确认事实、最近修改、最近消息和当前 Resume revision 组装有界上下文，再调用 `resume.chat`；模型建议仍必须通过相同的事实、引用和 patch 校验。
+7. 独立调用确定性的 `resume.atsAudit`；不要让生成式模型接管 ATS 或事实安全底线。
+8. 将所有结果绑定输入 `resumeRevision`，拒绝陈旧结果覆盖新 revision。
 
 ## 构建可追溯证据链
 
@@ -107,11 +108,13 @@ description: 基于 Resume AST、SourceBlock 和 EvidenceGraph 分析、实现�
 | `claim.conflict` | `evidence_graph` | `eval.claim.conflict.v1` | 只提示冲突，不自动裁决 |
 | `resume.score` | `resume_ast,evidence_graph` | `eval.resume.score.v1` | 质量分不是岗位或录取概率 |
 | `resume.suggest` | `resume_ast,evidence_graph` | `eval.resume.suggest.v1` | 引用、patch、数字与事实必须校验 |
+| `resume.chat` | `resume_ast,evidence_graph,interview_content` | `eval.resume.chat.v1` | 上下文有界、绑定 revision；无真实 AI 时显式失败 |
 | `resume.atsAudit` | `resume_ast,source_blocks` | `eval.resume.ats.v1` | 仅做机器可读性风险审计 |
 
-- 让证据、冲突和 ATS 能力保持确定性 baseline；只允许静态白名单网关增强 `resume.score` 与 `resume.suggest`。
+- 让证据、冲突和 ATS 能力保持确定性 baseline；只允许静态白名单网关增强 `resume.score`、`resume.suggest` 与 `resume.chat`。
 - 在任何外部增强前执行 PII 最小化和 prompt guard；不发送姓名、电话、邮箱、链接、原 PDF 或无关证据正文。
 - 通过 canonical Zod Schema 校验输入输出；非法输出、超时、429/5xx 或事实检查失败时回退对应内置实现。
+- `resume.chat` 是用户可见失败语义的例外：provider 未配置或增强调用失败时，API 必须返回明确错误，不得把固定 baseline 话术伪装成 AI 回复；本地历史和未应用修改保持不变，以便重试。
 - 直接传播用户取消；不要用 fallback 覆盖取消。
 - 保留每项 `builtin.<capabilityId>@1.0.0` 作为可验证回滚目标，并记录 `usedFallback`。
 

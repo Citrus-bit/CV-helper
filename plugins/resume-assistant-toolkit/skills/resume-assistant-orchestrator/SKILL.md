@@ -20,7 +20,7 @@ Coordinate the complete toolkit without duplicating contracts or mixing developm
 | Task | Specialist |
 | --- | --- |
 | Native PDF extraction, scan detection, OCR, coordinates, reading order, segmentation | `../resume-document-intelligence/SKILL.md` |
-| EvidenceGraph, claims, scoring, suggestions, ATS review | `../resume-evidence-review/SKILL.md` |
+| EvidenceGraph, claims, scoring, persistent resume editing chat, suggestions, ATS review | `../resume-evidence-review/SKILL.md` |
 | JD parsing, requirement mapping, job risk, Chinese or English resume wording | `../resume-job-writing/SKILL.md` |
 | Template recommendation, Typst rendering, PDF previews, export quality gates | `../resume-layout-export/SKILL.md` |
 | Question retrieval, STAR stories, transcription, answer evaluation and coaching | `../resume-interview-coach/SKILL.md` |

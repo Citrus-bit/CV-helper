@@ -1,5 +1,20 @@
 # 发现与决策
 
+## 2026-07-27 阶段 12 收尾验证
+
+- 正式源码现有 31 个 Capability，开发期共享映射为 31/31 且无重复；新增 `resume.chat` 归属 `resume-evidence-review`，provider gateway 静态白名单为 10 项。
+- `/api/resume-chat` 只接受 `resume.chat@2.x+` 且 `usedFallback: false` 的真实增强结果；provider 未配置、失败或 Registry 回退时返回 503，不把 `builtin.resume.chat@1.0.0` 的固定话术展示为 AI 回复。
+- 本地浏览器使用示例简历完成两轮真实 AI 编辑：第一轮准确定位需精简经历，第二轮以“就你刚才选的这条”省略指代继续请求并生成可应用建议，证明最近消息上下文已被真实调用消费。
+- 四条消息与待应用建议在刷新后完整恢复；应用建议后简历从 revision 1 变为 2、顶部撤销启用、旧回复标记“基于版本 1”、建议标记“已应用”。再次刷新后 revision 2、四条消息、旧版本标签和应用状态仍保持，浏览器 console 无 error/warn。
+
+## 2026-07-24 持续 AI 编辑对话
+
+- 当前审阅区仍以一次性建议生成为核心，没有可持续追问的会话契约，也没有会话摘要与简历 revision 的绑定。
+- 本地上下文将保存到现有 IndexedDB 最近分析记录，而不只放在 React 组件状态中；恢复分析时必须恢复对话。
+- 模型请求采用有界窗口：始终发送当前 PII 最小化简历、已确认事实、修改摘要与早期会话摘要，只发最近若干条原始消息。
+- 模型只能返回针对当前 AST 字段的可校验替换；不得编造数字、职责、工具或成果，失败时不能用固定话术伪装 AI 回复。
+- UI 设计检索偏向深色紫色 AI 主题，与项目已有的中性 Apple 风工作台冲突；只采纳其对高密度、进度反馈、错误重试、对话标识和无障碍的建议。
+
 ## 2026-07-23 阶段 10 初始终验状态
 
 - 阶段 9 的 259 项 Web 测试、34 项 worker 测试、生产构建和浏览器回归是历史证据，不自动证明当前完整作品仍无漏项。
@@ -12,7 +27,7 @@
 - `findings.md` 的阶段 7 历史段仍描述已废弃的拖拽深度计数，`progress.md` 的五问重启表仍停在阶段 7。这些是历史叙述而非运行缺陷，但最终同步时必须明确标注已被阶段 9/10 的几何边界实现取代，并把当前阶段更新为 10。
 - 阶段 10 已用 Gitleaks 8.30.1 重新扫描全部 Git 历史、`src`、worker、infra、知识包、模板、正式文档、Codex 文档、README、三份规划记录、环境样例、package 与 lockfile，全部为零发现。对话中公开过的旧 Key 仍必须在供应商侧撤销，不能因仓库扫描干净而复用。
 - 当前 `docker-compose -f infra/docker-compose.yml` 默认解析为 `worker`、`worker-loopback`、`web`，`future-infra` 才加入 PostgreSQL/Redis/MinIO。三个默认容器均在线，worker/loopback healthy；Web 健康为 document `isolated/ready`、AI `baseline/ready`、storage `client_local/ready`。
-- 当前 `/api/capabilities` 实际返回 30 个能力，全部 `available: true`、`fallbackAvailable: true` 且为 baseline；这证明 Registry 当前可运行，不把尚未配置轮换后新 Key 的 provider 描述成已启用增强。
+- 当前 `/api/capabilities` 实际返回 31 个能力，全部有已注册 baseline；这证明 Registry 契约当前可运行，不把 provider 或 `resume.chat` 的固定契约占位输出描述成已启用的真实 AI。
 - `docs/PRD.md` 页首仍标记“阶段 9 交付审计中”，`.codex/PROJECT.md` 的验收标题也停在阶段 9；阶段 10 收口时必须统一为最终本地桌面 MVP 验收状态，并使用本轮权威测试/镜像数字。
 - PRD 将 40 份多版面样本、OCR/阅读顺序召回率、Safari/屏幕阅读器、生产对象所有权与幂等明确列为尚待完成的生产级门槛；这些不属于已暂停云部署的本地 MVP 成功标准，最终交付必须继续清楚区分，不能声称已经通过生产认证。
 - `docs/ARCHITECTURE.md` 安全章节写有“生产镜像固定 digest”，但当前 Dockerfile/Compose 使用固定版本 tag，本轮只在构建后记录本地镜像内容 SHA，并未把所有上游镜像引用锁到 registry digest。应改为如实描述当前版本标签与构建后 SHA，并把上游 digest 固定列为生产供应链门槛。
@@ -88,7 +103,7 @@
 ## 实现审计发现
 
 - 2026-07-23 阶段 7 逐项矩阵发现五项 P1：`/api/job-match` 的岗位 variant 直接复用输入 AST；面试 evaluate 客户端/API 丢弃题目 skills/followUps/scoringAnchors；UI 不消费 follow-up；客户端接受修改后只做固定分数微调且不使其他旧 revision 建议失效；`parsingWarnings` 没有任何 UI 消费。
-- 另有交付/证据缺口：根目录无 README；Capability 注册测试证明 30 项存在但没有每项独立可执行质量 eval；AI 限流读取匿名 cookie 却没有签发路径；ATS audit 结果只记录版本不展示；分析进度为定时模拟而不是真实阶段事件。
+- 另有交付/证据缺口：根目录无 README；Capability 注册测试当时只证明已登记能力存在但没有每项独立可执行质量 eval；AI 限流读取匿名 cookie 却没有签发路径；ATS audit 结果只记录版本不展示；分析进度为定时模拟而不是真实阶段事件。
 
 ## 阶段 7 已落地结论
 
@@ -105,7 +120,7 @@
 - IndexedDB 的 24 小时 TTL 在应用运行时通过定时/focus/visibility/read 清理；浏览器完全关闭时无法后台物理删除，因此用户文案和正式文档必须表述为“到期，并在下次打开时清理”，不能承诺关闭状态下恰好 24 小时删除。
 - Vercel、Blob、云端 worker 和生产 p95/40 份 PDF 基准继续按用户指示延期，不计入本地 MVP 缺口；但文档不得把未验证的生产 NFR 写成已经达成。
 
-- Capability catalog 登记的 30 个能力现均有可运行 baseline，并通过 availability、Schema、权限、fallback 和 smoke test。
+- Capability catalog 登记的 31 个能力现均有可运行 baseline 契约，并通过 availability、Schema、权限、fallback/显式失败和 smoke test。
 - `/api/analyze` 始终原生解析优先：配置 `DOCUMENT_WORKER_URL` 的生产容器使用 Python worker，`digital` 不调用 OCR、`scan` 整页 OCR、`mixed` 仅识别无原生字符覆盖的图片区域；无 Docker baseline 才使用 PDF.js + Tesseract.js 整页补充，并对 mixed 页按 bbox 覆盖率、邻近文本和模糊相似度过滤重复块。
 - 原版与新版均可使用真实 PDF iframe，并支持并排比较；来源高亮保留为独立“原文定位”辅助模式。
 - `applySuggestion` 已消费白名单 JSON Pointer patch，保留手改与撤销；危险段、越界路径或 Schema 非法结果保持 AST 不变。
@@ -116,7 +131,7 @@
 - 自动导出审计同时读取文字层、文本 bbox 和服务器逐页栅格画面，覆盖内容完整性、搜索性、非白/强对比像素、预期文字区域可见度、文本越界/重叠/边距/最小高度、替代字符、字体嵌入信号、ATS 顺序和 SHA；它可以阻断纯白与白字白底，但不是完整视觉或审美审计，真实 PDF 并排人工预览仍是最终门槛。当前没有自动密度重试。
 - 新版 PDF 的“已预览”不再依赖 iframe `onLoad`：客户端 PDF.js 必须完成第一页 canvas 绘制，并对完整画布检查非白像素、强对比像素和亮度变化，失败时阻断确认/下载并提供重试。这是可见内容门槛，不是完整视觉版面审计。
 - `toRenderableResume` 会同时保留 `section.text` 与 `entries`；审计始终比较完整 AST fragments，并有回归样本。
-- 当前 30 项 baseline 的 `networkPolicy` 都为 `none`；provider gateway 只为七项静态生成式能力注册受控 extension，两项 copy rewrite 保持 baseline，默认 `AI_PROVIDER=baseline` 时不会发生服务端模型外发。`trusted_local` 仅供 canonical Schema、禁网且有 baseline 的受控评测使用。
+- 当前 31 项 baseline 的 `networkPolicy` 都为 `none`；provider gateway 只为十项静态生成式能力注册受控 extension。默认 `AI_PROVIDER=baseline` 时不会发生服务端模型外发；除 `resume.chat` 显式报错外，其余能力可使用确定性 baseline。`trusted_local` 仅供 canonical Schema、禁网且有 baseline 的受控评测使用。
 - PII/guard 已对简历、JD、问题和回答执行最小字段投影；已接线的 provider 只能接收结构化、脱敏、guard 后 DTO，并在超时、限流、非法输出或事实检查失败时回退 baseline。
 - 敏感状态已从 localStorage 改为 sessionStorage，并增加定时、focus、visibility 与 rehydrate 过期检查；旧版持久键在工作台挂载时删除。Web Speech 不保存音频 Blob，失败、超时和离开页面会停止。
 
@@ -203,7 +218,7 @@ _每执行2次查看/浏览器/搜索操作后更新此文件_
 
 ## 2026-07-23 阶段 9 需求与运行时对照审计
 
-- Capability Registry 的 30 个能力 ID 均有可运行 baseline；未发现只登记但无法降级的核心能力。
+- Capability Registry 的 31 个能力 ID 均有可运行 baseline 契约；`resume.chat` 的固定 baseline 只用于 Registry 契约与评测，不作为用户可见降级回复。
 - P1：面试追问轮次、追问题目和追问评审只存在于组件 local state，切换模块、返回首页或历史恢复会丢失；历史快照目前只保存主问题评审。必须把完整面试进行态纳入会话与历史 Schema。
 - P1：`undoStack` 的运行时快照包含完整 `AnalysisBundle`，持久化投影可能把原 PDF base64 和页面预览写入 `sessionStorage`，违反体积与隐私边界；必须对持久化撤销快照脱水，同时保持当前标签页内撤销语义。
 - P1：用户选择“不归档，返回首页”后，首页挂载的历史刷新会再次自动归档当前分析，导致选择失效；需要显式的本次跳过状态或等价状态机。
@@ -230,13 +245,13 @@ _每执行2次查看/浏览器/搜索操作后更新此文件_
 
 - Codex 开发期 Skill 与产品运行时 Capability 必须继续分离：前者指导开发、审计和评测，后者仍由服务器静态 Registry、Zod 契约、权限声明、fallback 与 feature flag 管理。
 - 为避免二三十个零散 Skill，采用单一插件 `resume-assistant-toolkit`，由一个编排 Skill 负责路由到六个领域 Skill：文档智能、证据与简历、岗位与文案、排版与导出、面试与语音、安全与评测。
-- 30 项 Capability 的 ID、数据范围和 eval suite 只在共享参考文件维护一份；领域 Skill 只引用所负责的子集，禁止复制并产生不一致版本。
+- 31 项 Capability 的 ID、数据范围和 eval suite 只在共享参考文件维护一份；领域 Skill 只引用所负责的子集，禁止复制并产生不一致版本。
 - 插件源码进入当前仓库，使用 `.codex-plugin/plugin.json` 作为唯一入口；本轮不创建个人 marketplace、不自动安装、不声明任何 MCP 或网络权限。
-- 总入口只保存路由、依赖顺序和产品不变量；30 项 ID、数据范围、eval suite、provider allowlist 与 fallback 约束集中在 `capability-map.md`，候选运行时扩展统一遵循 `extension-protocol.md`。
+- 总入口只保存路由、依赖顺序和产品不变量；31 项 ID、数据范围、eval suite、provider allowlist 与 fallback/显式失败约束集中在 `capability-map.md`，候选运行时扩展统一遵循 `extension-protocol.md`。
 - Skill Creator 的校验器需要 PyYAML；仓库现有 document-worker 虚拟环境已提供 6.0.3，可复用完成验证，无需下载或污染全局 Python。
 - 领域 Skill 的 Rubric 与扩展类型检查必须叠加，多 Capability adapter 需要通过每个归属领域的更严格门槛；通用 adapter 检查不能替代 PDF、事实安全、导出或面试专项验收。
 - 当前 manifest 只有 `networkPolicy`，没有候选级主机字段；因此 exact hosts 必须记录在版本化评审中并由 `provider-gateway.ts` 的静态 allowlist 强制。若未来候选需要不同主机集合，应先版本化增加机器可校验的 manifest allowlist。
 - `document.ocr` v1 的输出仍固定 `engine: "tesseract.js"`。PaddleOCR 可作为 `document.parse` 内部 adapter 评测，但若要成为独立 Capability extension，必须先演进 canonical Schema，不能谎报引擎。
 - `pii.redact` 当前 detection type 仅覆盖邮箱、电话、证件号、地址和 URL；姓名及上下文残留由 provider projection 外围控制。Registry 文档已拆开记录，避免把外围测试误算为 Capability 能力。
 - 导出 `overallScore` 是服务器自动审计分，领域 Rubric 的 100 分是人工评审辅助；`ExportQualityReport.downloadable` 只表示产物通过质量门，真正下载仍需当前预览 SHA 与用户明确确认。
-- 官方验证、程序化 30 项映射核对、链接检查、两轮前向试跑和独立只读审查均通过，最终无 blocker 或 medium。
+- 官方验证、程序化 31 项映射核对、链接检查、两轮前向试跑和独立只读审查均通过，最终无 blocker 或 medium。

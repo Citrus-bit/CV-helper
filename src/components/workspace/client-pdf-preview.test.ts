@@ -43,6 +43,9 @@ describe("ClientPdfPreview", () => {
     render(createElement(ClientPdfPreview, { ...props, onVerified }));
     await waitFor(() => expect(renderPdfFirstPage).toHaveBeenCalledOnce());
     expect(onVerified).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("progressbar", { name: "PDF 首屏验证预估进度" }),
+    ).toBeInTheDocument();
 
     finishRender?.();
     await waitFor(() =>

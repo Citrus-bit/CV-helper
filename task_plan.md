@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-阶段 10：最终作品独立终验（阶段 11 统一 Skill 套件已完成）
+阶段 12：本地持久化的简历 AI 编辑对话
 
 ## 各阶段
 
@@ -112,16 +112,26 @@
 ### 阶段 11：统一 Skill 套件
 
 - [x] 在仓库内创建单一 `resume-assistant-toolkit` 插件入口，不写入个人 marketplace
-- [x] 创建一个编排 Skill 和六个领域 Skill，覆盖现有 30 项 Capability
+- [x] 创建一个编排 Skill 和六个领域 Skill，覆盖现有 31 项 Capability
 - [x] 提取共享 Capability 映射、安全边界、输出规范与验收清单，避免各 Skill 重复或冲突
 - [x] 为每个 Skill 生成 `agents/openai.yaml`，并通过 Skill/插件验证器
 - [x] 同步 `.codex/PROJECT.md`、架构文档和项目进度，明确开发期 Skill 与产品运行时 Capability 的边界
 - **状态：** complete
 
+### 阶段 12：本地持久化的简历 AI 编辑对话
+
+- [x] 定义对话消息、会话摘要、已确认事实、修改记录与简历 revision 的运行时契约
+- [x] 实现 `resume.chat` 服务端能力与 `/api/resume-chat`，走真实 AI、PII 投影、严格输出校验和 7 分钟超时
+- [x] 实现客户端本地持久化与有界上下文组装：长期摘要 + 最近消息 + 当前简历 + 事实/修改摘要
+- [x] 在审阅工作区增加可连续追问、可重试、可应用改写的 AI 编辑视图，等待时显示 0–99% 进度
+- [x] 覆盖上下文裁剪、历史恢复、revision 变更、应用改写、失败关闭及键盘/无障碍回归
+- [x] 重跑 TypeScript、ESLint、相关测试、生产构建与浏览器实流程
+- **状态：** complete
+
 ## 关键问题
 
 1. 项目内 Typst 0.15.1、Poppler 和本地中英文 Tesseract 模型已安装。Docker CLI、`docker-compose` 和 Colima 已安装并启动；`docker compose` 子命令当前不可用，容器验收使用 `docker-compose`，Web/worker 最终镜像均已构建并通过 smoke。
-2. 用户提供的旧 AI Key 已视为泄露且禁止使用；provider gateway 只读取新的服务端环境变量，未配置时必须完整回退 baseline。
+2. 用户提供的旧 AI Key 已视为泄露且禁止使用；provider gateway 只读取新的服务端环境变量。十项静态白名单能力中，除 `resume.chat` 外未配置或失败时回退 baseline；`resume.chat` 必须显式失败，不能用固定话术伪装真实 AI。
 3. 用户已临时暂停 Vercel 部署；本阶段不保留 Private Blob、Hosted API、Vercel 配置或云端 worker 半成品。
 4. 阶段 6 最终验证通过：TypeScript、ESLint、33 个文件 / 179 项 Web 测试、32 项 document-worker 测试、3 项 loopback proxy 测试及 `git diff --check` 全部通过；其中健康路由 4 项测试通过。
 5. Compose 默认服务已精确验证为 Web、worker 和 loopback；`future-infra` profile 配置可解析。loopback 的 3 项资源边界测试通过。
@@ -133,6 +143,7 @@
 11. 隔离 worker 可恢复错误现会回退内置解析；摘要不一致、413 和用户取消继续失败关闭。“24 小时清理”文案已明确浏览器关闭时在下次打开后物理清理。
 12. 阶段 7 最终验证通过 TypeScript、ESLint、42 个文件 / 220 项 Web 测试、32 项 document-worker 测试、3 项 loopback proxy 测试、生产构建与 `git diff --check`；Gitleaks 对 Git 历史、当前差异和提交消息均无命中。
 13. 阶段 8 最终验证通过 TypeScript、ESLint、44 个文件 / 239 项 Web 测试、32 项 document-worker 测试、3 项 loopback proxy 测试、生产构建、容器健康、四档桌面/三档窄屏浏览器回归及 Gitleaks 全范围扫描。上传拖拽、分析等待、历史恢复、页签保活、导出单滚动层和真实 PDF 质量门均有独立回归证据。
+14. 阶段 12 最终验证通过 TypeScript、ESLint、50 个文件 / 279 项 Web 测试、生产构建、`git diff --check`、31/31 Capability 映射、两个修改后 Skill 与插件官方校验；浏览器真实 provider 回归覆盖两轮上下文、刷新恢复、revision 绑定和应用修改，console 无 error/warn。
 
 ## 已做决策
 
@@ -181,6 +192,8 @@
 | 新增全仓 Prettier 门发现 114 个既有文件未采用统一格式            | 1        | 不引入大规模无关格式化；撤回该门并移除未接线 Prettier，继续使用 ESLint、TypeScript 与 `git diff --check`       |
 | 4 个 Skill 的中文 `short_description` 少于 25 个字符             | 1        | 保留脚手架已创建的目录，不重复初始化；补足描述后用 `generate_openai_yaml.py` 生成界面元数据和资源目录          |
 | `generate_openai_yaml.py` 的系统 Python 缺少 PyYAML              | 1        | 不增加全局依赖；改用脚本的 `--name` 参数绕过 frontmatter YAML 读取，继续生成确定性界面元数据                  |
+| 系统 Python 运行 Skill 校验时缺少 PyYAML                         | 1        | 改用 document-worker 已锁定且包含 PyYAML 的项目虚拟环境，Skill 与插件校验均通过                              |
+| 仓库已移除 Prettier，无法执行临时 Markdown `--check`             | 1        | 不重复引入未接线工具；使用 ESLint、人工审阅和 `git diff --check`，最终差异检查通过                            |
 
 ## 备注
 

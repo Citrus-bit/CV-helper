@@ -1,4 +1,4 @@
 interface:
   display_name: "简历证据评审"
-  short_description: "执行证据挖掘、事实约束、评分、建议与 ATS 审查"
+  short_description: "执行证据挖掘、事实约束、评分、持续编辑对话、建议与 ATS 审查"
   default_prompt: "使用 $resume-evidence-review 对简历进行有证据约束的专业评审。"

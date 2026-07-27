@@ -7,6 +7,7 @@ import type {
   JobDraft,
   JobMatchBundle,
 } from "./contracts";
+import type { ResumeChatContext } from "@/lib/resume-chat";
 
 export const RECENT_ANALYSIS_TTL_MS = 24 * 60 * 60 * 1000;
 export const RECENT_ANALYSIS_MAX_RECORDS = 10;
@@ -35,7 +36,8 @@ export type RecentAnalysisPayload = {
   selectedSuggestionId: string | null;
   selectedTemplate: RecentTemplateId;
   activeResumeVariantId?: string | null;
-  resumePanel?: "suggestions" | "templates";
+  resumePanel?: "suggestions" | "chat" | "templates";
+  resumeChat?: ResumeChatContext | null;
 };
 
 export type RecentAnalysisRecord = {

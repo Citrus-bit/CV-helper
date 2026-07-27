@@ -21,6 +21,10 @@ import {
 import { analyzeResume, loadDemoAnalysis } from "@/lib/client/api";
 import { beginAnalysisRequest } from "@/lib/client/analysis-request";
 import { useAppStore } from "@/lib/client/store";
+import {
+  EstimatedProgressText,
+  estimatedDurations,
+} from "./estimated-progress";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
@@ -519,7 +523,17 @@ export function UploadScreen() {
                       onClick={() => void clearLocalData()}
                       className="min-h-11 rounded-[8px] bg-danger px-4 text-sm font-medium text-white hover:bg-[#a82b26] disabled:opacity-45"
                     >
-                      {clearing ? "正在清空" : "确认清空"}
+                      {clearing ? (
+                        <span className="inline-flex items-center gap-2">
+                          正在清空
+                          <EstimatedProgressText
+                            expectedDurationMs={estimatedDurations.localOperation}
+                            label="清空本机记录预估进度"
+                          />
+                        </span>
+                      ) : (
+                        "确认清空"
+                      )}
                     </button>
                   </div>
                 </Dialog.Content>
@@ -538,7 +552,11 @@ export function UploadScreen() {
               className="px-5 py-8 text-center text-sm text-muted"
               role="status"
             >
-              正在读取本机记录…
+              <span>正在读取本机记录</span>{" "}
+              <EstimatedProgressText
+                expectedDurationMs={estimatedDurations.localOperation}
+                label="本机记录读取预估进度"
+              />
             </p>
           ) : recentAnalyses.length === 0 ? (
             <p className="px-5 py-8 text-center text-sm text-muted">
@@ -593,37 +611,60 @@ export function UploadScreen() {
                     </p>
                   </div>
                   <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      disabled={openingId !== null || deletingId !== null}
-                      onClick={() => void restoreRecent(record.id)}
-                      className="inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf] disabled:cursor-not-allowed disabled:opacity-45"
-                    >
-                      {openingId === record.id ? "正在恢复" : "继续分析"}
-                      <ArrowRight aria-hidden="true" size={16} />
-                    </button>
-                    <Tooltip.Root>
-                      <Tooltip.Trigger asChild>
+                    {deletingId === record.id ? (
+                      <span className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-muted">
+                        正在删除
+                        <EstimatedProgressText
+                          expectedDurationMs={estimatedDurations.localOperation}
+                          label="本机记录删除预估进度"
+                        />
+                      </span>
+                    ) : (
+                      <>
                         <button
                           type="button"
-                          aria-label={`删除 ${record.originalFileName} 的本机记录`}
                           disabled={openingId !== null || deletingId !== null}
-                          onClick={() => void removeRecent(record.id)}
-                          className="grid size-11 place-items-center rounded-[8px] text-muted transition-colors hover:bg-[#fff0ef] hover:text-danger disabled:cursor-not-allowed disabled:opacity-45"
+                          onClick={() => void restoreRecent(record.id)}
+                          className="inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf] disabled:cursor-not-allowed disabled:opacity-45"
                         >
-                          <Trash2 aria-hidden="true" size={18} />
+                          {openingId === record.id ? (
+                            <>
+                              <span>正在恢复</span>
+                              <EstimatedProgressText
+                                expectedDurationMs={estimatedDurations.localOperation}
+                                label="本机会话恢复预估进度"
+                                className="text-white/85"
+                              />
+                            </>
+                          ) : (
+                            "继续分析"
+                          )}
+                          <ArrowRight aria-hidden="true" size={16} />
                         </button>
-                      </Tooltip.Trigger>
-                      <Tooltip.Portal>
-                        <Tooltip.Content
-                          side="bottom"
-                          sideOffset={6}
-                          className="z-50 rounded-[6px] bg-ink px-2.5 py-1.5 text-xs text-white shadow-panel"
-                        >
-                          删除本机记录
-                        </Tooltip.Content>
-                      </Tooltip.Portal>
-                    </Tooltip.Root>
+                        <Tooltip.Root>
+                          <Tooltip.Trigger asChild>
+                            <button
+                              type="button"
+                              aria-label={`删除 ${record.originalFileName} 的本机记录`}
+                              disabled={openingId !== null || deletingId !== null}
+                              onClick={() => void removeRecent(record.id)}
+                              className="grid size-11 place-items-center rounded-[8px] text-muted transition-colors hover:bg-[#fff0ef] hover:text-danger disabled:cursor-not-allowed disabled:opacity-45"
+                            >
+                              <Trash2 aria-hidden="true" size={18} />
+                            </button>
+                          </Tooltip.Trigger>
+                          <Tooltip.Portal>
+                            <Tooltip.Content
+                              side="bottom"
+                              sideOffset={6}
+                              className="z-50 rounded-[6px] bg-ink px-2.5 py-1.5 text-xs text-white shadow-panel"
+                            >
+                              删除本机记录
+                            </Tooltip.Content>
+                          </Tooltip.Portal>
+                        </Tooltip.Root>
+                      </>
+                    )}
                   </div>
                 </article>
               ))}

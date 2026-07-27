@@ -99,7 +99,7 @@ describe.sequential("API routes", () => {
     const payload = z
       .array(FeatureAvailabilitySchema)
       .parse(await response.json());
-    expect(payload).toHaveLength(30);
+    expect(payload).toHaveLength(31);
     expect(
       payload.every((item) => item.available && item.fallbackAvailable),
     ).toBe(true);
@@ -393,6 +393,41 @@ describe.sequential("API routes", () => {
       ),
     ).toBe(true);
     expect(result.maxFollowUps).toBe(2);
+  });
+
+  it("pins a resume-grounded story question first in the interview plan", async () => {
+    const response = await planInterview(
+      new Request("http://localhost/api/interview/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ast: DEMO_RESUME_AST,
+          claims: [],
+          stories: [{
+            id: "story-activation",
+            title: "新用户激活率优化",
+            situation: "新用户激活率偏低。",
+            task: "定位流失节点。",
+            action: "通过漏斗分析重构引导流程。",
+            result: "7 日激活率从 42% 提升至 61%。",
+            claimIds: ["claim-activation"],
+            evidenceAssetIds: [],
+            keywords: ["漏斗分析", "用户激活"],
+            riskNotes: [],
+          }],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-capability-trace")).toContain("interview.plan@");
+    const result = InterviewPlanSchema.parse(await response.json());
+    expect(result.questions[0]).toMatchObject({
+      category: "resume",
+      source: "derived-from-confirmed-resume-story@1.0.0",
+      referenceQuestionIds: ["claim-activation"],
+    });
+    expect(result.questions[0].prompt).toContain("新用户激活率优化");
   });
 
   it("evaluates a redacted answer and checks resume consistency", async () => {

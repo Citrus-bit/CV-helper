@@ -295,6 +295,9 @@ describe("JobWorkspace job variant workflow", () => {
     expect(
       screen.getByRole("button", { name: /正在建立证据矩阵/ }),
     ).toBeDisabled();
+    expect(
+      screen.getByRole("progressbar", { name: "岗位匹配预估进度" }),
+    ).toBeInTheDocument();
 
     await act(async () => resolveMatch?.(jobMatch));
 

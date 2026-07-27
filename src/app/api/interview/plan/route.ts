@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { invokeBaselineCapability } from "@/lib/baseline";
+import { AI_CAPABILITY_TIMEOUT_MS } from "@/lib/capabilities/catalog";
 import { InterviewPlanSchema } from "@/lib/client/contracts";
 import {
   ClaimSchema,
@@ -60,7 +61,12 @@ export async function POST(request: Request) {
     const guard = redaction
       ? await invokeBaselineCapability("prompt.guard", { text: redaction.data.redactedText }, securityContext)
       : undefined;
-    const jobContext = createCapabilityContext(input.ast.locale, ["job_description"], request.signal);
+    const jobContext = createCapabilityContext(
+      input.ast.locale,
+      ["job_description"],
+      request.signal,
+      AI_CAPABILITY_TIMEOUT_MS,
+    );
     const job = redaction
       ? await invokeCapability("jd.parse", { text: guard!.data.safeText, locale: input.ast.locale }, jobContext)
       : undefined;
@@ -71,7 +77,12 @@ export async function POST(request: Request) {
         ...input.stories.flatMap((story) => story.keywords),
       ]),
     ].slice(0, 30);
-    const planningContext = createCapabilityContext(input.ast.locale, ["anonymous_metadata"], request.signal);
+    const planningContext = createCapabilityContext(
+      input.ast.locale,
+      ["anonymous_metadata"],
+      request.signal,
+      AI_CAPABILITY_TIMEOUT_MS,
+    );
     const retrieved = await invokeBaselineCapability(
       "question.retrieve",
       {
@@ -89,22 +100,32 @@ export async function POST(request: Request) {
       { questions: candidates, durationMinutes: 20, questionCount: 6, maxFollowUpsPerQuestion: 2 },
       planningContext,
     );
+    const plannedQuestions = plan.data.items.map((item) => item.question);
+    const questions = storyQuestion
+      ? [
+          storyQuestion,
+          ...plannedQuestions.filter((question) => question.id !== storyQuestion.id),
+        ].slice(0, 6)
+      : plannedQuestions;
     return jsonResponse(
       InterviewPlanSchema.parse({
-        questions: plan.data.items.map((item) => item.question),
+        questions,
         stories: input.stories,
         durationMinutes: plan.data.durationMinutes,
         maxFollowUps: plan.data.maxFollowUpsPerQuestion,
       }),
-      guard || redaction
-        ? {
-            headers: {
-              "x-capability-trace": [redaction?.sourceVersion, guard?.sourceVersion, job?.sourceVersion, plan.sourceVersion]
-                .filter(Boolean)
-                .join(","),
-            },
-          }
-        : undefined,
+      {
+        headers: {
+          "x-capability-trace": [
+            redaction?.sourceVersion,
+            guard?.sourceVersion,
+            job?.sourceVersion,
+            plan.sourceVersion,
+          ]
+            .filter(Boolean)
+            .join(","),
+        },
+      },
     );
   } catch (error) {
     return routeErrorResponse(error);
