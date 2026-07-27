@@ -116,7 +116,6 @@ function analysisFixture(revision = 0, proofRequired = false): AnalysisBundle {
     },
     suggestions: [suggestion],
     stories: [],
-    pagePreviews: [],
     processing: {
       extractionMode: "native",
       durationMs: 10,
@@ -220,6 +219,50 @@ afterEach(() => {
 });
 
 describe("resume-derived state revisions", () => {
+  it("applies a complete manual edit in one local revision and one undo snapshot", () => {
+    useAppStore.getState().setAnalysis(analysisFixture());
+    seedDerived(0);
+    const edited = structuredClone(ast);
+    edited.contact.headline = "后端开发工程师";
+    edited.sections[0].entries[0].bullets = [
+      "使用 Redis 缓存热点数据和会话上下文，提高系统响应速度。",
+    ];
+
+    const revision = useAppStore
+      .getState()
+      .applyManualResumeAst(edited, "已直接编辑简历内容。");
+
+    const state = useAppStore.getState();
+    expect(revision).toBe(1);
+    expect(state.analysis?.resume).toMatchObject({
+      revision: 1,
+      ast: {
+        contact: { headline: "后端开发工程师" },
+        sections: [
+          {
+            entries: [
+              {
+                bullets: [
+                  "使用 Redis 缓存热点数据和会话上下文，提高系统响应速度。",
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(state.analysis?.scorecard.resumeRevision).toBe(1);
+    expect(state.analysis?.suggestions[0]?.status).toBe("stale");
+    expect(state.undoStack).toHaveLength(1);
+    expect(state.resumePanel).toBe("templates");
+    expect(state.jobMatch).toBeNull();
+    expect(state.interviewPlan).toBeNull();
+    expect(state.renders).toEqual({});
+
+    useAppStore.getState().undo();
+    expect(useAppStore.getState().analysis?.resume.revision).toBe(0);
+  });
+
   it("invalidates every derived result after an AST revision change", () => {
     useAppStore.getState().setAnalysis(analysisFixture());
     seedDerived(0);
@@ -672,7 +715,6 @@ describe("resume-derived state revisions", () => {
 
   it("undo restores the complete pre-revision analysis snapshot", () => {
     const analysis = analysisFixture();
-    analysis.pagePreviews = ["data:image/png;base64,cHJldmlldw=="];
     analysis.originalPdfBase64 = "JVBERi0xLjc=";
     analysis.processing.capabilityVersions = {
       "resume.score": "resume.score@test",
@@ -682,18 +724,14 @@ describe("resume-derived state revisions", () => {
 
     useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
     expect(useAppStore.getState().undoStack[0]).toMatchObject({
-      pagePreviews: ["data:image/png;base64,cHJldmlldw=="],
       originalPdfBase64: "JVBERi0xLjc=",
     });
 
     const persisted = JSON.parse(
       window.sessionStorage.getItem(SESSION_STORAGE_KEY_V3)!,
     ).state;
-    expect(persisted.analysis).toMatchObject({ pagePreviews: [] });
     expect(persisted.analysis).not.toHaveProperty("originalPdfBase64");
-    expect(persisted.undoStack[0]).not.toHaveProperty("pagePreviews");
     expect(persisted.undoStack[0]).not.toHaveProperty("originalPdfBase64");
-    expect(JSON.stringify(persisted)).not.toContain("cHJldmlldw==");
     expect(JSON.stringify(persisted)).not.toContain("JVBERi0xLjc=");
 
     useAppStore.getState().undo();

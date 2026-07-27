@@ -54,7 +54,6 @@ function downloadableAnalysisFixture() {
     evidence: [],
     suggestions: [],
     stories: [],
-    pagePreviews: [],
     originalPdfBase64: "JVBERi0=",
     scorecard: {
       resumeId: "resume-download",
@@ -125,7 +124,7 @@ describe("exportConfirmationBlocker", () => {
     );
     expect(
       exportConfirmationBlocker({ ...valid, hardGatePassed: false }),
-    ).toMatch(/质量门/);
+    ).toMatch(/致命导出错误/);
   });
 });
 
@@ -173,7 +172,6 @@ describe("TemplateExport resume target", () => {
       evidence: [],
       suggestions: [],
       stories: [],
-      pagePreviews: [],
       originalPdfBase64: "JVBERi0=",
       scorecard: {
         resumeId: "resume-export",
@@ -335,8 +333,8 @@ describe("TemplateExport resume target", () => {
     expect(screen.getByRole("button", { name: /^Minimal/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^Compact/ })).toBeDisabled();
     expect(
-      screen.getByRole("progressbar", { name: "最终 PDF 复核预估进度" }),
-    ).toBeInTheDocument();
+      screen.getByRole("button", { name: "正在校验文件" }),
+    ).toBeDisabled();
     expect(
       screen.getByRole("checkbox", {
         name: /已对照原版，确认将当前模板用于最终下载/,

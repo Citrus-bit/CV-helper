@@ -14,7 +14,12 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { Claim, Suggestion, SuggestionKind } from "@/lib/domain";
+import {
+  resolveSuggestionSourceBlocks,
+  type Claim,
+  type Suggestion,
+  type SuggestionKind,
+} from "@/lib/domain";
 import { generateResumeSuggestions } from "@/lib/client/api";
 import { useAppStore } from "@/lib/client/store";
 import {
@@ -238,11 +243,22 @@ export function SuggestionReview() {
     return analysis.claims.filter((claim) => claimIds.has(claim.id));
   }, [analysis.claims, suggestion]);
   const sourceBlocks = useMemo(() => {
-    const sourceIds = new Set(suggestion?.sourceBlockIds ?? []);
-    return analysis.resume.sourceBlocks.filter((block) =>
-      sourceIds.has(block.id),
-    );
-  }, [analysis.resume.sourceBlocks, suggestion]);
+    return suggestion
+      ? resolveSuggestionSourceBlocks(analysis.resume, suggestion)
+      : [];
+  }, [analysis.resume, suggestion]);
+  const sourceDescription = useMemo(() => {
+    const first = sourceBlocks[0];
+    if (!first) return "";
+    const extractionSources = new Set(sourceBlocks.map((block) => block.source));
+    const extractionLabel =
+      extractionSources.size > 1
+        ? "混合解析"
+        : first.source === "ocr"
+          ? "OCR"
+          : "原生文字";
+    return `第 ${first.pageIndex + 1} 页 · ${extractionLabel}`;
+  }, [sourceBlocks]);
 
   if (!suggestion) {
     return <div className="p-6 text-sm text-muted">没有需要审阅的建议。</div>;
@@ -419,9 +435,16 @@ export function SuggestionReview() {
         <div className="mt-5 space-y-4">
           <div>
             <p className="text-xs font-medium text-muted">原文</p>
-            <p className="mt-1.5 rounded-[8px] border border-line bg-[#f7f7f8] p-3 text-sm leading-6 text-ink">
-              {suggestion.originalText || "此项为结构建议"}
-            </p>
+            <div className="mt-1.5 rounded-[8px] border border-line bg-[#f7f7f8] p-3">
+              <p className="text-sm leading-6 text-ink">
+                {suggestion.originalText || "此项为结构建议"}
+              </p>
+              {sourceDescription ? (
+                <p className="mt-2 text-xs font-medium text-muted">
+                  {sourceDescription}
+                </p>
+              ) : null}
+            </div>
           </div>
           {suggestion.proposedText ? (
             <div>
@@ -477,26 +500,6 @@ export function SuggestionReview() {
                 </span>
               ))}
             </div>
-          </div>
-        ) : null}
-
-        {sourceBlocks.length > 0 ? (
-          <div className="mt-5">
-            <p className="text-xs font-medium text-muted">原文来源</p>
-            <ul className="mt-2 space-y-2">
-              {sourceBlocks.slice(0, 2).map((block) => (
-                <li
-                  key={block.id}
-                  className="rounded-[8px] border border-line px-3 py-2 text-xs leading-5"
-                >
-                  <span className="font-medium text-muted">
-                    第 {block.pageIndex + 1} 页 ·{" "}
-                    {block.source === "ocr" ? "OCR" : "原生文字"}
-                  </span>
-                  <span className="mt-1 block text-ink">{block.text}</span>
-                </li>
-              ))}
-            </ul>
           </div>
         ) : null}
 

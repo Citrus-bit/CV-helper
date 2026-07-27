@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { CAPABILITY_CATALOG, CAPABILITY_IDS } from "@/lib/capabilities";
 import { createDefaultCapabilityRegistry } from "@/lib/baseline";
-import { ResumeDocumentSchema, type ResumeDocument } from "@/lib/domain";
+import {
+  ResumeDocumentSchema,
+  type ResumeDocument,
+  type Suggestion,
+} from "@/lib/domain";
 
 const context = {
   sessionId: "session-test",
@@ -36,8 +40,38 @@ function resumeFixture(): ResumeDocument {
         id: "block-1",
         pageIndex: 0,
         order: 0,
-        text: "负责 TypeScript 平台开发",
+        text: "主要负责 TypeScript 平台开发",
         bbox: { x: 20, y: 20, width: 300, height: 20 },
+        source: "native",
+        confidence: 0.99,
+        role: "list-item",
+      },
+      {
+        id: "block-2",
+        pageIndex: 0,
+        order: 1,
+        text: "优化接口响应时间 35%，并建立回归监控",
+        bbox: { x: 20, y: 50, width: 300, height: 20 },
+        source: "native",
+        confidence: 0.99,
+        role: "list-item",
+      },
+      {
+        id: "block-3",
+        pageIndex: 0,
+        order: 2,
+        text: "建设发布流程并支持团队交付",
+        bbox: { x: 20, y: 80, width: 300, height: 20 },
+        source: "native",
+        confidence: 0.99,
+        role: "list-item",
+      },
+      {
+        id: "block-4",
+        pageIndex: 0,
+        order: 3,
+        text: "打造行业领先的交付平台",
+        bbox: { x: 20, y: 110, width: 300, height: 20 },
         source: "native",
         confidence: 0.99,
         role: "list-item",
@@ -57,7 +91,7 @@ function resumeFixture(): ResumeDocument {
           id: "section-experience",
           type: "experience",
           title: "工作经历",
-          sourceBlockIds: ["block-1"],
+          sourceBlockIds: ["block-1", "block-2", "block-3", "block-4"],
           entries: [
             {
               id: "entry-1",
@@ -71,7 +105,7 @@ function resumeFixture(): ResumeDocument {
                 "打造行业领先的交付平台",
               ],
               keywords: ["TypeScript"],
-              sourceBlockIds: ["block-1"],
+              sourceBlockIds: ["block-1", "block-2", "block-3", "block-4"],
             },
           ],
         },
@@ -238,17 +272,6 @@ describe("deterministic resume baseline", () => {
     expect(suggestions.data.suggestions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          kind: "ask_user",
-          originalText: "建设发布流程并支持团队交付",
-          patches: [
-            {
-              operation: "replace",
-              path: "/sections/0/entries/0/bullets/2",
-              value: "建设发布流程并支持团队交付",
-            },
-          ],
-        }),
-        expect.objectContaining({
           kind: "needs_proof",
           originalText: "打造行业领先的交付平台",
           patches: [
@@ -266,6 +289,48 @@ describe("deterministic resume baseline", () => {
         (suggestion) => suggestion.proposedText !== "提升 50%",
       ),
     ).toBe(true);
+    expect(
+      suggestions.data.suggestions.some(
+        (suggestion) => suggestion.kind === "ask_user",
+      ),
+    ).toBe(false);
+    expect(suggestions.data.suggestions[0]?.kind).toBe("needs_proof");
+    expect(suggestions.data.suggestions.length).toBeLessThanOrEqual(8);
+  });
+
+  it("caps fallback findings and never turns missing metrics into template questions", async () => {
+    const registry = createDefaultCapabilityRegistry();
+    const resume = resumeFixture();
+    const entry = resume.ast.sections[0].entries[0];
+    entry.bullets = Array.from(
+      { length: 18 },
+      (_, index) => `主要负责第 ${index + 1} 个交付流程`,
+    );
+    resume.sourceBlocks = entry.bullets.map((text, index) => ({
+      id: `bulk-${index}`,
+      pageIndex: 0,
+      order: index,
+      text,
+      bbox: { x: 20, y: 20 + index * 20, width: 300, height: 18 },
+      source: "native" as const,
+      confidence: 0.99,
+      role: "list-item" as const,
+    }));
+    entry.sourceBlockIds = resume.sourceBlocks.map((block) => block.id);
+    resume.ast.sections[0].sourceBlockIds = entry.sourceBlockIds;
+
+    const result = await registry.invoke<unknown, { suggestions: Suggestion[] }>(
+      "resume.suggest",
+      { resume, claims: [] },
+      context,
+    );
+
+    expect(result.data.suggestions).toHaveLength(1);
+    expect(result.data.suggestions[0]).toMatchObject({
+      kind: "rewrite",
+      sourceBlockIds: ["bulk-0"],
+      rationale: "删除弱化表达“主要”",
+    });
   });
 
   it("parses a JD and maps each requirement to explicit evidence", async () => {

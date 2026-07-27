@@ -91,6 +91,70 @@ const parsed: ParsedPdfResult = {
 };
 
 describe("analyzeParsedResume ATS audit", () => {
+  it("merges visual continuation lines into complete logical bullets", () => {
+    const wrappedParsed: ParsedPdfResult = {
+      ...structuredClone(parsed),
+      text: [
+        "候选人",
+        "candidate@example.com",
+        "项目经历",
+        "知识库 2025-06 - 2025-08",
+        "• 使用 Redis 缓存热",
+        "点数据和会话上下",
+        "文，提高系统响应速度。",
+        "• 设计知识库管理模块。",
+      ].join("\n"),
+      extractionMode: "native",
+      blocks: [
+        ...parsed.blocks.slice(0, 2),
+        {
+          id: "projects-heading",
+          pageIndex: 0,
+          order: 2,
+          text: "项目经历",
+          source: "pdf",
+          confidence: 0.99,
+          bbox: { x: 0.1, y: 0.2, width: 0.2, height: 0.025 },
+        },
+        {
+          id: "project-title",
+          pageIndex: 0,
+          order: 3,
+          text: "知识库 2025-06 - 2025-08",
+          source: "pdf",
+          confidence: 0.99,
+          bbox: { x: 0.1, y: 0.24, width: 0.5, height: 0.02 },
+        },
+        ...[
+          "• 使用 Redis 缓存热",
+          "点数据和会话上下",
+          "文，提高系统响应速度。",
+          "• 设计知识库管理模块。",
+        ].map((text, index) => ({
+          id: `project-line-${index}`,
+          pageIndex: 0,
+          order: 4 + index,
+          text,
+          source: "pdf" as const,
+          confidence: 0.99,
+          bbox: {
+            x: index === 0 || index === 3 ? 0.1 : 0.12,
+            y: 0.28 + index * 0.025,
+            width: 0.65,
+            height: 0.02,
+          },
+        })),
+      ],
+    };
+
+    const resume = resumeDocumentFromParsed(wrappedParsed);
+
+    expect(resume.ast.sections[0]?.entries[0]?.bullets).toEqual([
+      "使用 Redis 缓存热点数据和会话上下文，提高系统响应速度。",
+      "设计知识库管理模块。",
+    ]);
+  });
+
   it("keeps native typography on AST-linked source blocks", () => {
     const styledParsed = structuredClone(parsed);
     const heading = styledParsed.blocks.find((block) => block.id === "heading");
@@ -137,7 +201,7 @@ describe("analyzeParsedResume ATS audit", () => {
     ]);
   });
 
-  it("assesses claims before preserving conflict and proof-required semantics", async () => {
+  it("assesses conflicts without creating suggestions for untraceable AST text", async () => {
     const conflictAst: ResumeAST = {
       ...ast,
       locale: "en-US",
@@ -169,11 +233,7 @@ describe("analyzeParsedResume ATS audit", () => {
       confidence: 0.65,
     });
     const proofSuggestion = analysis.suggestions.find((suggestion) => suggestion.originalText.includes("industry-leading"));
-    expect(proofSuggestion).toMatchObject({
-      kind: "needs_proof",
-      patches: [expect.objectContaining({ value: "Built an industry-leading delivery platform." })],
-    });
-    expect(proofSuggestion).not.toHaveProperty("proposedText");
+    expect(proofSuggestion).toBeUndefined();
     expect(analysis.processing.capabilityVersions).toMatchObject({
       "claim.assess": "claim.assess@1.0.0",
       "claim.conflict": "claim.conflict@1.0.0",

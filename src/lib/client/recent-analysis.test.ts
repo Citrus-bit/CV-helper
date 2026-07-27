@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { AnalysisBundle } from "./contracts";
+import type { AnalysisBundle, RenderResponse } from "./contracts";
 import { stableId } from "@/lib/baseline/utils";
 import {
   applyRecentAnalysisPolicy,
@@ -70,7 +70,6 @@ function analysisFixture(
     },
     suggestions: [],
     stories: [],
-    pagePreviews: ["data:image/png;base64,cHJldmlldw=="],
     originalPdfBase64: "cGRm",
     processing: {
       extractionMode: "native",
@@ -130,6 +129,64 @@ afterEach(async () => {
 });
 
 describe("recent analysis IndexedDB repository", () => {
+  it("persists audited renders and drops them when the resume revision changes", async () => {
+    const archived = payload("resume-render-cache");
+    const sha256 = "a".repeat(64);
+    const hardGate = { passed: true, blockingCheckIds: [] };
+    archived.renders = {
+      professional: {
+        template: "professional",
+        pdfBase64: "JVBERi0=",
+        sha256,
+        byteLength: 5,
+        searchableText: true,
+        astContentCovered: true,
+        hardGate,
+        report: {
+          resumeId: "resume-render-cache",
+          resumeRevision: 0,
+          template: "professional",
+          artifactSha256: sha256,
+          pageCount: 1,
+          downloadable: true,
+          searchableText: true,
+          contentComplete: true,
+          hardGate,
+          overallScore: 100,
+          checks: [],
+          generatedAt: "2026-07-27T00:00:00.000Z",
+        },
+      } satisfies RenderResponse,
+    };
+
+    await saveRecentAnalysis(
+      {
+        payload: archived,
+        expiresAt: new Date(start + 60_000).toISOString(),
+      },
+      start,
+    );
+    expect(
+      (await getRecentAnalysis("resume-render-cache", start + 1))?.payload
+        .renders?.professional?.sha256,
+    ).toBe(sha256);
+
+    archived.analysis.resume.revision = 1;
+    archived.analysis.scorecard.resumeRevision = 1;
+    archived.renders = {};
+    await saveRecentAnalysis(
+      {
+        payload: archived,
+        expiresAt: new Date(start + 60_000).toISOString(),
+      },
+      start + 2,
+    );
+    expect(
+      (await getRecentAnalysis("resume-render-cache", start + 3))?.payload
+        .renders,
+    ).toEqual({});
+  });
+
   it("stores the PDF as a Blob while removing binary strings from the structured snapshot", async () => {
     const pdfBlob = new Blob(["local-pdf"], { type: "application/pdf" });
     const summaries = await saveRecentAnalysis(
@@ -153,7 +210,7 @@ describe("recent analysis IndexedDB repository", () => {
     expect(record?.pdfBlob?.size).toBe(pdfBlob.size);
     expect(record?.pdfSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(record?.payload.analysis.originalPdfBase64).toBeUndefined();
-    expect(record?.payload.analysis.pagePreviews).toEqual([]);
+    expect(record?.payload.analysis).not.toHaveProperty("pagePreviews");
   });
 
   it("round-trips versioned interview progress without requiring audio data", async () => {

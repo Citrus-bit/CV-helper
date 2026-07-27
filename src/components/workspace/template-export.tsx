@@ -64,7 +64,7 @@ export function exportConfirmationBlocker(input: {
 }) {
   if (!input.hasOriginalPdf) return "请先重新附加原 PDF，再进行最终对照确认。";
   if (!input.hardGatePassed || !input.downloadable || !input.astContentCovered)
-    return "当前版本未通过导出质量门，请重新生成或调整内容。";
+    return "当前 PDF 存在致命导出错误，请重新生成或调整内容。";
   if (!input.previewed) return "等待新版 PDF 预览完成像素验证后确认。";
   return null;
 }
@@ -166,17 +166,17 @@ export function TemplateExport() {
   const auditNeedsAttention = current
     ? current.report.checks.some((check) => check.status !== "pass")
     : false;
+  const warningCount = current
+    ? current.report.checks.filter((check) => check.status === "warn").length
+    : 0;
 
   const downloadMutation = useMutation({
     mutationFn: () => {
       if (!current) throw new Error("当前没有可下载的 PDF。");
       return downloadVerifiedResume({
-        resumeId: target.id,
         revision: current.report.resumeRevision,
-        ast: target.ast,
         template: selectedTemplate,
         render: current,
-        sourcePageCount: analysis.resume.pageCount,
       });
     },
   });
@@ -195,10 +195,10 @@ export function TemplateExport() {
     >
       <div className="border-b border-line px-5 py-3.5">
         <h2 id="template-heading" className="text-sm font-semibold">
-          排版预览与导出
+          PDF 排版与导出
         </h2>
         <p className="mt-1 text-xs leading-5 text-muted">
-          正在处理{target.name}，预览和下载来自同一份真实 PDF。
+          正在处理{target.name}，预览和下载来自同一份真实 PDF，不调用 AI。
         </p>
       </div>
 
@@ -345,7 +345,7 @@ export function TemplateExport() {
                 />
                 <div>
                   <p className="text-sm font-semibold">
-                    导出质量 {Math.round(current.report.overallScore)} / 100
+                    PDF 导出检查 {Math.round(current.report.overallScore)} / 100
                   </p>
                   <p className="text-xs text-muted">
                     {current.report.pageCount} 页 · {passedCheckCount}/
@@ -453,7 +453,9 @@ export function TemplateExport() {
               />
               <span className={canConfirm ? "" : "text-muted"}>
                 {canConfirm
-                  ? "已对照原版，确认将当前模板用于最终下载。"
+                  ? warningCount > 0
+                    ? `已查看预览，确认在 ${warningCount} 项排版提示下下载当前文件。`
+                    : "已对照原版，确认将当前模板用于最终下载。"
                   : confirmationBlocker}
               </span>
             </label>
@@ -483,12 +485,7 @@ export function TemplateExport() {
               )}
               {downloadMutation.isPending ? (
                 <>
-                  <span>正在复核</span>
-                  <EstimatedProgressText
-                    expectedDurationMs={estimatedDurations.pdfGeneration}
-                    label="最终 PDF 复核预估进度"
-                    className="text-white/85"
-                  />
+                  <span>正在校验文件</span>
                 </>
               ) : (
                 "下载最终 PDF"

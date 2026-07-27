@@ -9,6 +9,7 @@ import {
   InterviewPlanSchema,
   JobDraftSchema,
   JobMatchBundleSchema,
+  RenderResponseSchema,
   dedupeConsistencyWarnings,
   type AnalysisBundle,
   type EvaluationResponse,
@@ -23,11 +24,11 @@ import type {
   Claim,
   EvidenceAsset,
   InterviewStory,
-  ResumeAST,
   Suggestion,
   SuggestionPatch,
   SuggestionStatus,
 } from "@/lib/domain";
+import { ResumeASTSchema, type ResumeAST } from "@/lib/domain";
 import {
   claimParts,
   excerpt,
@@ -79,7 +80,7 @@ const LOCAL_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 export type WorkspaceModule = "resume" | "job" | "interview";
 export type WorkspaceStage = "upload" | "analyzing" | "workspace";
 export type TemplateId = "professional" | "minimal" | "compact";
-export type PreviewMode = "original" | "locate" | "current" | "compare";
+export type PreviewMode = "original" | "current" | "compare";
 export type ResumePanel = "suggestions" | "chat" | "templates";
 export type InterviewProgressUpdate = Partial<
   Pick<
@@ -99,7 +100,7 @@ type LegacySnapshot = Pick<
 >;
 type PersistedSnapshot = Omit<
   AnalysisBundle,
-  "pagePreviews" | "originalPdfBase64"
+  "originalPdfBase64"
 >;
 type Snapshot = AnalysisBundle | PersistedSnapshot | LegacySnapshot;
 
@@ -145,6 +146,7 @@ export type AppState = {
     sourceVersion: string,
   ) => void;
   applyAiSuggestions: () => number;
+  applyManualResumeAst: (ast: ResumeAST, changeSummary?: string) => number | null;
   beginResumeChatTurn: (content: string) => ResumeChatMessage | null;
   completeResumeChatTurn: (
     userMessageId: string,
@@ -339,8 +341,6 @@ function mergeLocalReanalysisVersions(
 
 function persistedSnapshot(snapshotValue: Snapshot): Snapshot {
   const projected = structuredClone(snapshotValue);
-  if ("pagePreviews" in projected)
-    delete (projected as Partial<AnalysisBundle>).pagePreviews;
   if ("originalPdfBase64" in projected)
     delete (projected as Partial<AnalysisBundle>).originalPdfBase64;
   return projected as PersistedSnapshot;
@@ -350,13 +350,6 @@ function restoreSnapshot(
   current: AnalysisBundle,
   previous: Snapshot,
 ): AnalysisBundle {
-  if (
-    "processing" in previous &&
-    "pagePreviews" in previous &&
-    Array.isArray(previous.pagePreviews)
-  ) {
-    return structuredClone(previous);
-  }
   return { ...current, ...structuredClone(previous) };
 }
 
@@ -996,7 +989,34 @@ function recentPayload(state: AppState): RecentAnalysisPayload | null {
     selectedTemplate: state.selectedTemplate,
     activeResumeVariantId: state.activeResumeVariantId,
     resumePanel: state.resumePanel,
+    renders: state.renders,
   };
+}
+
+function restoredRenderMap(
+  value: RecentAnalysisPayload["renders"],
+  analysis: AnalysisBundle,
+  jobMatch: JobMatchBundle | null,
+): Partial<Record<TemplateId, RenderResponse>> {
+  const targets = new Map<string, number>([
+    [analysis.resume.id, analysis.resume.revision],
+    ...(jobMatch?.variant
+      ? [[jobMatch.variant.id, jobMatch.variant.revision] as [string, number]]
+      : []),
+  ]);
+  const restored: Partial<Record<TemplateId, RenderResponse>> = {};
+  for (const [template, candidate] of Object.entries(value ?? {})) {
+    const parsed = RenderResponseSchema.safeParse(candidate);
+    if (
+      !parsed.success ||
+      targets.get(parsed.data.report.resumeId) !==
+        parsed.data.report.resumeRevision
+    ) {
+      continue;
+    }
+    restored[template as TemplateId] = parsed.data;
+  }
+  return restored;
 }
 
 async function saveCurrentSessionToRecent(): Promise<RecentAnalysisSummary[]> {
@@ -1025,18 +1045,29 @@ async function refreshCurrentSessionArchive(): Promise<
       ? await saveCurrentSessionToRecent()
       : existing;
   const current = useAppStore.getState();
-  if (current.analysis && !current.analysis.originalPdfBase64) {
+  if (current.analysis) {
     const record = await getRecentAnalysis(current.analysis.resume.id);
-    if (record?.pdfBlob) {
-      const originalPdfBase64 = await blobToBase64(record.pdfBlob);
-      const latest = useAppStore.getState();
-      if (
-        latest.analysis?.resume.id === record.id &&
-        !latest.analysis.originalPdfBase64
-      ) {
+    const latest = useAppStore.getState();
+    if (record && latest.analysis?.resume.id === record.id) {
+      let originalPdfBase64 = latest.analysis.originalPdfBase64;
+      if (!originalPdfBase64 && record.pdfBlob) {
+        originalPdfBase64 = await blobToBase64(record.pdfBlob);
+      }
+      const cachedRenders = restoredRenderMap(
+        record.payload.renders,
+        latest.analysis,
+        latest.jobMatch,
+      );
+      const shouldRestoreRenders =
+        Object.keys(latest.renders).length === 0 &&
+        Object.keys(cachedRenders).length > 0;
+      if (originalPdfBase64 || shouldRestoreRenders) {
         useAppStore.setState({
-          analysis: { ...latest.analysis, originalPdfBase64 },
-          sourcePdfBlob: record.pdfBlob,
+          analysis: originalPdfBase64
+            ? { ...latest.analysis, originalPdfBase64 }
+            : latest.analysis,
+          sourcePdfBlob: record.pdfBlob ?? latest.sourcePdfBlob,
+          ...(shouldRestoreRenders ? { renders: cachedRenders } : {}),
         });
       }
     }
@@ -1123,7 +1154,9 @@ export const useAppStore = create<AppState>()(
       },
       selectSuggestion: (selectedSuggestionId) =>
         set((state) =>
-          state.homeNavigationPending ? state : { selectedSuggestionId },
+          state.homeNavigationPending
+            ? state
+            : { selectedSuggestionId, previewMode: "original" },
         ),
       decideSuggestion: (id, status, manualText) =>
         set((state) => {
@@ -1409,6 +1442,76 @@ export const useAppStore = create<AppState>()(
           };
         });
         return appliedCount;
+      },
+      applyManualResumeAst: (ast, changeSummary = "已直接编辑简历内容。") => {
+        const parsed = ResumeASTSchema.safeParse(ast);
+        if (!parsed.success) return null;
+        let appliedRevision: number | null = null;
+        set((state) => {
+          if (!state.analysis || state.homeNavigationPending) return state;
+          if (
+            JSON.stringify(parsed.data) ===
+            JSON.stringify(state.analysis.resume.ast)
+          ) {
+            return state;
+          }
+          const resume = {
+            ...state.analysis.resume,
+            revision: state.analysis.resume.revision + 1,
+            ast: parsed.data,
+          };
+          const reanalysis = reanalyzeResumeRevision({
+            analysis: state.analysis,
+            resume,
+          });
+          const suggestions = state.analysis.suggestions.map((suggestion) =>
+            suggestion.status === "pending"
+              ? { ...suggestion, status: "stale" as const }
+              : suggestion,
+          );
+          const undoStack = [
+            ...state.undoStack,
+            snapshot(state.analysis),
+          ].slice(-20);
+          const nextAnalysis = {
+            ...state.analysis,
+            resume,
+            claims: reanalysis.claims,
+            evidence: reanalysis.evidence,
+            scorecard: reanalysis.scorecard,
+            suggestions,
+            stories: reanalysis.stories,
+            processing: {
+              ...state.analysis.processing,
+              capabilityVersions: mergeLocalReanalysisVersions(
+                state.analysis.processing.capabilityVersions,
+                reanalysis.capabilityVersions,
+              ),
+            },
+          };
+          appliedRevision = resume.revision;
+          return {
+            analysis: nextAnalysis,
+            resumeChat: resumeChatAfterRevision(
+              state.resumeChat,
+              nextAnalysis,
+              changeSummary,
+            ),
+            selectedSuggestionId:
+              suggestions.find((suggestion) => suggestion.status !== "stale")
+                ?.id ?? null,
+            undoStack,
+            ...invalidatedDerivedState("templates"),
+            interviewSessionVersion: state.interviewSessionVersion + 1,
+          };
+        });
+        if (appliedRevision !== null) {
+          void saveCurrentSessionToRecent().then(
+            (recentAnalyses) => set({ recentAnalyses }),
+            () => undefined,
+          );
+        }
+        return appliedRevision;
       },
       beginResumeChatTurn: (content) => {
         const normalized = content.trim();
@@ -1862,18 +1965,27 @@ export const useAppStore = create<AppState>()(
             previewedRenderHashes: [...state.previewedRenderHashes, sha256],
           };
         }),
-      setRender: (render) =>
+      setRender: (render) => {
+        let accepted = false;
         set((state) => {
           if (state.homeNavigationPending || state.stage !== "workspace")
             return state;
           if (!isRenderForActiveResume(state, render)) return state;
+          accepted = true;
           return {
             renders: { ...state.renders, [render.template]: render },
             previewMode: state.analysis?.originalPdfBase64
               ? "compare"
               : "current",
           };
-        }),
+        });
+        if (accepted) {
+          void saveCurrentSessionToRecent().then(
+            (recentAnalyses) => set({ recentAnalyses }),
+            () => undefined,
+          );
+        }
+      },
       refreshRecentSessions: async () => {
         set({ recentAnalysesLoading: true });
         try {
@@ -1983,7 +2095,6 @@ export const useAppStore = create<AppState>()(
         }
         const parsedAnalysis = AnalysisBundleSchema.safeParse({
           ...record.payload.analysis,
-          pagePreviews: [],
           originalPdfBase64,
         });
         if (!parsedAnalysis.success) {
@@ -2065,6 +2176,12 @@ export const useAppStore = create<AppState>()(
           analysis.resume.id,
           analysis.resume.revision,
         );
+        const renders = restoredRenderMap(
+          record.payload.renders,
+          analysis,
+          jobMatch,
+        );
+        const hasCachedRender = Object.keys(renders).length > 0;
 
         set((state) => ({
           stage: "workspace",
@@ -2085,9 +2202,15 @@ export const useAppStore = create<AppState>()(
           activeResumeVariantId,
           resumePanel,
           selectedTemplate: record.payload.selectedTemplate,
-          previewMode: activeResumeVariantId ? "current" : "original",
+          previewMode: activeResumeVariantId
+            ? "current"
+            : hasCachedRender
+              ? originalPdfBase64
+                ? "compare"
+                : "current"
+              : "original",
           previewedRenderHashes: [],
-          renders: {},
+          renders,
           undoStack: [],
           sourcePdfBlob: record.pdfBlob ?? null,
           homeNavigationPending: false,
@@ -2212,7 +2335,6 @@ export const useAppStore = create<AppState>()(
         analysis: state.analysis
           ? {
               ...state.analysis,
-              pagePreviews: [],
               originalPdfBase64: undefined,
             }
           : null,

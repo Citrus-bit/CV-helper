@@ -3,7 +3,7 @@ import {
   hasMeaningfulPageVisuals,
 } from "@/lib/pdf-visual-audit";
 
-export type PdfFirstPageRenderResult = {
+export type PdfPageRenderResult = {
   pageCount: number;
   width: number;
   height: number;
@@ -55,11 +55,12 @@ export function canvasContainsRenderedPixels(
   );
 }
 
-export async function renderPdfFirstPage(
+export async function renderPdfPage(
   pdfBase64: string,
+  pageIndex: number,
   canvas: HTMLCanvasElement,
   signal?: AbortSignal,
-): Promise<PdfFirstPageRenderResult> {
+): Promise<PdfPageRenderResult> {
   if (signal?.aborted) throw abortError();
 
   const pdfjs = await loadPdfJs();
@@ -82,7 +83,6 @@ export async function renderPdfFirstPage(
     destroyPromise ??= loadingTask.destroy();
     return destroyPromise;
   };
-
   const cancel = () => {
     renderTask?.cancel();
     void destroy();
@@ -92,9 +92,11 @@ export async function renderPdfFirstPage(
   try {
     pdfDocument = await loadingTask.promise;
     if (signal?.aborted) throw abortError();
-    if (pdfDocument.numPages < 1) throw new Error("PDF 没有可预览的页面。");
+    if (pageIndex < 0 || pageIndex >= pdfDocument.numPages) {
+      throw new Error("PDF 页码超出可预览范围。");
+    }
 
-    const page = await pdfDocument.getPage(1);
+    const page = await pdfDocument.getPage(pageIndex + 1);
     const scale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
     const viewport = page.getViewport({ scale });
     const width = Math.max(1, Math.ceil(viewport.width));
@@ -118,7 +120,7 @@ export async function renderPdfFirstPage(
     await renderTask.promise;
     if (signal?.aborted) throw abortError();
     if (!canvasContainsRenderedPixels(context, width, height)) {
-      throw new Error("PDF 第一页缺少足够的可见内容或文字对比度。");
+      throw new Error("PDF 当前页缺少足够的可见内容或文字对比度。");
     }
 
     return {

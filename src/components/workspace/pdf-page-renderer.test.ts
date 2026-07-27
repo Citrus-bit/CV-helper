@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 import {
   canvasContainsRenderedPixels,
   decodePdfBase64,
-} from "./pdf-first-page-renderer";
+} from "./pdf-page-renderer";
 
-describe("PDF first-page renderer guards", () => {
+describe("PDF page renderer guards", () => {
   it("decodes bare and data-URL PDF payloads", () => {
     expect([...decodePdfBase64("JVBERi0=")]).toEqual([37, 80, 68, 70, 45]);
     expect([

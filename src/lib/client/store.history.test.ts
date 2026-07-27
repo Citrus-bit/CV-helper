@@ -84,7 +84,6 @@ function analysisFixture(): AnalysisBundle {
     },
     suggestions: [],
     stories: [],
-    pagePreviews: [],
     processing: {
       extractionMode: "native",
       durationMs: 12,

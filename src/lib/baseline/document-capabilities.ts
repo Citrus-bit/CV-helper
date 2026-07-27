@@ -8,6 +8,10 @@ import {
   type CapabilityId,
 } from "@/lib/capabilities";
 import type { AuditCheck, SourceBlock } from "@/lib/domain";
+import {
+  exportBlockingCheckIds,
+  qualityThresholdCheck,
+} from "@/lib/export-quality";
 import { loadPdfJs } from "@/lib/server/pdfjs";
 
 import {
@@ -502,7 +506,7 @@ export const exportAuditCapability = defineCapability(
           contentComplete: false,
           hardGate: {
             passed: false,
-            blockingCheckIds: ["valid-pdf", "quality-threshold"],
+            blockingCheckIds: ["valid-pdf"],
           },
           overallScore: 0,
           checks: [
@@ -529,7 +533,7 @@ export const exportAuditCapability = defineCapability(
         contentComplete: false,
         hardGate: {
           passed: false,
-          blockingCheckIds: ["valid-pdf", "quality-threshold"],
+          blockingCheckIds: ["valid-pdf"],
         },
         overallScore: 0,
         checks: [
@@ -559,18 +563,9 @@ export const exportAuditCapability = defineCapability(
     const overallScore = hashMatches
       ? baseReport.overallScore
       : Math.max(0, baseReport.overallScore - 22);
-    const qualityCheck = auditCheck(
-      "quality-threshold",
-      "综合质量门槛",
-      overallScore >= 85 ? "pass" : "fail",
-      overallScore >= 85
-        ? "综合质量达到下载门槛。"
-        : "综合质量低于 85 分，禁止下载。",
-    );
+    const qualityCheck = qualityThresholdCheck(overallScore);
     const checks = [...checksWithoutIntegrity, hashCheck, qualityCheck];
-    const blockingCheckIds = checks
-      .filter((item) => item.status === "fail")
-      .map((item) => item.id);
+    const blockingCheckIds = exportBlockingCheckIds(checks);
     const searchableText =
       checks.find((item) => item.id === "searchable-text")?.status === "pass";
     const astContentCovered =

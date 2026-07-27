@@ -12,6 +12,7 @@ import { DocumentPreview } from "./document-preview";
 import { ScorePanel } from "./score-panel";
 import { SuggestionReview } from "./suggestion-review";
 import { ResumeChat } from "./resume-chat";
+import { ResumeContentEditor } from "./resume-content-editor";
 import { TemplateExport } from "./template-export";
 import { useAppStore, type ResumePanel } from "@/lib/client/store";
 
@@ -108,6 +109,9 @@ export function ResumeWorkspace() {
           atsAudit={analysis.atsAudit}
           sourceBlocks={analysis.resume.sourceBlocks}
         />
+        <div className="shrink-0 border-b border-line px-4 py-3">
+          <ResumeContentEditor />
+        </div>
         <Tabs.Root
           value={resumePanel}
           onValueChange={changePanel}

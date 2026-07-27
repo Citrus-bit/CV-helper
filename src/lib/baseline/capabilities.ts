@@ -6,13 +6,14 @@ import {
   type CapabilityExecution,
   type CapabilityId,
 } from "@/lib/capabilities";
-import type {
-  AnswerEvaluation,
-  Claim,
-  EvidenceAsset,
-  InterviewQuestion,
-  ScoreDimension,
-  Suggestion,
+import {
+  resolveResumeTextSourceBlocks,
+  type AnswerEvaluation,
+  type Claim,
+  type EvidenceAsset,
+  type InterviewQuestion,
+  type ScoreDimension,
+  type Suggestion,
 } from "@/lib/domain";
 
 import {
@@ -495,7 +496,12 @@ export const resumeSuggestCapability = defineCapability(
           );
           const path = `/sections/${sectionIndex}/entries/${entryIndex}/bullets/${bulletIndex}`;
           const beforeHash = stableId("hash", bullet);
-          const sourceBlockIds = entry.sourceBlockIds;
+          const sourceBlockIds = resolveResumeTextSourceBlocks(
+            input.resume,
+            path,
+            bullet,
+          ).map((block) => block.id);
+          if (sourceBlockIds.length === 0) return;
           if (
             /行业领先|世界级|顶尖|第一|best[- ]in[- ]class|world[- ]class|industry[- ]leading/i.test(
               bullet,
@@ -524,10 +530,7 @@ export const resumeSuggestCapability = defineCapability(
           }
           const locale = input.resume.locale === "en-US" ? "en" : "zh";
           const rewritten = conservativeRewrite(bullet, locale);
-          if (
-            rewritten.text !== normalizeText(bullet) ||
-            bullet.length > (locale === "zh" ? 120 : 220)
-          ) {
+          if (rewritten.text !== normalizeText(bullet)) {
             const proposed = rewritten.text;
             suggestions.push({
               id: stableId("suggestion", `${path}:rewrite:${bullet}`),
@@ -538,9 +541,7 @@ export const resumeSuggestCapability = defineCapability(
               status: "pending",
               originalText: bullet,
               proposedText: proposed,
-              rationale:
-                rewritten.changes.join("；") ||
-                "该要点偏长，建议保留事实后手动压缩。",
+              rationale: rewritten.changes.join("；"),
               beforeHash,
               patches:
                 proposed === bullet
@@ -552,43 +553,47 @@ export const resumeSuggestCapability = defineCapability(
             });
             return;
           }
-          if (
-            !numericTokens(bullet).length &&
-            (section.type === "experience" || section.type === "projects")
-          ) {
-            suggestions.push({
-              id: stableId("suggestion", `${path}:ask:${bullet}`),
-              resumeRevision: input.resume.revision,
-              sourceBlockIds,
-              claimIds: claim ? [claim.id] : [],
-              kind: "ask_user",
-              status: "pending",
-              originalText: bullet,
-              rationale:
-                "当前描述说明了工作，但没有呈现可核实的结果；系统不会自行补造数字。",
-              question:
-                "这项工作带来了什么可核实变化（效率、质量、规模、收入或用户反馈）？",
-              beforeHash,
-              // The original value is intentionally a no-op until the user supplies
-              // a factual replacement and reviews it as a normal rewrite.
-              patches: [{ operation: "replace", path, value: bullet }],
-              affectedDimensions: ["impact"],
-              factRisk: "medium",
-              interviewRisk: "low",
-            });
-          }
         });
       });
     });
+    const seenPaths = new Set<string>();
+    const seenRationales = new Set<string>();
+    const seenQuestions = new Set<string>();
+    const selectedSuggestions = suggestions
+      .slice()
+      .sort((left, right) => {
+        const priority = (suggestion: Suggestion) =>
+          suggestion.kind === "needs_proof" ? 0 : 1;
+        return priority(left) - priority(right);
+      })
+      .filter((suggestion) => {
+        const path = suggestion.patches[0]?.path ?? "";
+        const rationale = normalizeText(suggestion.rationale);
+        const question = suggestion.question
+          ? normalizeText(suggestion.question)
+          : "";
+        if (
+          seenPaths.has(path) ||
+          seenRationales.has(rationale) ||
+          (question && seenQuestions.has(question))
+        ) {
+          return false;
+        }
+        seenPaths.add(path);
+        seenRationales.add(rationale);
+        if (question) seenQuestions.add(question);
+        return true;
+      })
+      .slice(0, 8);
     return {
-      data: { suggestions },
+      data: { suggestions: selectedSuggestions },
       confidence: 0.74,
       evidenceReferences: [
         ...new Set(
-          suggestions.flatMap((suggestion) => suggestion.sourceBlockIds),
+          selectedSuggestions.flatMap((suggestion) => suggestion.sourceBlockIds),
         ),
       ],
-      warnings: suggestions.length
+      warnings: selectedSuggestions.length
         ? []
         : [
             {

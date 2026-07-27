@@ -190,7 +190,6 @@ function analysisFixture(): AnalysisBundle {
         riskNotes: ["结果尚不完整，回答前应补充真实信息。"],
       },
     ],
-    pagePreviews: [],
     processing: {
       extractionMode: "native",
       durationMs: 10,
@@ -252,6 +251,20 @@ function interviewPlanFixture(questionId = "question-1"): InterviewPlan {
 
 afterEach(() => {
   useAppStore.getState().reset();
+});
+
+describe("suggestion source navigation", () => {
+  it("opens the original PDF whenever a suggestion is selected", () => {
+    useAppStore.getState().setAnalysis(analysisFixture());
+    useAppStore.getState().setPreviewMode("current");
+
+    useAppStore.getState().selectSuggestion("suggestion-1");
+
+    expect(useAppStore.getState()).toMatchObject({
+      selectedSuggestionId: "suggestion-1",
+      previewMode: "original",
+    });
+  });
 });
 
 describe("job draft state", () => {

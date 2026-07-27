@@ -6,6 +6,7 @@ import type {
   InterviewSetupStage,
   JobDraft,
   JobMatchBundle,
+  RenderResponse,
 } from "./contracts";
 import type { ResumeChatContext } from "@/lib/resume-chat";
 
@@ -38,6 +39,7 @@ export type RecentAnalysisPayload = {
   activeResumeVariantId?: string | null;
   resumePanel?: "suggestions" | "chat" | "templates";
   resumeChat?: ResumeChatContext | null;
+  renders?: Partial<Record<RecentTemplateId, RenderResponse>>;
 };
 
 export type RecentAnalysisRecord = {
@@ -328,7 +330,6 @@ async function verifyGeneration(
 function withoutBinaryAnalysis(analysis: AnalysisBundle): AnalysisBundle {
   return {
     ...analysis,
-    pagePreviews: [],
     originalPdfBase64: undefined,
   };
 }
@@ -371,6 +372,24 @@ export function applyRecentAnalysisPolicy(
     .map((record) => ({ ...record }));
 
   let totalBytes = retained.reduce((sum, record) => sum + record.byteSize, 0);
+  if (totalBytes > policy.maxBytes) {
+    for (
+      let index = retained.length - 1;
+      index >= 0 && totalBytes > policy.maxBytes;
+      index -= 1
+    ) {
+      const record = retained[index];
+      if (!record.payload.renders || Object.keys(record.payload.renders).length === 0)
+        continue;
+      totalBytes -= record.byteSize;
+      const withoutRenders = withMeasuredSize({
+        ...record,
+        payload: { ...record.payload, renders: {} },
+      });
+      retained[index] = withoutRenders;
+      totalBytes += withoutRenders.byteSize;
+    }
+  }
   if (totalBytes > policy.maxBytes) {
     for (
       let index = retained.length - 1;
@@ -457,6 +476,30 @@ function buildRecord(
 ): RecentAnalysisRecord {
   const analysis = withoutBinaryAnalysis(input.payload.analysis);
   const pdfBlob = input.pdfBlob ?? existing?.pdfBlob;
+  const incomingRenders = input.payload.renders ?? {};
+  const renderCandidates = Object.keys(incomingRenders).length
+    ? incomingRenders
+    : (existing?.payload.renders ?? {});
+  const validTargets = new Map<string, number>([
+    [analysis.resume.id, analysis.resume.revision],
+    ...(input.payload.jobMatch?.variant
+      ? [
+          [
+            input.payload.jobMatch.variant.id,
+            input.payload.jobMatch.variant.revision,
+          ] as [string, number],
+        ]
+      : []),
+  ]);
+  const renders = Object.fromEntries(
+    Object.entries(renderCandidates).filter(([, render]) => {
+      if (!render) return false;
+      return (
+        validTargets.get(render.report.resumeId) ===
+        render.report.resumeRevision
+      );
+    }),
+  ) as RecentAnalysisPayload["renders"];
   return withMeasuredSize({
     id: analysis.resume.id,
     schemaVersion: 1,
@@ -479,7 +522,7 @@ function buildRecord(
     pendingSuggestionCount: analysis.suggestions.filter(
       (suggestion) => suggestion.status === "pending",
     ).length,
-    payload: { ...input.payload, analysis },
+    payload: { ...input.payload, analysis, renders },
     pdfBlob,
     pdfBytes: pdfBlob?.size ?? 0,
     pdfSha256: measuredPdfSha256 ?? input.pdfSha256 ?? existing?.pdfSha256,

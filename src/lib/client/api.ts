@@ -244,34 +244,21 @@ function arrayBufferSha256(bytes: ArrayBuffer) {
 }
 
 export async function downloadVerifiedResume(input: {
-  resumeId: string;
   revision: number;
-  ast: ResumeAST;
   template: TemplateId;
   render: RenderResponse;
-  sourcePageCount?: number;
 }) {
-  const response = await trackedFetch("/api/export/download", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      resumeId: input.resumeId,
-      revision: input.revision,
-      ast: input.ast,
-      template: input.template,
-      pdfBase64: input.render.pdfBase64,
-      expectedSha256: input.render.sha256,
-      sourcePageCount: input.sourcePageCount,
-    }),
-  });
-  if (!response.ok) throw new Error(await errorMessage(response));
-
-  const bytes = await response.arrayBuffer();
-  const responseSha256 = response.headers.get("x-artifact-sha256");
-  const actualSha256 = await arrayBufferSha256(bytes);
+  if (!input.render.hardGate.passed || !input.render.report.downloadable) {
+    throw new Error("当前 PDF 仍有致命导出错误，无法下载。");
+  }
+  const binary = window.atob(input.render.pdfBase64);
+  const bytes = Uint8Array.from(binary, (character) =>
+    character.charCodeAt(0),
+  );
+  const actualSha256 = await arrayBufferSha256(bytes.buffer);
   if (
-    responseSha256 !== input.render.sha256 ||
-    actualSha256 !== input.render.sha256
+    actualSha256 !== input.render.sha256 ||
+    input.render.report.artifactSha256 !== input.render.sha256
   ) {
     throw new Error("下载产物与已确认预览不一致，已停止下载。");
   }

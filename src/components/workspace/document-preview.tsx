@@ -14,163 +14,15 @@ import {
   estimatedDurations,
 } from "../estimated-progress";
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { BoundingBox, SourceBlock, Suggestion } from "@/lib/domain";
+import {
+  resolveSuggestionSourceBlocks,
+  type BoundingBox,
+  type SourceBlock,
+} from "@/lib/domain";
 import { pdfDataUrl } from "@/lib/client/api";
 import { useAppStore } from "@/lib/client/store";
 import { ClientPdfPreview } from "./client-pdf-preview";
-
-function normalizedMatchText(value: string) {
-  return value.toLowerCase().replace(/[\s，。；、,.!?！？:：()（）\[\]]+/g, "");
-}
-
-type SuggestionSourceReference = Pick<
-  Suggestion,
-  "sourceBlockIds" | "originalText"
->;
-
-function sourceBlockMatchScore(original: string, block: SourceBlock) {
-  const text = normalizedMatchText(block.text);
-  const overlap = [...new Set(original)].filter((character) =>
-    text.includes(character),
-  ).length;
-  const similarity = overlap / Math.max(1, new Set(original).size);
-  const containment =
-    text === original
-      ? 4
-      : text.includes(original)
-        ? 3
-        : original.includes(text) && text.length >= 4
-          ? 2
-          : 0;
-  return containment + similarity;
-}
-
-function bestSuggestionSourceBlock(
-  original: string,
-  candidates: readonly SourceBlock[],
-) {
-  return candidates
-    .map((block, index) => ({
-      block,
-      index,
-      score: sourceBlockMatchScore(original, block),
-    }))
-    .sort(
-      (left, right) => right.score - left.score || left.index - right.index,
-    )[0]?.block;
-}
-
-function matchOccurrences(original: string, text: string) {
-  const occurrences: number[] = [];
-  let fromIndex = 0;
-  while (occurrences.length < 32) {
-    const index = original.indexOf(text, fromIndex);
-    if (index < 0) break;
-    occurrences.push(index);
-    fromIndex = index + 1;
-  }
-  return occurrences;
-}
-
-export function selectSuggestionSourceBlocks(
-  suggestion: Pick<Suggestion, "sourceBlockIds" | "originalText"> | undefined,
-  sourceBlocks: readonly SourceBlock[],
-) {
-  if (!suggestion) return [];
-  const sourceIds = new Set(suggestion.sourceBlockIds);
-  const candidates = sourceBlocks.filter((block) => sourceIds.has(block.id));
-  const original = normalizedMatchText(suggestion.originalText);
-  if (!original) return candidates.slice(0, 1);
-
-  const containing = candidates.filter((block) =>
-    normalizedMatchText(block.text).includes(original),
-  );
-  if (containing.length > 0) {
-    const best = bestSuggestionSourceBlock(original, containing);
-    return best ? [best] : [];
-  }
-
-  const candidatesByPage = new Map<number, SourceBlock[]>();
-  for (const block of candidates) {
-    const text = normalizedMatchText(block.text);
-    const minimumLength = /\p{Script=Han}/u.test(text) ? 2 : 4;
-    if (text.length < minimumLength || !original.includes(text)) continue;
-    candidatesByPage.set(block.pageIndex, [
-      ...(candidatesByPage.get(block.pageIndex) ?? []),
-      block,
-    ]);
-  }
-
-  let bestPageMatch:
-    | { blocks: SourceBlock[]; coveredCharacters: number }
-    | undefined;
-  for (const pageBlocks of candidatesByPage.values()) {
-    const coverage = Array.from({ length: original.length }, () => false);
-    const matched: SourceBlock[] = [];
-    const longestFirst = pageBlocks.slice().sort((left, right) => {
-      const lengthDifference =
-        normalizedMatchText(right.text).length -
-        normalizedMatchText(left.text).length;
-      return lengthDifference || left.order - right.order;
-    });
-
-    for (const block of longestFirst) {
-      const text = normalizedMatchText(block.text);
-      let bestStart = -1;
-      let bestGain = 0;
-      for (const start of matchOccurrences(original, text)) {
-        let gain = 0;
-        for (let index = start; index < start + text.length; index += 1) {
-          if (!coverage[index]) gain += 1;
-        }
-        if (gain > bestGain) {
-          bestGain = gain;
-          bestStart = start;
-        }
-      }
-      if (bestStart < 0 || bestGain === 0) continue;
-      for (
-        let index = bestStart;
-        index < bestStart + text.length;
-        index += 1
-      ) {
-        coverage[index] = true;
-      }
-      matched.push(block);
-    }
-
-    const coveredCharacters = coverage.filter(Boolean).length;
-    if (
-      coveredCharacters > (bestPageMatch?.coveredCharacters ?? 0) ||
-      (coveredCharacters === bestPageMatch?.coveredCharacters &&
-        matched.length < (bestPageMatch?.blocks.length ?? Number.POSITIVE_INFINITY))
-    ) {
-      bestPageMatch = { blocks: matched, coveredCharacters };
-    }
-  }
-
-  if (
-    bestPageMatch &&
-    bestPageMatch.coveredCharacters >= Math.max(2, original.length * 0.25)
-  ) {
-    return bestPageMatch.blocks.sort(
-      (left, right) =>
-        left.bbox.y - right.bbox.y ||
-        left.bbox.x - right.bbox.x ||
-        left.order - right.order,
-    );
-  }
-
-  const fallback = bestSuggestionSourceBlock(original, candidates);
-  return fallback ? [fallback] : [];
-}
-
-export function selectSuggestionSourceBlock(
-  suggestion: SuggestionSourceReference | undefined,
-  sourceBlocks: readonly SourceBlock[],
-) {
-  return selectSuggestionSourceBlocks(suggestion, sourceBlocks)[0];
-}
+import { OriginalPdfPage } from "./original-pdf-page";
 
 type HighlightRectangle = {
   id: string;
@@ -284,11 +136,10 @@ export function DocumentPreview() {
     (item) => item.id === selectedSuggestionId,
   );
   const highlightTargets = useMemo(() => {
-    return selectSuggestionSourceBlocks(
-      suggestion,
-      analysis.resume.sourceBlocks,
-    );
-  }, [analysis.resume.sourceBlocks, suggestion]);
+    return suggestion
+      ? resolveSuggestionSourceBlocks(analysis.resume, suggestion)
+      : [];
+  }, [analysis.resume, suggestion]);
   const highlightTargetKey = highlightTargets.length
     ? `${suggestion?.id ?? "unknown"}:${highlightTargets.map((block) => block.id).join(":")}`
     : null;
@@ -328,7 +179,6 @@ export function DocumentPreview() {
       ),
     [highlightTargets, page],
   );
-  const preview = analysis.pagePreviews[page];
   const lowConfidencePages = useMemo(() => {
     const pages = new Map<number, number>();
     for (const block of analysis.resume.sourceBlocks) {
@@ -375,14 +225,13 @@ export function DocumentPreview() {
           className="flex rounded-[8px] bg-[#f0f1f3] p-1"
           aria-label="预览版本"
         >
-          {(["original", "locate", "current", "compare"] as const).map(
+          {(["original", "current", "compare"] as const).map(
             (value) => (
               <button
                 key={value}
                 type="button"
                 disabled={
                   (value === "original" && !originalPdf) ||
-                  (value === "locate" && !preview) ||
                   (value === "compare" && (!originalPdf || !currentPdf))
                 }
                 aria-pressed={mode === value}
@@ -391,9 +240,7 @@ export function DocumentPreview() {
               >
                 {value === "original"
                   ? "原版 PDF"
-                  : value === "locate"
-                    ? "原文定位"
-                    : value === "current"
+                  : value === "current"
                       ? "新版 PDF"
                       : "并排对照"}
               </button>
@@ -453,11 +300,7 @@ export function DocumentPreview() {
                     type="button"
                     onClick={() => {
                       setPage(pageIndex);
-                      setMode(
-                        analysis.pagePreviews[pageIndex]
-                          ? "locate"
-                          : "original",
-                      );
+                      setMode("original");
                     }}
                     className="flex min-h-11 w-full items-center justify-between gap-3 rounded-[6px] px-2 text-left transition-colors hover:bg-[#f8edcf]"
                   >
@@ -553,42 +396,16 @@ export function DocumentPreview() {
           </div>
         ) : mode === "original" && originalPdf ? (
           <div
-            className="mx-auto h-[calc(100dvh-190px)] min-h-[560px] max-w-[900px] overflow-hidden bg-white shadow-panel"
-            style={{ width: `${zoom * 100}%` }}
-          >
-            <iframe
-              title="原始简历 PDF 预览"
-              src={originalPdf}
-              className="size-full border-0"
-            />
-          </div>
-        ) : mode === "locate" && preview ? (
-          <div
-            className="relative mx-auto origin-top bg-white shadow-panel transition-[width] duration-200"
+            className="relative mx-auto origin-top overflow-hidden bg-white shadow-panel"
             style={{ width: `${zoom * 100}%`, maxWidth: 880 }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={preview}
-              alt={`原始简历第 ${page + 1} 页`}
-              className="h-auto w-full"
+            <OriginalPdfPage
+              pdfBase64={analysis.originalPdfBase64!}
+              iframeSrc={originalPdf}
+              pageIndex={page}
+              title="原始简历 PDF"
+              highlights={highlights}
             />
-            {highlights.map((highlight, index) => (
-              <span
-                key={highlight.id}
-                aria-label={
-                  index === 0 ? "当前建议对应的原文位置" : undefined
-                }
-                aria-hidden={index === 0 ? undefined : "true"}
-                className="pointer-events-none absolute bg-[#cfe5ff]/20 outline outline-2 outline-brand"
-                style={{
-                  left: `${highlight.bbox.x * 100}%`,
-                  top: `${highlight.bbox.y * 100}%`,
-                  width: `${highlight.bbox.width * 100}%`,
-                  height: `${highlight.bbox.height * 100}%`,
-                }}
-              />
-            ))}
           </div>
         ) : !originalPdf ? (
           <div className="mx-auto grid aspect-[210/297] max-w-[620px] place-items-center bg-white p-8 text-center shadow-panel">
@@ -644,14 +461,10 @@ export function DocumentPreview() {
               ) : null}
             </div>
           </div>
-        ) : (
-          <div className="mx-auto grid aspect-[210/297] max-w-[620px] place-items-center bg-white p-8 text-center text-sm text-muted shadow-panel">
-            原文定位图已清理，请切换到“原版 PDF”继续查看。
-          </div>
-        )}
+        ) : null}
       </div>
 
-      {mode === "locate" && analysis.resume.pageCount > 1 ? (
+      {mode === "original" && originalPdf && analysis.resume.pageCount > 1 ? (
         <div className="flex h-14 items-center justify-center gap-3 border-t border-line bg-white">
           <button
             type="button"

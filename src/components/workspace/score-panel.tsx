@@ -50,7 +50,7 @@ export function ScorePanel({
       <div className="flex items-start justify-between gap-4">
         <div>
           <p id="score-heading" className="text-xs font-medium text-muted">
-            当前简历质量
+            简历内容评分
           </p>
           <div className="mt-1 flex items-baseline gap-1">
             <strong className="text-[30px] font-semibold tabular-nums leading-none">

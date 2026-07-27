@@ -5,7 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import type { CapabilityContext } from "@/lib/capabilities";
-import { ResumeDocumentSchema, ScorecardSchema } from "@/lib/domain";
+import {
+  ResumeDocumentSchema,
+  ScorecardSchema,
+  type Suggestion,
+} from "@/lib/domain";
 import { createServerCapabilityRegistry } from "@/lib/server/capability-runtime";
 
 import {
@@ -138,10 +142,246 @@ describe("OpenAI-compatible provider gateway", () => {
   it("describes resume review as a contextual editing task instead of a generic checklist", () => {
     const instruction = providerInstructions["resume.suggest"];
 
-    expect(instruction).toContain("review each supplied experience or project bullet");
+    expect(instruction).toContain("at most 8 suggestions");
     expect(instruction).toContain("complete, ready-to-paste replacement sentence");
     expect(instruction).toContain("Do not reuse stock rationales");
+    expect(instruction).toContain("do not return use_as_is placeholders");
     expect(instruction).toContain("do not demand a metric when the source contains none");
+  });
+
+  it("keeps valid AI findings when a sibling is invalid and replaces provider source IDs", async () => {
+    const originalText = resume.ast.sections[0].entries[0].bullets[0];
+    const patchPath = "/sections/0/entries/0/bullets/0";
+    const providerResponse = {
+      suggestions: [
+        {
+          id: "invalid-number",
+          resumeRevision: resume.revision,
+          sourceBlockIds: ["block-result"],
+          claimIds: ["claim-result"],
+          kind: "rewrite",
+          status: "pending",
+          originalText,
+          proposedText: "负责上线流程，将交付周期缩短 99%.",
+          rationale: "把结果改成更大的数字。",
+          beforeHash: "provider-hash-invalid",
+          patches: [
+            {
+              operation: "replace",
+              path: patchPath,
+              value: "负责上线流程，将交付周期缩短 99%.",
+            },
+          ],
+          affectedDimensions: ["impact"],
+          factRisk: "low",
+          interviewRisk: "high",
+        },
+        {
+          id: "valid-rewrite",
+          resumeRevision: resume.revision,
+          sourceBlockIds: ["block-contact"],
+          claimIds: ["claim-result"],
+          kind: "rewrite",
+          status: "pending",
+          originalText,
+          proposedText: "上线流程负责，交付周期缩短 20%.",
+          rationale: "把动作与结果并列，减少句中的弱连接词。",
+          beforeHash: "provider-hash-valid",
+          patches: [
+            {
+              operation: "replace",
+              path: patchPath,
+              value: "上线流程负责，交付周期缩短 20%.",
+            },
+          ],
+          affectedDimensions: ["clarity"],
+          factRisk: "none",
+          interviewRisk: "none",
+        },
+      ],
+    };
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(providerResponse)),
+      logger: () => undefined,
+    });
+
+    const result = await registry.invoke<unknown, { suggestions: Suggestion[] }>(
+      "resume.suggest",
+      { resume, claims },
+      context(),
+    );
+
+    expect(result.usedFallback).toBe(false);
+    expect(result.sourceVersion).toBe("resume.suggest@2.0.0");
+    expect(result.data.suggestions).toHaveLength(1);
+    expect(result.data.suggestions[0]).toMatchObject({
+      originalText,
+      sourceBlockIds: ["block-result"],
+      proposedText: "上线流程负责，交付周期缩短 20%.",
+    });
+  });
+
+  it("deduplicates AI findings by target path, rationale, and question", async () => {
+    const dedupResume = structuredClone(resume);
+    const bullets = Array.from(
+      { length: 5 },
+      (_, index) => `主要负责第 ${index + 1} 个交付流程.`,
+    );
+    dedupResume.sourceBlocks = bullets.map((text, index) => ({
+      id: `dedup-block-${index}`,
+      pageIndex: 0,
+      order: index,
+      text,
+      bbox: { x: 0.1, y: 0.1 + index * 0.1, width: 0.8, height: 0.05 },
+      source: "native" as const,
+      confidence: 1,
+      role: "list-item" as const,
+    }));
+    const entry = dedupResume.ast.sections[0].entries[0];
+    entry.bullets = bullets;
+    entry.sourceBlockIds = dedupResume.sourceBlocks.map((block) => block.id);
+    dedupResume.ast.sections[0].sourceBlockIds = entry.sourceBlockIds;
+
+    const rewrite = (index: number, rationale: string) => ({
+      id: `provider-rewrite-${index}-${rationale}`,
+      resumeRevision: dedupResume.revision,
+      sourceBlockIds: ["block-contact"],
+      claimIds: [],
+      kind: "rewrite",
+      status: "pending",
+      originalText: bullets[index],
+      proposedText: `负责第 ${index + 1} 个交付流程.`,
+      rationale,
+      beforeHash: `provider-hash-${index}`,
+      patches: [
+        {
+          operation: "replace",
+          path: `/sections/0/entries/0/bullets/${index}`,
+          value: `负责第 ${index + 1} 个交付流程.`,
+        },
+      ],
+      affectedDimensions: ["clarity"],
+      factRisk: "none",
+      interviewRisk: "none",
+    });
+    const proofQuestion = "这项第一名表述是否有可核对的排名材料？";
+    const needsProof = (index: number, rationale: string) => ({
+      id: `provider-proof-${index}`,
+      resumeRevision: dedupResume.revision,
+      sourceBlockIds: [`dedup-block-${index}`],
+      claimIds: [],
+      kind: "needs_proof",
+      status: "pending",
+      originalText: bullets[index],
+      rationale,
+      question: proofQuestion,
+      beforeHash: `provider-proof-hash-${index}`,
+      patches: [
+        {
+          operation: "replace",
+          path: `/sections/0/entries/0/bullets/${index}`,
+          value: bullets[index],
+        },
+      ],
+      affectedDimensions: ["impact"],
+      factRisk: "high",
+      interviewRisk: "high",
+    });
+    const providerResponse = {
+      suggestions: [
+        rewrite(0, "删除第一条中的弱化词。"),
+        { ...rewrite(1, "重复目标路径。"), patches: rewrite(0, "重复目标路径。").patches },
+        rewrite(2, "删除第一条中的弱化词。"),
+        needsProof(3, "第三条中的绝对化结论缺少依据。"),
+        needsProof(4, "第四条中的绝对化结论缺少依据。"),
+      ],
+    };
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(providerResponse)),
+      logger: () => undefined,
+    });
+
+    const result = await registry.invoke<unknown, { suggestions: Suggestion[] }>(
+      "resume.suggest",
+      { resume: dedupResume, claims: [] },
+      context(),
+    );
+
+    expect(result.usedFallback).toBe(false);
+    expect(result.data.suggestions).toHaveLength(2);
+    expect(
+      result.data.suggestions.map((suggestion) => suggestion.patches[0].path),
+    ).toEqual([
+      "/sections/0/entries/0/bullets/0",
+      "/sections/0/entries/0/bullets/3",
+    ]);
+  });
+
+  it("returns at most the first eight validated AI findings", async () => {
+    const longResume = structuredClone(resume);
+    const bullets = Array.from(
+      { length: 10 },
+      (_, index) => `主要负责第 ${index + 1} 个交付流程.`,
+    );
+    longResume.sourceBlocks = bullets.map((text, index) => ({
+      id: `bulk-block-${index}`,
+      pageIndex: 0,
+      order: index,
+      text,
+      bbox: { x: 0.1, y: 0.05 + index * 0.08, width: 0.8, height: 0.04 },
+      source: "native" as const,
+      confidence: 1,
+      role: "list-item" as const,
+    }));
+    const entry = longResume.ast.sections[0].entries[0];
+    entry.bullets = bullets;
+    entry.sourceBlockIds = longResume.sourceBlocks.map((block) => block.id);
+    longResume.ast.sections[0].sourceBlockIds = entry.sourceBlockIds;
+    const providerResponse = {
+      suggestions: bullets.map((originalText, index) => ({
+        id: `provider-bulk-${index}`,
+        resumeRevision: longResume.revision,
+        sourceBlockIds: ["block-contact"],
+        claimIds: [],
+        kind: "rewrite",
+        status: "pending",
+        originalText,
+        proposedText: `负责第 ${index + 1} 个交付流程.`,
+        rationale: `删除第 ${index + 1} 条中的弱化词“主要”。`,
+        beforeHash: `provider-bulk-hash-${index}`,
+        patches: [
+          {
+            operation: "replace",
+            path: `/sections/0/entries/0/bullets/${index}`,
+            value: `负责第 ${index + 1} 个交付流程.`,
+          },
+        ],
+        affectedDimensions: ["clarity"],
+        factRisk: "none",
+        interviewRisk: "none",
+      })),
+    };
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(providerResponse)),
+      logger: () => undefined,
+    });
+
+    const result = await registry.invoke<unknown, { suggestions: Suggestion[] }>(
+      "resume.suggest",
+      { resume: longResume, claims: [] },
+      context(),
+    );
+
+    expect(result.usedFallback).toBe(false);
+    expect(result.data.suggestions).toHaveLength(8);
+    expect(
+      result.data.suggestions.map((suggestion) => suggestion.sourceBlockIds),
+    ).toEqual(
+      Array.from({ length: 8 }, (_, index) => [`bulk-block-${index}`]),
+    );
   });
 
   it("uses the default HTTPS allowlist and rejects unapproved bases without echoing them", () => {

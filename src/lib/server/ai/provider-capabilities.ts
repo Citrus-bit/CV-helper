@@ -33,7 +33,12 @@ import {
   type ProviderGatewayCapabilityId,
   type SkillManifest,
 } from "@/lib/capabilities";
-import type { Claim, ResumeAST, Suggestion } from "@/lib/domain";
+import {
+  resolveResumeTextSourceBlocks,
+  resolveResumeTextTarget,
+  type Claim,
+  type Suggestion,
+} from "@/lib/domain";
 
 import { OpenAiCompatibleGateway, ProviderGatewayError } from "./provider-gateway";
 import { PiiProjector } from "./pii-projection";
@@ -284,58 +289,8 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
   }
 }
 
-function resolveStringPath(ast: ResumeAST, path: string): string | undefined {
-  if (!/^\/(?:summary|sections\/\d+\/(?:text|entries\/\d+\/(?:title|subtitle|organization|summary|bullets\/\d+)))$/.test(path)) {
-    return undefined;
-  }
-  const segments = path.slice(1).split("/");
-  let current: unknown = ast;
-  for (const segment of segments) {
-    if (Array.isArray(current)) {
-      if (!/^\d+$/.test(segment)) return undefined;
-      current = current[Number(segment)];
-    } else if (current && typeof current === "object" && Object.hasOwn(current, segment)) {
-      current = (current as Record<string, unknown>)[segment];
-    } else {
-      return undefined;
-    }
-  }
-  return typeof current === "string" ? current : undefined;
-}
-
-function sourceIdsForPath(ast: ResumeAST, path: string): string[] {
-  if (path === "/summary") {
-    return ast.sections.filter((section) => section.type === "summary").flatMap((section) => section.sourceBlockIds);
-  }
-  const sectionMatch = path.match(/^\/sections\/(\d+)\//);
-  if (!sectionMatch) return [];
-  const section = ast.sections[Number(sectionMatch[1])];
-  if (!section) return [];
-  const entryMatch = path.match(/^\/sections\/\d+\/entries\/(\d+)\//);
-  return entryMatch ? section.entries[Number(entryMatch[1])]?.sourceBlockIds ?? [] : section.sourceBlockIds;
-}
-
 function normalizedGroundingText(value: string): string {
   return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
-}
-
-function reconcileUniqueSubstringRewrite(
-  current: string,
-  original: string,
-  replacement: string,
-): string | undefined {
-  const normalizedCurrent = current.normalize("NFKC");
-  const normalizedOriginal = original.normalize("NFKC");
-  if (
-    !normalizedOriginal ||
-    normalizedCurrent.length !== current.length ||
-    normalizedOriginal.length !== original.length
-  ) {
-    return undefined;
-  }
-  const start = normalizedCurrent.indexOf(normalizedOriginal);
-  if (start < 0 || normalizedCurrent.indexOf(normalizedOriginal, start + 1) >= 0) return undefined;
-  return `${current.slice(0, start)}${replacement}${current.slice(start + original.length)}`;
 }
 
 function isGroundedFragment(fragment: string, source: string): boolean {
@@ -419,106 +374,176 @@ function validateCopyRewriteOutput(
   };
 }
 
+class SuggestionValidationError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "SuggestionValidationError";
+  }
+}
+
+function validateSuggestionCandidate(
+  input: GatewayInputMap["resume.suggest"] | GatewayInputMap["resume.chat"],
+  suggestion: Suggestion,
+  claims: ReadonlyMap<string, Claim>,
+  seenPaths: ReadonlySet<string>,
+  confirmedFacts: readonly string[],
+) {
+  const reject = (reason: string): never => {
+    throw new SuggestionValidationError(reason);
+  };
+  if (
+    suggestion.claimIds.some((id) => !claims.has(id)) ||
+    suggestion.patches.length !== 1
+  ) {
+    reject("INVALID_REFERENCE_OR_PATCH_COUNT");
+  }
+  const patch = suggestion.patches[0];
+  if (
+    patch.operation !== "replace" ||
+    typeof patch.value !== "string" ||
+    seenPaths.has(patch.path)
+  ) {
+    reject("INVALID_OR_DUPLICATE_PATCH");
+  }
+  const target =
+    resolveResumeTextTarget(input.resume, patch.path) ??
+    reject("UNKNOWN_PATCH_PATH");
+  if (suggestion.originalText !== target.text) {
+    reject("ORIGINAL_TEXT_DOES_NOT_MATCH_TARGET");
+  }
+  const sourceBlocks = resolveResumeTextSourceBlocks(
+    input.resume,
+    patch.path,
+    suggestion.originalText,
+  );
+  if (sourceBlocks.length === 0) reject("SOURCE_TEXT_NOT_UNIQUELY_TRACEABLE");
+  const targetSourceIds = sourceBlocks.map((block) => block.id);
+  const replacement =
+    typeof patch.value === "string"
+      ? patch.value
+      : reject("PATCH_VALUE_NOT_TEXT");
+  const reconciledValue = replacement;
+  const targetClaims = suggestion.claimIds
+    .map((id) => claims.get(id))
+    .filter(
+      (claim): claim is Claim =>
+        Boolean(claim) &&
+        validFactClaim(claim!) &&
+        claim!.sourceBlockIds.some((sourceId) =>
+          targetSourceIds.includes(sourceId),
+        ),
+    );
+  const supportedText = [
+    target.text,
+    ...targetClaims.map((claim) => claim.text),
+    ...confirmedFacts,
+  ].join(" ");
+  const introducedNumbers = numericTokens(reconciledValue).filter(
+    (number) => !numericTokens(supportedText).includes(number),
+  );
+  const supportedLexemes = factualLexemes(supportedText);
+  const introducedLexemes = [...factualLexemes(reconciledValue)].filter(
+    (lexeme) => !supportedLexemes.has(lexeme),
+  );
+  if (introducedNumbers.length || introducedLexemes.length) {
+    reject(
+      introducedNumbers.length ? "INTRODUCED_NUMBER" : "INTRODUCED_FACT_LEXEME",
+    );
+  }
+  const hasUnsupportedClaim = suggestion.claimIds.some((id) => {
+    const claim = claims.get(id);
+    return !claim || !validFactClaim(claim);
+  });
+  if (
+    (suggestion.factRisk === "medium" || suggestion.factRisk === "high") &&
+    hasUnsupportedClaim &&
+    reconciledValue !== target.text
+  ) {
+    reject("UNSUPPORTED_CLAIM_USED_IN_REWRITE");
+  }
+  if (
+    (suggestion.kind === "needs_proof" || suggestion.kind === "ask_user") &&
+    (!suggestion.question?.trim() || reconciledValue !== target.text)
+  ) {
+    reject("UNVERIFIED_SUGGESTION_IS_NOT_A_QUESTION");
+  }
+  if (
+    suggestion.kind === "rewrite" &&
+    suggestion.proposedText !== replacement
+  ) {
+    reject("PROPOSED_TEXT_PATCH_MISMATCH");
+  }
+  return {
+    path: patch.path,
+    suggestion: {
+      ...suggestion,
+      id: stableId(
+        "suggestion-ai",
+        `${input.resume.id}:${input.resume.revision}:${suggestion.kind}:${target.text}:${patch.path}`,
+      ),
+      resumeRevision: input.resume.revision,
+      sourceBlockIds: targetSourceIds,
+      originalText: target.text,
+      proposedText:
+        suggestion.kind === "rewrite"
+          ? reconciledValue
+          : suggestion.proposedText,
+      beforeHash: stableId("hash", target.text),
+      patches: [{ ...patch, value: reconciledValue }],
+      status: "pending" as const,
+    },
+  };
+}
+
 function validateSuggestionOutput(
   input: GatewayInputMap["resume.suggest"] | GatewayInputMap["resume.chat"],
   output: GatewayOutputMap["resume.suggest"],
   confirmedFacts: readonly string[] = [],
 ): GatewayOutputMap["resume.suggest"] {
-  const reject = (reason: string): never => {
-    console.warn("ai_resume_suggestion_validation_rejected", { reason });
-    throw new ProviderGatewayError("INVALID_RESPONSE");
-  };
-  if (output.suggestions.length > 40) reject("TOO_MANY_SUGGESTIONS");
-  const sourceBlockIds = new Set(input.resume.sourceBlocks.filter((block) => block.role !== "contact").map((block) => block.id));
   const claims = new Map(input.claims.map((claim) => [claim.id, claim]));
   const seenPaths = new Set<string>();
-  const suggestions = output.suggestions.map((suggestion): Suggestion => {
-    const expectedPatchCount = suggestion.kind === "use_as_is" ? 0 : 1;
+  const seenRationales = new Set<string>();
+  const seenQuestions = new Set<string>();
+  const suggestions: Suggestion[] = [];
+  const actionable = output.suggestions.filter(
+    (suggestion) => suggestion.kind !== "use_as_is",
+  );
+
+  for (const candidate of actionable) {
+    if (suggestions.length >= 8) break;
+    const rationaleKey = normalizedGroundingText(candidate.rationale);
+    const questionKey = candidate.question
+      ? normalizedGroundingText(candidate.question)
+      : "";
     if (
-      suggestion.sourceBlockIds.some((id) => !sourceBlockIds.has(id)) ||
-      suggestion.claimIds.some((id) => !claims.has(id)) ||
-      suggestion.sourceBlockIds.length + suggestion.claimIds.length === 0 ||
-      suggestion.patches.length !== expectedPatchCount
+      seenRationales.has(rationaleKey) ||
+      (questionKey && seenQuestions.has(questionKey))
     ) {
-      reject("INVALID_REFERENCE_OR_PATCH_COUNT");
-    }
-    let original = suggestion.originalText;
-    let reconciledPatchValue: string | undefined;
-    for (const patch of suggestion.patches) {
-      if (patch.operation !== "replace" || typeof patch.value !== "string" || seenPaths.has(patch.path)) {
-        reject("INVALID_OR_DUPLICATE_PATCH");
-      }
-      const replacement =
-        typeof patch.value === "string"
-          ? patch.value
-          : reject("PATCH_VALUE_NOT_TEXT");
-      const current =
-        resolveStringPath(input.resume.ast, patch.path) ??
-        reject("UNKNOWN_PATCH_PATH");
-      const reconciledValue =
-        reconcileUniqueSubstringRewrite(
-          current,
-          suggestion.originalText,
-          replacement,
-        ) ?? reject("ORIGINAL_TEXT_NOT_UNIQUE_IN_TARGET");
-      const targetSourceIds = sourceIdsForPath(input.resume.ast, patch.path);
-      const citedClaimSourceIds = suggestion.claimIds.flatMap((id) => claims.get(id)?.sourceBlockIds ?? []);
-      if (
-        targetSourceIds.length > 0 &&
-        ![...suggestion.sourceBlockIds, ...citedClaimSourceIds].some((id) => targetSourceIds.includes(id))
-      ) {
-        reject("CITATION_NOT_LINKED_TO_TARGET");
-      }
-      original = current;
-      seenPaths.add(patch.path);
-      const targetClaims = suggestion.claimIds
-        .map((id) => claims.get(id))
-        .filter(
-          (claim): claim is Claim =>
-            Boolean(claim) &&
-            validFactClaim(claim!) &&
-            claim!.sourceBlockIds.some((sourceId) => targetSourceIds.includes(sourceId)),
-        );
-      const supportedText = [
-        current,
-        ...targetClaims.map((claim) => claim.text),
-        ...confirmedFacts,
-      ].join(" ");
-      const introducedNumbers = numericTokens(reconciledValue).filter((number) => !numericTokens(supportedText).includes(number));
-      const supportedLexemes = factualLexemes(supportedText);
-      const introducedLexemes = [...factualLexemes(reconciledValue)].filter((lexeme) => !supportedLexemes.has(lexeme));
-      if (introducedNumbers.length || introducedLexemes.length) {
-        reject(introducedNumbers.length ? "INTRODUCED_NUMBER" : "INTRODUCED_FACT_LEXEME");
-      }
-      const hasUnsupportedClaim = suggestion.claimIds.some((id) => {
-        const claim = claims.get(id);
-        return !claim || !validFactClaim(claim);
+      console.warn("ai_resume_suggestion_dropped", {
+        reason: "DUPLICATE_ANALYSIS",
       });
-      if ((suggestion.factRisk === "medium" || suggestion.factRisk === "high") && hasUnsupportedClaim && reconciledValue !== current) {
-        reject("UNSUPPORTED_CLAIM_USED_IN_REWRITE");
-      }
-      if ((suggestion.kind === "needs_proof" || suggestion.kind === "ask_user") && reconciledValue !== current) {
-        reject("UNVERIFIED_SUGGESTION_CHANGES_TEXT");
-      }
-      if (suggestion.kind === "rewrite" && suggestion.proposedText !== replacement) {
-        reject("PROPOSED_TEXT_PATCH_MISMATCH");
-      }
-      reconciledPatchValue = reconciledValue;
+      continue;
     }
-    if (suggestion.kind === "use_as_is" && suggestion.proposedText !== undefined) {
-      reject("USE_AS_IS_HAS_PROPOSED_TEXT");
+    try {
+      const validated = validateSuggestionCandidate(
+        input,
+        candidate,
+        claims,
+        seenPaths,
+        confirmedFacts,
+      );
+      suggestions.push(validated.suggestion);
+      seenPaths.add(validated.path);
+      seenRationales.add(rationaleKey);
+      if (questionKey) seenQuestions.add(questionKey);
+    } catch (error) {
+      if (!(error instanceof SuggestionValidationError)) throw error;
+      console.warn("ai_resume_suggestion_dropped", { reason: error.reason });
     }
-    return {
-      ...suggestion,
-      originalText: original,
-      proposedText: suggestion.kind === "rewrite" ? reconciledPatchValue : suggestion.proposedText,
-      patches: suggestion.patches.map((patch) => ({ ...patch, value: reconciledPatchValue })),
-      id: stableId("suggestion-ai", `${input.resume.id}:${input.resume.revision}:${suggestion.kind}:${original}:${suggestion.patches[0]?.path ?? "none"}`),
-      resumeRevision: input.resume.revision,
-      beforeHash: stableId("hash", original),
-      status: "pending",
-    };
-  });
+  }
+  if (actionable.length > 0 && suggestions.length === 0) {
+    throw new ProviderGatewayError("INVALID_RESPONSE");
+  }
   return { suggestions };
 }
 
@@ -825,14 +850,14 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
     "Every evidence string must be an exact verbatim substring of a supplied section, claim, or source block; put interpretation only in deductions.",
   ].join(" "),
   "resume.suggest": [
-    "Task: act as a senior resume editor and review each supplied experience or project bullet in its section and entry context; cover each reviewable bullet at most once, up to 40 suggestions.",
+    "Task: act as a senior resume editor and return only the most important actionable findings from the supplied experience or project bullets, ordered by recruiter impact, with at most 8 suggestions.",
     "For every item, diagnose that exact sentence rather than applying a generic checklist. rationale must identify the concrete wording or information issue in originalText, explain its effect on a recruiter, and state what the proposed change improves. Do not reuse stock rationales, repeated sentence templates, or the same question across unrelated bullets.",
     "When a fact-preserving improvement is possible, return kind rewrite with a complete, ready-to-paste replacement sentence. Prefer concise action-method-result ordering and remove weak, repetitive, or vague phrasing, but do not demand a metric when the source contains none.",
     "Use ask_user or needs_proof only when a specific missing or unsupported fact materially blocks a useful edit. question must name the exact project, action, result, or phrase that needs clarification and must not be a generic request for metrics.",
     "Every suggestion must cite supplied sourceBlockIds or claimIds and use at most one replace JSON Pointer patch targeting an existing resume text field.",
     "originalText must exactly equal the current value at the patch path, including punctuation and whitespace, and proposedText must exactly equal the patch value.",
     "A rewrite may only rearrange factual words already present in originalText or cited valid claims; never introduce new numbers, achievements, responsibilities, tools, credentials, ranking, business scope, or implied ownership.",
-    "If the original is already strong or no fully supported rewrite is possible, return kind use_as_is with no patch and no proposedText, plus a sentence-specific rationale explaining why it should stay.",
+    "Omit bullets that are already strong or do not have a material, fully supported improvement; do not return use_as_is placeholders.",
   ].join(" "),
   "resume.chat": [
     "Task: continue an editing conversation about the supplied current resume. The conversation.latestUserMessage is the user's current request; use the summary, recent messages, confirmed facts, recent changes, resume sections, and claims as context.",

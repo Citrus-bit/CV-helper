@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 
-import type { AnalysisBundle } from "./contracts";
-import { loadDemoAnalysis, matchJob } from "./api";
+import type { AnalysisBundle, RenderResponse } from "./contracts";
+import { downloadVerifiedResume, loadDemoAnalysis, matchJob } from "./api";
 import { useAppStore } from "./store";
 import { ResumeASTSchema } from "@/lib/domain";
 
@@ -66,5 +67,69 @@ describe("version-bound client requests", () => {
 
     const request = fetchMock.mock.calls[0][1] as RequestInit;
     expect(new Headers(request.headers).has("x-resume-session")).toBe(false);
+  });
+});
+
+describe("verified local download", () => {
+  function renderFixture(sha256: string): RenderResponse {
+    const hardGate = { passed: true, blockingCheckIds: [] };
+    return {
+      template: "professional",
+      pdfBase64: "JVBERi0=",
+      sha256,
+      byteLength: 5,
+      searchableText: true,
+      astContentCovered: true,
+      hardGate,
+      report: {
+        resumeId: "resume-download",
+        resumeRevision: 1,
+        template: "professional",
+        artifactSha256: sha256,
+        pageCount: 1,
+        downloadable: true,
+        searchableText: true,
+        contentComplete: true,
+        hardGate,
+        overallScore: 90,
+        checks: [],
+        generatedAt: "2026-07-27T00:00:00.000Z",
+      },
+    };
+  }
+
+  it("downloads the exact audited preview without a network request", async () => {
+    const sha256 = createHash("sha256")
+      .update(Buffer.from("JVBERi0=", "base64"))
+      .digest("hex");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const createObjectUrl = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:verified-resume");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+
+    await downloadVerifiedResume({
+      revision: 1,
+      template: "professional",
+      render: renderFixture(sha256),
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(createObjectUrl).toHaveBeenCalledTimes(1);
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a cached artifact whose bytes no longer match its report", async () => {
+    await expect(
+      downloadVerifiedResume({
+        revision: 1,
+        template: "professional",
+        render: renderFixture("a".repeat(64)),
+      }),
+    ).rejects.toThrow("下载产物与已确认预览不一致");
   });
 });

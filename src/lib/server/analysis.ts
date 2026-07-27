@@ -17,6 +17,7 @@ import {
 } from "@/lib/domain";
 import type { ParsedPdfResult, ParsedSourceBlock } from "@/lib/server/pdf";
 import { invokeCapability } from "@/lib/server/capability-runtime";
+import { mergeVisualResumeLines } from "@/lib/resume-line-normalization";
 
 type ResumeLine = {
   text: string;
@@ -149,11 +150,12 @@ function entryFromLines(lines: ResumeLine[], sectionIndex: number, entryIndex: n
   const titleLine = lines.find((line) => normalized(line.text.replace(DATE_PATTERN, "").replace(/^[|｜·•\-\s]+|[|｜·•\-\s]+$/g, "")));
   const title = titleLine ? normalized(titleLine.text.replace(DATE_PATTERN, "").replace(/^[|｜·•\-\s]+|[|｜·•\-\s]+$/g, "")) : "";
   const remaining = lines.filter((line) => line !== titleLine && line !== dateLine);
+  const logicalBullets = mergeVisualResumeLines(remaining);
   return {
     id: `entry-${sectionIndex + 1}-${entryIndex + 1}`,
     title,
     startDate: date,
-    bullets: remaining.map((line) => line.text.replace(/^[•·●▪\-]\s*/, "")).filter(Boolean),
+    bullets: logicalBullets.map((line) => line.text),
     keywords: [],
     sourceBlockIds: [...new Set(lines.flatMap((line) => line.blockIds))],
     current: /(?:至今|现在|present|current)/i.test(date ?? ""),
@@ -427,7 +429,6 @@ export async function analyzeParsedResume(
     atsAudit: { ...atsResult.data, sourceVersion: atsResult.sourceVersion },
     suggestions: suggestionResult.data.suggestions,
     stories: storyResults.map((result) => result.data),
-    pagePreviews: parsed.pages.map((page) => page.previewDataUrl),
     originalPdfBase64: options.originalPdfBase64,
     processing: {
       extractionMode: parsed.extractionMode,

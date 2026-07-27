@@ -35,6 +35,9 @@ vi.mock("./suggestion-review", () => ({
 vi.mock("./resume-chat", () => ({
   ResumeChat: () => createElement("div", null, "AI 编辑内容"),
 }));
+vi.mock("./resume-content-editor", () => ({
+  ResumeContentEditor: () => createElement("button", null, "直接编辑简历内容"),
+}));
 vi.mock("./template-export", () => ({
   TemplateExport: () => createElement("input", { "aria-label": "导出草稿" }),
 }));

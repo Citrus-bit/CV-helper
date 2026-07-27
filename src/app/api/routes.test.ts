@@ -679,6 +679,6 @@ describe.sequential("API routes", () => {
         .subarray(0, 5)
         .toString("ascii"),
     ).toBe("%PDF-");
-    expect(result.pagePreviews[0]).toMatch(/^data:image\/png;base64,/);
+    expect(result).not.toHaveProperty("pagePreviews");
   });
 });

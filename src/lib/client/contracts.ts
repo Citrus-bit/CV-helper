@@ -25,7 +25,6 @@ export const AnalysisBundleSchema = z.object({
   atsAudit: AtsAuditSchema.optional(),
   suggestions: z.array(SuggestionSchema),
   stories: z.array(InterviewStorySchema),
-  pagePreviews: z.array(z.string()),
   originalPdfBase64: z.string().min(1).optional(),
   processing: z.object({
     extractionMode: z.enum(["native", "hybrid", "ocr"]),

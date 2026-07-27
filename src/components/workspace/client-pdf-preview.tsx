@@ -6,7 +6,7 @@ import {
   EstimatedProgressText,
   estimatedDurations,
 } from "../estimated-progress";
-import { renderPdfFirstPage } from "./pdf-first-page-renderer";
+import { renderPdfPage } from "./pdf-page-renderer";
 
 type ClientPdfPreviewProps = {
   artifactSha256: string;
@@ -37,7 +37,7 @@ export function ClientPdfPreview({
     const controller = new AbortController();
     setVerification("rendering");
 
-    void renderPdfFirstPage(pdfBase64, canvas, controller.signal)
+    void renderPdfPage(pdfBase64, 0, canvas, controller.signal)
       .then(() => {
         if (controller.signal.aborted) return;
         setVerification("verified");

@@ -28,7 +28,7 @@ type ResumeLine = {
 
 export type RevisionReanalysis = Pick<
   AnalysisBundle,
-  "claims" | "evidence" | "scorecard" | "suggestions" | "stories"
+  "claims" | "evidence" | "scorecard" | "stories"
 > & {
   capabilityVersions: Record<string, string>;
 };
@@ -246,141 +246,6 @@ function scoreResume(resume: ResumeDocument, claims: Claim[]): Scorecard {
   };
 }
 
-function conservativeRewrite(text: string, locale: "zh" | "en") {
-  let rewritten = normalizeText(text);
-  const changes: string[] = [];
-  const replacements: Array<[RegExp, string, string]> =
-    locale === "zh"
-      ? [
-          [/主要负责/g, "负责", "删除弱化表达“主要”"],
-          [/成功地/g, "", "删除无法增加事实信息的副词"],
-          [
-            /在([\p{Script=Han}A-Za-z0-9+#.]+)方面/gu,
-            "$1",
-            "压缩“在…方面”结构",
-          ],
-          [/\s*，\s*/g, "，", "统一中文逗号空格"],
-        ]
-      : [
-          [/\bin order to\b/gi, "to", "Shortened 'in order to'"],
-          [/\bsuccessfully\s+/gi, "", "Removed an unsupported intensifier"],
-          [
-            /\bwas responsible for\b/gi,
-            "Responsible for",
-            "Removed unnecessary passive phrasing",
-          ],
-          [/\s+,/g, ",", "Normalized comma spacing"],
-        ];
-  for (const [pattern, replacement, message] of replacements) {
-    if (!pattern.test(rewritten)) continue;
-    pattern.lastIndex = 0;
-    rewritten = rewritten.replace(pattern, replacement);
-    changes.push(message);
-  }
-  return { text: normalizeText(rewritten), changes };
-}
-
-function suggestResume(resume: ResumeDocument, claims: Claim[]): Suggestion[] {
-  const suggestions: Suggestion[] = [];
-  resume.ast.sections.forEach((section, sectionIndex) => {
-    section.entries.forEach((entry, entryIndex) => {
-      entry.bullets.forEach((bullet, bulletIndex) => {
-        const claim = claims.find(
-          (candidate) =>
-            normalizeText(candidate.text) === normalizeText(bullet) &&
-            (candidate.sourceBlockIds.length === 0 ||
-              sourcesOverlap(candidate.sourceBlockIds, entry.sourceBlockIds)),
-        );
-        const path = `/sections/${sectionIndex}/entries/${entryIndex}/bullets/${bulletIndex}`;
-        const beforeHash = stableId("hash", bullet);
-        const sourceBlockIds = entry.sourceBlockIds;
-        const suggestionId = (kind: string) =>
-          stableId(
-            "suggestion",
-            `${resume.id}:${resume.revision}:${path}:${kind}:${bullet}`,
-          );
-        if (
-          /行业领先|世界级|顶尖|第一|best[- ]in[- ]class|world[- ]class|industry[- ]leading/i.test(
-            bullet,
-          ) &&
-          claim?.status !== "supported"
-        ) {
-          suggestions.push({
-            id: suggestionId("proof"),
-            resumeRevision: resume.revision,
-            sourceBlockIds,
-            claimIds: claim ? [claim.id] : [],
-            kind: "needs_proof",
-            status: "pending",
-            originalText: bullet,
-            rationale: "绝对化成果需要独立依据，确认前不能写入最终版本。",
-            question: "你是否有排名、奖项、报告或其他材料支持这项表述？",
-            beforeHash,
-            patches: [{ operation: "replace", path, value: bullet }],
-            affectedDimensions: ["impact", "language"],
-            factRisk: "high",
-            interviewRisk: "high",
-          });
-          return;
-        }
-        const locale = resume.locale === "en-US" ? "en" : "zh";
-        const rewritten = conservativeRewrite(bullet, locale);
-        if (
-          rewritten.text !== normalizeText(bullet) ||
-          bullet.length > (locale === "zh" ? 120 : 220)
-        ) {
-          suggestions.push({
-            id: suggestionId("rewrite"),
-            resumeRevision: resume.revision,
-            sourceBlockIds,
-            claimIds: claim ? [claim.id] : [],
-            kind: "rewrite",
-            status: "pending",
-            originalText: bullet,
-            proposedText: rewritten.text,
-            rationale:
-              rewritten.changes.join("；") ||
-              "该要点偏长，建议保留事实后手动压缩。",
-            beforeHash,
-            patches:
-              rewritten.text === bullet
-                ? []
-                : [{ operation: "replace", path, value: rewritten.text }],
-            affectedDimensions: ["clarity", "language"],
-            factRisk: "none",
-            interviewRisk: "none",
-          });
-          return;
-        }
-        if (
-          !numericTokens(bullet).length &&
-          (section.type === "experience" || section.type === "projects")
-        ) {
-          suggestions.push({
-            id: suggestionId("ask"),
-            resumeRevision: resume.revision,
-            sourceBlockIds,
-            claimIds: claim ? [claim.id] : [],
-            kind: "ask_user",
-            status: "pending",
-            originalText: bullet,
-            rationale:
-              "当前描述说明了工作，但没有呈现可核实的结果；系统不会自行补造数字。",
-            question:
-              "这项工作带来了什么可核实变化（效率、质量、规模、收入或用户反馈）？",
-            beforeHash,
-            patches: [{ operation: "replace", path, value: bullet }],
-            affectedDimensions: ["impact"],
-            factRisk: "medium",
-            interviewRisk: "low",
-          });
-        }
-      });
-    });
-  });
-  return suggestions;
-}
-
 function storyForClaim(
   claim: Claim,
   evidenceAssets: readonly EvidenceAsset[],
@@ -491,7 +356,7 @@ function markConflicts(claims: Claim[]) {
 export function reanalyzeResumeRevision(input: {
   analysis: AnalysisBundle;
   resume: ResumeDocument;
-  appliedSuggestion: Suggestion;
+  appliedSuggestion?: Suggestion;
   manualText?: string;
 }): RevisionReanalysis {
   const { analysis, resume, appliedSuggestion } = input;
@@ -501,10 +366,10 @@ export function reanalyzeResumeRevision(input: {
   const previousClaimsById = new Map(
     analysis.claims.map((claim) => [claim.id, claim]),
   );
-  const targetPreviousClaims = appliedSuggestion.claimIds
+  const targetPreviousClaims = (appliedSuggestion?.claimIds ?? [])
     .map((claimId) => previousClaimsById.get(claimId))
     .filter((claim): claim is Claim => Boolean(claim));
-  if (targetPreviousClaims.length === 0) {
+  if (appliedSuggestion && targetPreviousClaims.length === 0) {
     targetPreviousClaims.push(
       ...analysis.claims.filter(
         (claim) =>
@@ -519,10 +384,10 @@ export function reanalyzeResumeRevision(input: {
     );
   }
   const finalText = normalizeText(
-    input.manualText ?? appliedSuggestion.proposedText ?? "",
+    input.manualText ?? appliedSuggestion?.proposedText ?? "",
   );
   const manualEvidence =
-    input.manualText && finalText
+    appliedSuggestion && input.manualText && finalText
       ? ({
           id:
             targetPreviousClaims
@@ -557,9 +422,10 @@ export function reanalyzeResumeRevision(input: {
   };
   const claims = lines.map((line, index) => {
     const isAppliedTarget =
+      appliedSuggestion !== undefined &&
       finalText.length > 0 &&
       line.text === finalText &&
-      (appliedSuggestion.sourceBlockIds.length === 0 ||
+      ((appliedSuggestion?.sourceBlockIds.length ?? 0) === 0 ||
         sourcesOverlap(line.sourceBlockIds, appliedSuggestion.sourceBlockIds));
     const claim = claimForLine(
       resume,
@@ -608,7 +474,6 @@ export function reanalyzeResumeRevision(input: {
     claims.map((claim) => assessClaim(claim, currentEvidenceById)),
   );
   const scorecard = scoreResume(resume, assessedClaims);
-  const suggestions = suggestResume(resume, assessedClaims);
   const stories = assessedClaims
     .slice(0, 8)
     .map((claim) => storyForClaim(claim, evidence));
@@ -617,14 +482,12 @@ export function reanalyzeResumeRevision(input: {
     claims: assessedClaims,
     evidence,
     scorecard,
-    suggestions,
     stories,
     capabilityVersions: {
       "evidence.mine": "evidence.mine@1.0.0",
       "claim.assess": "claim.assess@1.0.0",
       "claim.conflict": "claim.conflict@1.0.0",
       "resume.score": "resume.score@1.0.0",
-      "resume.suggest": "resume.suggest@1.0.0",
       ...(stories.length ? { "story.build": "story.build@1.0.0" } : {}),
     },
   };

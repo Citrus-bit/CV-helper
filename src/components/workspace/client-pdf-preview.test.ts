@@ -11,9 +11,9 @@ import {
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const renderPdfFirstPage = vi.hoisted(() => vi.fn());
+const renderPdfPage = vi.hoisted(() => vi.fn());
 
-vi.mock("./pdf-first-page-renderer", () => ({ renderPdfFirstPage }));
+vi.mock("./pdf-page-renderer", () => ({ renderPdfPage }));
 
 import { ClientPdfPreview } from "./client-pdf-preview";
 
@@ -32,7 +32,7 @@ afterEach(() => {
 describe("ClientPdfPreview", () => {
   it("marks an artifact only after PDF.js finishes the first-page canvas render", async () => {
     let finishRender: (() => void) | undefined;
-    renderPdfFirstPage.mockImplementationOnce(
+    renderPdfPage.mockImplementationOnce(
       () =>
         new Promise<void>((resolve) => {
           finishRender = resolve;
@@ -41,7 +41,7 @@ describe("ClientPdfPreview", () => {
     const onVerified = vi.fn();
 
     render(createElement(ClientPdfPreview, { ...props, onVerified }));
-    await waitFor(() => expect(renderPdfFirstPage).toHaveBeenCalledOnce());
+    await waitFor(() => expect(renderPdfPage).toHaveBeenCalledOnce());
     expect(onVerified).not.toHaveBeenCalled();
     expect(
       screen.getByRole("progressbar", { name: "PDF 首屏验证预估进度" }),
@@ -54,7 +54,7 @@ describe("ClientPdfPreview", () => {
   });
 
   it("blocks verification on render failure and succeeds only after an explicit retry", async () => {
-    renderPdfFirstPage
+    renderPdfPage
       .mockRejectedValueOnce(new Error("invalid PDF"))
       .mockResolvedValueOnce({ pageCount: 1, width: 595, height: 842 });
     const onVerified = vi.fn();

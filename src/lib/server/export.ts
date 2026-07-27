@@ -5,6 +5,11 @@ import {
   type ResumeAST,
 } from "@/lib/domain";
 import {
+  exportBlockingCheckIds,
+  normalizeExportCheckSeverity,
+  qualityThresholdCheck,
+} from "@/lib/export-quality";
+import {
   renderResumePdf,
   type RenderableResume,
   type ResumeTemplateId,
@@ -941,19 +946,9 @@ export async function auditRenderedPdf(
           0,
         ),
     );
-    checks.push(
-      check(
-        "quality-threshold",
-        "综合质量门槛",
-        overallScore >= 85 ? "pass" : "fail",
-        overallScore >= 85
-          ? "综合质量达到下载门槛。"
-          : "综合质量低于 85 分，禁止下载。",
-      ),
-    );
-    const blockingCheckIds = checks
-      .filter((item) => item.status === "fail")
-      .map((item) => item.id);
+    const normalizedChecks = checks.map(normalizeExportCheckSeverity);
+    normalizedChecks.push(qualityThresholdCheck(overallScore));
+    const blockingCheckIds = exportBlockingCheckIds(normalizedChecks);
     const hardGate = {
       passed: blockingCheckIds.length === 0,
       blockingCheckIds,
@@ -970,7 +965,7 @@ export async function auditRenderedPdf(
       contentComplete: missing.length === 0,
       hardGate,
       overallScore,
-      checks,
+      checks: normalizedChecks,
       generatedAt: new Date().toISOString(),
     });
   } finally {
