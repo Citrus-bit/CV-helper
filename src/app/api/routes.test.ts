@@ -1,5 +1,19 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const requiredAiMocks = vi.hoisted(() => ({
+  invokeRequiredAiCapability: vi.fn(),
+}));
+
+vi.mock("@/lib/server/capability-runtime", async (importOriginal) => {
+  const original = await importOriginal<
+    typeof import("@/lib/server/capability-runtime")
+  >();
+  return {
+    ...original,
+    invokeRequiredAiCapability: requiredAiMocks.invokeRequiredAiCapability,
+  };
+});
 
 import { POST as analyze } from "@/app/api/analyze/route";
 import { GET as capabilities } from "@/app/api/capabilities/route";
@@ -21,7 +35,52 @@ import { FeatureAvailabilitySchema } from "@/lib/capabilities";
 import type { InterviewQuestion } from "@/lib/domain";
 import { DEMO_RESUME_AST } from "@/lib/server/analysis";
 import { MAX_PDF_BYTES } from "@/lib/server/pdf";
+import { AiAnalysisUnavailableError } from "@/lib/server/ai/required-ai";
 import { z } from "zod";
+
+const aiDimensionIds = [
+  "impact",
+  "completeness",
+  "clarity",
+  "structure",
+  "ats",
+  "language",
+] as const;
+
+function installSuccessfulAiFixture() {
+  requiredAiMocks.invokeRequiredAiCapability.mockImplementation(
+    async (id: string, input: unknown) => {
+      const resume = (
+        input as { resume: { id: string; revision: number } }
+      ).resume;
+      return {
+        data:
+          id === "resume.score"
+            ? {
+                resumeId: resume.id,
+                resumeRevision: resume.revision,
+                total: 80,
+                summary: "测试 Provider 已完成 AI 分析。",
+                dimensions: aiDimensionIds.map((dimensionId) => ({
+                  id: dimensionId,
+                  label: dimensionId,
+                  score: 10,
+                  maxScore: 20,
+                  evidence: [],
+                  deductions: [],
+                })),
+              }
+            : { suggestions: [] },
+        confidence: 0.9,
+        evidenceReferences: [],
+        warnings: [],
+        sourceVersion: `${id}@2.0.0`,
+        durationMs: 1,
+        usedFallback: false,
+      };
+    },
+  );
+}
 
 async function syntheticResumePdf() {
   const pdf = await PDFDocument.create();
@@ -93,6 +152,11 @@ function interviewQuestion(
 }
 
 describe.sequential("API routes", () => {
+  beforeEach(() => {
+    requiredAiMocks.invokeRequiredAiCapability.mockReset();
+    installSuccessfulAiFixture();
+  });
+
   it("reports only schema-valid capability availability", async () => {
     const response = await capabilities();
     expect(response.status, await response.clone().text()).toBe(200);
@@ -133,7 +197,49 @@ describe.sequential("API routes", () => {
       "document.segment": "document.segment@1.0.0",
       "prompt.guard": "prompt.guard@1.0.0",
       "pii.redact": "pii.redact@1.0.0",
+      "resume.score": "resume.score@2.0.0",
+      "resume.suggest": "resume.suggest@2.0.0",
     });
+    expect(analysis.processing.aiAnalysis).toEqual({
+      status: "fresh",
+      analyzedRevision: analysis.resume.revision,
+      scoreSourceVersion: "resume.score@2.0.0",
+      suggestionSourceVersion: "resume.suggest@2.0.0",
+    });
+  });
+
+  it("returns no baseline bundle when required AI analysis is unavailable", async () => {
+    requiredAiMocks.invokeRequiredAiCapability.mockRejectedValue(
+      new AiAnalysisUnavailableError(
+        "resume.score",
+        "not_configured",
+        false,
+      ),
+    );
+    const bytes = await syntheticResumePdf();
+    const fileBuffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(fileBuffer).set(bytes);
+    const form = new FormData();
+    form.set(
+      "file",
+      new File([fileBuffer], "strict-ai.pdf", { type: "application/pdf" }),
+    );
+
+    const response = await analyze(
+      new Request("http://localhost/api/analyze", {
+        method: "POST",
+        body: form,
+      }),
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(payload).toMatchObject({
+      code: "AI_ANALYSIS_UNAVAILABLE",
+      failedCapability: "resume.score",
+    });
+    expect(payload).not.toHaveProperty("scorecard");
+    expect(payload).not.toHaveProperty("suggestions");
   });
 
   it("falls back to the local parser when the isolated worker is unavailable", async () => {
@@ -680,5 +786,10 @@ describe.sequential("API routes", () => {
         .toString("ascii"),
     ).toBe("%PDF-");
     expect(result).not.toHaveProperty("pagePreviews");
+    expect(result.processing.aiAnalysis).toMatchObject({
+      status: "fresh",
+      scoreSourceVersion: "resume.score@2.0.0",
+      suggestionSourceVersion: "resume.suggest@2.0.0",
+    });
   });
 });

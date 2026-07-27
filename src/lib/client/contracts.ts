@@ -30,6 +30,14 @@ export const AnalysisBundleSchema = z.object({
     extractionMode: z.enum(["native", "hybrid", "ocr"]),
     durationMs: z.number().nonnegative(),
     capabilityVersions: z.record(z.string(), z.string()),
+    aiAnalysis: z
+      .object({
+        status: z.enum(["fresh", "stale", "refreshing", "failed"]),
+        analyzedRevision: z.number().int().nonnegative(),
+        scoreSourceVersion: z.string().min(1),
+        suggestionSourceVersion: z.string().min(1),
+      })
+      .optional(),
   }),
 });
 export type AnalysisBundle = z.infer<typeof AnalysisBundleSchema>;
@@ -41,6 +49,26 @@ export const ResumeSuggestionResponseSchema = z.object({
 });
 export type ResumeSuggestionResponse = z.infer<
   typeof ResumeSuggestionResponseSchema
+>;
+
+export const ResumeAnalysisRequestSchema = z.object({
+  resume: ResumeDocumentSchema,
+  claims: z.array(ClaimSchema).max(500),
+});
+
+export const ResumeAnalysisResponseSchema = z.object({
+  resumeId: z.string().min(1),
+  resumeRevision: z.number().int().nonnegative(),
+  scorecard: ScorecardSchema,
+  suggestions: z.array(SuggestionSchema),
+  capabilityVersions: z.object({
+    "resume.score": z.string().min(1),
+    "resume.suggest": z.string().min(1),
+  }),
+  durationMs: z.number().nonnegative(),
+});
+export type ResumeAnalysisResponse = z.infer<
+  typeof ResumeAnalysisResponseSchema
 >;
 
 export const JobMatchBundleSchema = z

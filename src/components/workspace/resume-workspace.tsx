@@ -25,6 +25,7 @@ export function ResumeWorkspace() {
   const setResumeVariant = useAppStore((state) => state.setResumeVariant);
   const resumePanel = useAppStore((state) => state.resumePanel);
   const setResumePanel = useAppStore((state) => state.setResumePanel);
+  const retryAiAnalysis = useAppStore((state) => state.retryAiAnalysis);
   const [mountedPanels, setMountedPanels] = useState<Set<ResumePanel>>(
     () => new Set([resumePanel]),
   );
@@ -34,6 +35,11 @@ export function ResumeWorkspace() {
   const templateTargetKey = viewingJobVariant
     ? `${jobVariant!.id}:${jobVariant!.revision}`
     : `${analysis.resume.id}:${analysis.resume.revision}`;
+  const aiStatus = analysis.processing.aiAnalysis?.status ?? "failed";
+  const aiFresh =
+    aiStatus === "fresh" &&
+    analysis.processing.aiAnalysis?.analyzedRevision ===
+      analysis.resume.revision;
 
   function changePanel(value: string) {
     const panel = value as ResumePanel;
@@ -104,11 +110,30 @@ export function ResumeWorkspace() {
             ) : null}
           </div>
         ) : null}
-        <ScorePanel
-          scorecard={analysis.scorecard}
-          atsAudit={analysis.atsAudit}
-          sourceBlocks={analysis.resume.sourceBlocks}
-        />
+        {aiFresh ? (
+          <ScorePanel
+            scorecard={analysis.scorecard}
+            atsAudit={analysis.atsAudit}
+            sourceBlocks={analysis.resume.sourceBlocks}
+          />
+        ) : (
+          <div className="shrink-0 border-b border-line bg-[#f7f7f8] px-5 py-4 text-sm leading-6 text-muted" role="status">
+            <p>
+              {aiStatus === "failed"
+                ? "当前版本的 AI 评分未完成，旧分数不会作为当前结论展示。"
+                : "当前版本正在进行 AI 分析，完成前不展示旧分数。"}
+            </p>
+            {aiStatus === "failed" ? (
+              <button
+                type="button"
+                onClick={retryAiAnalysis}
+                className="mt-3 min-h-11 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf]"
+              >
+                重新进行 AI 分析
+              </button>
+            ) : null}
+          </div>
+        )}
         <div className="shrink-0 border-b border-line px-4 py-3">
           <ResumeContentEditor />
         </div>

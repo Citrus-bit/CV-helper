@@ -65,7 +65,16 @@ function downloadableAnalysisFixture() {
     processing: {
       extractionMode: "native",
       durationMs: 1,
-      capabilityVersions: {},
+      capabilityVersions: {
+        "resume.score": "resume.score@2.0.0",
+        "resume.suggest": "resume.suggest@2.0.0",
+      },
+      aiAnalysis: {
+        status: "fresh",
+        analyzedRevision: 0,
+        scoreSourceVersion: "resume.score@2.0.0",
+        suggestionSourceVersion: "resume.suggest@2.0.0",
+      },
     },
   } as unknown as AnalysisBundle;
 }
@@ -183,7 +192,16 @@ describe("TemplateExport resume target", () => {
       processing: {
         extractionMode: "native",
         durationMs: 1,
-        capabilityVersions: {},
+        capabilityVersions: {
+          "resume.score": "resume.score@2.0.0",
+          "resume.suggest": "resume.suggest@2.0.0",
+        },
+        aiAnalysis: {
+          status: "fresh",
+          analyzedRevision: 0,
+          scoreSourceVersion: "resume.score@2.0.0",
+          suggestionSourceVersion: "resume.suggest@2.0.0",
+        },
       },
     } as unknown as AnalysisBundle;
     const jobMatch = {

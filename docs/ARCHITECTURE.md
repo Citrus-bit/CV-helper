@@ -2,11 +2,11 @@
 
 版本：`0.1.0`  
 Capability contract：`1.0`；builtin implementation：`1.0.0`  
-日期：2026-07-23
+日期：2026-07-27
 
 ## 1. 架构目标
 
-系统围绕三条不变量设计：原始材料不可变、事实变更可追溯、专业能力可替换。业务层只依赖版本化 Capability 契约，内置 baseline 和后续 Skill 共享相同输入输出；供应商、模型和执行环境不能泄漏到前端或领域模型。
+系统围绕四条不变量设计：原始材料不可变、事实变更可追溯、专业能力可替换、用户可见的简历评分与建议必须来自真实 AI。业务层只依赖版本化 Capability 契约；baseline 继续服务确定性评测和非严格兼容能力，但不能进入上传、体验示例或 revision 重分析响应。供应商、模型和执行环境不能泄漏到前端或领域模型。
 
 架构思路参考 [GresonKwan/JobOK](https://github.com/GresonKwan/JobOK) 固定提交 `c5da0c6a6c9936b640a202c78cdd6e64b2981ba6`（MIT）的证据链/JD/面试一致性原则；实现代码、模板、提示策略和题库均独立编写。若未来实际复制或改编 MIT 内容，必须单独保留许可与版权声明。
 
@@ -31,7 +31,7 @@ Next.js Node runtime
        └─ .tools/typst/typst (0.15.1)
 ```
 
-未配置 `DOCUMENT_WORKER_URL` 时，PDF.js 与 Tesseract.js 运行在 Next.js Node runtime，不在浏览器执行。本地开发不要求 Docker、数据库或外部密钥；活动状态使用标签页级 `sessionStorage`，最近分析与可选原 PDF 使用 IndexedDB，两者在 24 小时后到期，并在应用运行期间或下次打开时清理；浏览器不支持语音识别时回退为文字输入。`TYPST_BIN` 默认指向项目内 CLI，渲染失败会阻断当前产物，不存在未声明的 TypeScript renderer fallback。`pnpm dev` 读取 `.env.local`，该私有文件和 `.env` 均在 `.gitignore` 中。
+未配置 `DOCUMENT_WORKER_URL` 时，PDF.js 与 Tesseract.js 运行在 Next.js Node runtime，不在浏览器执行。本地开发不要求 Docker或数据库；没有外部 AI 密钥时应用仍可启动，但上传与体验示例被禁用，不会生成本地模板分析。活动状态使用标签页级 `sessionStorage`，最近分析与可选原 PDF 使用 IndexedDB，两者在 24 小时后到期，并在应用运行期间或下次打开时清理。`TYPST_BIN` 默认指向项目内 CLI；`pnpm dev` 读取被 Git 忽略的 `.env.local`。
 
 App 顶层桌面边界在 hydration 后检查 `min-width: 1024px`。窄屏只挂载设备提示，不挂载 Upload、AnalysisProgress、Workspace 或语音组件。1024px 以上始终使用 216px 侧栏和桌面文档/建议布局，不存在底部导航或手机单列工作台。
 
@@ -49,7 +49,7 @@ Next.js Web/API
             └─ normalized parse response  native/OCR blocks + PNG previews
 ```
 
-配置 `DOCUMENT_WORKER_URL` 后，`parseWithDocumentWorker` 使用 180 秒请求预算调用 `/parse`，以 Zod 校验响应并映射到 `DocumentParseOutput`，随后沿用 TypeScript 的分段、AST、证据、评分和建议流程。未配置时该 adapter 返回 `null` 并调用 2.1 的 baseline；配置后遇到 worker 网络不可用、超时、解析失败、缺少页面数据或 Schema 非法时，也会回退同机 TypeScript baseline，并在解析 warning 与 capability warning 中记录降级。上传摘要不一致、413 资源硬门和用户主动取消不会回退；前两者防止完整性或资源限制被绕过，取消则保持用户意图。fallback 不会把简历发送给其他服务。Web 的 `/api/render` 同样优先调用 worker `/render-preview`，远端渲染失败时再回退 Web 本地 Typst；二者产物进入同一审计与确认链。`infra/web.Dockerfile` 按架构校验下载 Typst `0.15.1`，在运行镜像安装 `font-noto-cjk` 并复制 `templates/typst` 三套模板，因此容器内 fallback 不依赖宿主机工具。
+配置 `DOCUMENT_WORKER_URL` 后，`parseWithDocumentWorker` 使用 180 秒请求预算调用 `/parse`，以 Zod 校验响应并映射到 `DocumentParseOutput`，随后沿用 TypeScript 的分段、AST、证据和 ATS 流程。评分与建议不在本地生成：解析完成后必须依次获得 `resume.score@2.x+` 和 `resume.suggest@2.x+`，任一失败则丢弃部分结果并返回 AI 专用错误。未配置或 worker 可恢复失败时仍可回退同机 TypeScript 文档 baseline；上传摘要不一致、413 和用户取消不能回退。渲染继续使用 worker Typst → Web Typst 的独立降级链。
 
 worker、镜像和 Compose 默认 `OCR_PROVIDER=tesseract`、`TESSERACT_LANGUAGE=chi_sim+eng`。PaddleOCR 只有在显式构建 OCR 依赖、设置 `OCR_PROVIDER=paddleocr` 并预置本地检测/识别模型目录后才启用；`PADDLEOCR_ALLOW_MODEL_DOWNLOAD=false`，不是默认路径。
 
@@ -67,9 +67,9 @@ Compose 默认只启动 Web、隔离 worker 和仅发布到宿主 `127.0.0.1` �
 | Document parse | PDF.js + offline Tesseract.js | **已接通**：`services/document-worker` Python API |
 | Render         | 项目内 Typst                  | **已接通**：优先 worker Typst，失败回退本地 Typst |
 | Speech         | Web Speech or editable text   | approved ASR adapter                              |
-| AI generation  | optional server gateway       | same contract behind reviewed provider/flag       |
+| AI generation  | 上传评分/建议要求 server gateway | reviewed provider；严格 `@2.x+`，上传禁止 fallback |
 
-所有切换均通过环境配置和 adapter 注入完成，API wire shape、Resume AST 以及 Claim/EvidenceAsset/SourceBlock 的关联语义不变化。文档 parse/OCR/render 与 AI gateway 已接通；AI 默认关闭。数据库、队列、对象存储和服务端 ASR 仍是未来目标。
+所有切换均通过环境配置和 adapter 注入完成，Resume AST 以及 Claim/EvidenceAsset/SourceBlock 的关联语义不变化。文档 parse/OCR/render 与 AI gateway 已接通；上传分析要求 gateway 处于 `enhanced/ready`。数据库、队列、对象存储和服务端 ASR 仍是未来目标。
 
 ## 3. 核心数据流水线
 
@@ -82,7 +82,7 @@ Immutable original PDF
   → adapter-specific mixed-page merge      ┤
   → deduplicated SourceBlocks             │
   → Resume AST                            │
-  ├─ claim/evidence relations → scoring/suggestions
+  ├─ claim/evidence relations → required AI scoring/suggestions
   ├─ revision-bound local chat context → provider-only editing turns
   ├─ JD requirements → evidence matrix
   ├─ accepted revision → story cards
@@ -159,9 +159,9 @@ type CapabilityResult<T> = {
 ```
 
 - 每个输入和输出均有 Zod Schema；JSON Schema 从同一契约构建并用于跨进程验证。
-- Registry 在服务器构建期静态注册，运行时 Map 以 capability ID 为 key，保存一个 baseline 和最多一个受控实现；实现版本保存在 descriptor/manifest 中。用户输入不能注册代码；任意 extension 默认禁用，`provider_gateway` 仅允许固定生成式能力名单。
+- Registry 在服务器构建期静态注册，运行时 Map 以 capability ID 为 key，保存一个 baseline 和最多一个受控实现；每次调用显式选择 `fallbackPolicy: "allow" | "forbid"`，默认 `allow` 保持非关键能力兼容。用户输入不能注册代码；`provider_gateway` 仅允许固定生成式能力名单。
 - Descriptor 与 Skill manifest 在启用前验证；CapabilityContext 不含数据库、对象存储或模型密钥。
-- 已注册 extension 超时、异常或输出 Schema 非法时调用同契约 baseline fallback，结果以 `usedFallback: true` 标记；取消请求直接传播，不执行 fallback。输入/上下文/权限错误在调用前拒绝。
+- `forbid` 模式缺少 extension 或 extension 超时、异常、输出 Schema 非法时直接失败，不执行 baseline，也不返回 `usedFallback: true`。上传、示例和 revision 重分析中的 `resume.score`、`resume.suggest` 固定使用该模式；取消请求继续直接传播。
 - 写操作由业务 service 在 Capability 返回后执行。Skill 只计算结果，不能直接提交 revision 或访问任意对象键。
 - 前端只得到 `FeatureAvailability { id, available, mode, locales, fallbackAvailable }`。
 
@@ -175,14 +175,15 @@ type CapabilityResult<T> = {
 
 ### 4.2 调用与回退
 
-1. 未配置 AI 时 Registry 只选择内置 baseline；受信本地扩展仅在显式评测模式启用，且必须使用 canonical Schema、禁网并保留 baseline。
-2. `provider_gateway` 只增强十项能力：`resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate` 和 `answer.coach`；其余能力只能调用确定性 baseline。两项 copy 能力只发送脱敏后的选中文本与保留术语，返回值必须保持原文映射、指定术语和数字，不得新增排名、资质或成果，否则回退 baseline。`resume.chat` 同样执行最小字段投影、严格 Schema、证据引用、数字和 revision 校验，但它在 provider 不可用或返回非法结果时由 `/api/resume-chat` 返回 503，不把 Registry 的固定 baseline 输出交给用户。
+1. 未配置 AI 时 Registry 仍保留内置 baseline 供评测和兼容能力使用，但上传页禁用上传与体验示例；严格调用器不会选择 baseline。
+2. `provider_gateway` 只增强十项能力：`resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate` 和 `answer.coach`。`invokeRequiredAiCapability()` 统一验证 `usedFallback === false`、Capability ID/来源一致、来源主版本不低于 2 及业务 Schema。两项 copy 能力仍按原兼容策略校验原文、术语、数字与事实；`resume.chat` 也禁止固定 baseline 冒充回复。
 3. Gateway 在 Next.js 服务端完成字段投影与 PII 清理，只从环境变量注入 URL、Key 和模型。前端 bundle、FeatureAvailability、日志与响应不包含供应商细节。
    Base URL 还必须命中代码内静态批准列表；系统不读取可配置的 `AI_API_ALLOWLIST`，避免部署者通过环境变量无审查扩权。
 4. 首次请求使用 JSON Schema；供应商明确不支持时只重试一次 `json_object`。返回值随后通过 canonical Zod Schema、引用、JSON Pointer、数字新增和事实证据检查。
-5. 超时、429/5xx、网络错误或非法输出回退对应 `builtin.<capabilityId>@1.0.0`；用户取消直接传播，不执行 fallback。
-6. 当前 MVP 在浏览器 revision 中防止陈旧产物覆盖；生产持久化 service 再使用 idempotency key 和 base revision 提交，版本冲突返回 `409`。
-7. 结构日志只记录 capability、版本、trace、耗时、结果码、fallback 和用量，不记录业务正文、完整 prompt、模型名或密钥。
+5. 严格评分/建议的超时、429/5xx、网络错误、非法输出或事实安全失败统一转为 `AI_ANALYSIS_UNAVAILABLE`，响应不包含部分结果；其他 `allow` 能力仍可回退 `builtin.<capabilityId>@1.0.0`。用户取消直接传播。
+6. Provider 建议只返回精简候选；服务端根据 `editableTargets` 生成 ID、revision、状态、hash、来源块和 patch。部分无效候选丢弃，显式空数组成功；全部无效时携带安全原因代码纠错一次，第二次仍无效则严格失败。
+7. 每个新 revision 取消旧 AI 请求；响应只有在 ID/revision 仍匹配时才能替换分数与建议。旧分数在 `stale/refreshing/failed` 时不展示，JD 和面试入口保持禁用。
+8. 结构日志只记录 capability、版本、trace、generation attempt、response format、HTTP 状态、结果码、无效原因计数、耗时和用量，不记录业务正文、完整 prompt、模型名或密钥。
 
 ### 4.3 开发期 Skill 套件与运行时边界
 
@@ -204,8 +205,10 @@ type CapabilityResult<T> = {
 
 - `GET /api/capabilities`：返回静态白名单能力的 `FeatureAvailability`。
 - `GET /api/health`：返回本地运行所需的抽象健康状态；`document`、`ai`、`storage` 仅包含 `ready | degraded` 与 `baseline | isolated | enhanced | client_local`，不返回 URL、供应商、模型、密钥、容器名或错误正文。
-- `GET /api/demo`：生成并分析内置真实 PDF 示例。
-- `POST /api/analyze`：接收 multipart PDF；配置 `DOCUMENT_WORKER_URL` 时由隔离 worker 完成解析/必要 OCR，否则使用 TypeScript baseline，随后在请求内完成分块、评分与建议。
+- `GET /api/demo`：生成内置真实 PDF，并使用与上传相同的严格 AI 原子契约；没有 AI 时不可用。
+- `POST /api/analyze`：接收 multipart PDF；完成解析、必要 OCR、分块、证据与 ATS 后，原子调用严格 AI 评分和建议。两项都成功才返回 `AnalysisBundle`。
+- `POST /api/resume-analysis`：最多 512 KB，接收当前 `ResumeDocument + Claim[]`，为同一 ID/revision 原子返回新的 AI `Scorecard + Suggestion[]`。
+- `POST /api/resume-suggestions`：兼容接口，内部复用同一严格评分/建议服务；当前前端 revision 流程不依赖它恢复本地建议。
 - `POST /api/job-match`：接收 Resume/Evidence/JD DTO，返回要求到证据矩阵。
 - `POST /api/layout-recommend`：按 AST 内容量、目标页数和可选偏好返回三模板排序与推荐理由。
 - `POST /api/render`：接收 Resume AST、revision 与模板，返回 PDF base64、SHA-256 和质量报告。
@@ -214,9 +217,9 @@ type CapabilityResult<T> = {
 - `POST /api/interview/transcribe`：只标准化浏览器已识别的文字，不接收或保存音频。
 - `POST /api/interview/evaluate`：评审回答并执行简历口径检查。
 
-当前 API 通过 Zod 校验输入并把 `request.signal` 传入 CapabilityContext；隔离文档响应另经 Zod 校验。上述十项生成式 capability 可调用已接线的 provider gateway；默认配置仍只运行 baseline，因此 `resume.chat` 默认明确不可用，其他九项可按各自路径使用 baseline。简历分析链在冲突检查前逐条调用 `claim.assess`，再把冲突状态叠加到已评估声明上。当前不声称已经完成真实供应商质量验收、持久化幂等键、资源所有权或队列 worker 恢复。
+当前 API 通过 Zod 校验输入并把 `request.signal` 传入 CapabilityContext；隔离文档响应另经 Zod 校验。上传和 revision 分析的评分/建议必须由 provider gateway 返回 `@2.x+`；没有有效配置时返回 503 而不是 baseline。真实供应商连续上传验收、持久化幂等键、资源所有权和队列 worker 恢复仍需按部署环境验证。
 
-健康端点采用 `no-store` 响应并以本地可用性为准：未配置 worker 或 provider 时，document/AI baseline 与 `client_local` storage 都是 `ready`，不会因为未启用增强依赖而误报降级；只有显式配置隔离文档或增强 AI 且该配置不可用时，对应组件及整体状态才为 `degraded`。该端点不执行真实 AI 内容请求，也不改变 Vercel、Private Blob 与 Hosted 模式仍延期的边界。
+健康端点采用 `no-store` 响应。`ai: baseline/ready` 只表示应用与非严格兼容能力可运行，不是上传分析成功证明；上传页仅在 `enhanced/ready` 时开放提交，最终仍验证响应中的两个 `@2.x+` 来源。该端点不执行真实 AI 内容请求。
 
 上传 multipart 在 `formData()` 前按流限制为 10 MB PDF 加固定表单开销；导出下载 JSON 即使缺少 `Content-Length` 也会在 16 MB 处取消流并返回 `413`，不会先完整缓冲。`export.audit` 同时消费请求取消信号和 deadline。
 
@@ -270,18 +273,18 @@ baseline 检索先按语言、领域、岗位族、级别、题型和技能过�
 - 文件：当前 API 与 worker 验证 PDF 魔数/MIME、10 MB/5 页和页面尺寸/像素/字符资源上限，并拒绝无法解析、加密或损坏文件。worker 另限制 OCR 区域、并发、字符/单词/图片框、像素、输出和 deadline；导出审计限制 PDF、页数、文字项、operator、总像素、采样、比较和执行时间。Compose worker 已实测为无外网、非 root、只读根文件系统和受 CPU/内存/进程限制；Web runtime 显式监听 `0.0.0.0`，通过 edge 网络暴露宿主端口并通过 internal backend 访问 worker。这些容器控制不反向描述未配置 worker 时的 Next.js Node baseline。
 - Prompt：系统指令与简历/JD/题库分通道；不可信文本先经 guard，不能产生工具或权限请求。
 - 权限：Capability 使用声明式最小 scope；安全文本能力只获 `selected_text`，题库检索只获匿名角色/技能元数据。默认 Registry 拒绝任意 extension，provider 模式另受固定能力名单约束。
-- PII：provider DTO 删除姓名、电话、邮箱、链接、原 PDF、页面图片和无关证据正文；本地投影同时识别普通叙述中的姓名及无标签中英文地址。投影完成后会重新扫描最小 DTO，任何残留疑似 PII 都 fail closed，阻断 provider 调用并回退 baseline；日志、指标和 eval 样本不保存正文。
+- PII：provider DTO 删除姓名、电话、邮箱、链接、原 PDF、页面图片和无关证据正文；本地投影同时识别普通叙述中的姓名及无标签中英文地址。复检只扫描原文、改写、依据、问题和 Claim 等自然语言，不扫描哈希、revision、技术 ID 或 JSON Pointer。严格评分/建议发现残留 PII 时 fail closed 并使整个请求失败，不回退 baseline。
 - 数据生命周期：MVP Web Speech 不向应用产生或保存音频 Blob；转写文字仅存于设备会话。活动状态使用 `sessionStorage`，最近分析及可选原 PDF 使用 IndexedDB；最多 10 条/50 MB，24 小时后过期，并在应用运行期间或下次打开时清理。生产 ASR 若接收音频，必须在转写后删除并记录无正文删除回执。
 - 供应链：依赖锁定，候选 Skill 审查许可证和依赖；生产镜像固定 digest，禁止运行时下载代码。
 
 ## 9. 可观测性和故障策略
 
-当前 MVP 在响应头和会话 processing metadata 中保留 capability 版本/trace，并使用请求取消和 baseline fallback；隔离文档 adapter 已接通，但以下指标、队列重试和持久化 worker 恢复仍是后续目标：
+当前 MVP 在响应头和会话 `processing.aiAnalysis` 中保留 capability 版本与 AI 新鲜度，并使用请求取消和分能力 fallback policy；隔离文档 adapter 已接通，但以下指标、队列重试和持久化 worker 恢复仍是后续目标：
 
 - 指标：各 stage/capability 成功率、p50/p95 延迟、fallback 比例、Schema 失败、OCR 使用率、导出阻断率和清理延迟。
 - Trace：上传到导出/面试 turn 使用同一 trace lineage；日志只含匿名 ID 和结构化元数据。
 - 队列重试：只对瞬态失败有限重试；AI 非法输出最多修复一次；任务通过 idempotency key 防重复。
-- 降级：外部 AI/OCR/ASR 不可用时启用 baseline；PDF 审计失败不能降级放行，必须阻断下载。
+- 降级：文档/OCR、渲染及未纳入本轮严格范围的能力仍按各自策略降级；上传评分/建议、revision 重分析与 `resume.chat` 不允许 baseline 冒充真实 AI。PDF 审计失败同样必须阻断下载。
 - 恢复：任务状态与 revision 分离，worker 重启从最后一个已提交 stage 继续。
 
 ## 10. 测试策略

@@ -20,12 +20,8 @@ import {
   type Suggestion,
   type SuggestionKind,
 } from "@/lib/domain";
-import { generateResumeSuggestions } from "@/lib/client/api";
 import { useAppStore } from "@/lib/client/store";
-import {
-  safeAiRewriteSuggestions,
-  suggestionGenerationSource,
-} from "@/lib/client/suggestions";
+import { safeAiRewriteSuggestions } from "@/lib/client/suggestions";
 import {
   EstimatedProgressText,
   estimatedDurations,
@@ -213,9 +209,7 @@ export function SuggestionReview() {
   const selectedId = useAppStore((state) => state.selectedSuggestionId);
   const selectSuggestion = useAppStore((state) => state.selectSuggestion);
   const decideSuggestion = useAppStore((state) => state.decideSuggestion);
-  const replaceAiSuggestions = useAppStore(
-    (state) => state.replaceAiSuggestions,
-  );
+  const retryAiAnalysis = useAppStore((state) => state.retryAiAnalysis);
   const [editing, setEditing] = useState(false);
   const [manualText, setManualText] = useState("");
   const [bulkMessage, setBulkMessage] = useState("");
@@ -232,7 +226,7 @@ export function SuggestionReview() {
   ).length;
   const meta = suggestion ? kindMeta[suggestion.kind] : null;
   const Icon = meta?.icon ?? Pencil;
-  const generationSource = suggestionGenerationSource(analysis);
+  const aiStatus = analysis.processing.aiAnalysis?.status ?? "failed";
   const automaticSuggestions = useMemo(
     () => safeAiRewriteSuggestions(analysis),
     [analysis],
@@ -260,8 +254,33 @@ export function SuggestionReview() {
     return `第 ${first.pageIndex + 1} 页 · ${extractionLabel}`;
   }, [sourceBlocks]);
 
+  if (aiStatus !== "fresh") {
+    return (
+      <div className="p-6 text-sm leading-6 text-muted" role="status">
+        <p>
+          {aiStatus === "failed"
+            ? "当前版本的 AI 分析未完成，不会显示本地模板建议。"
+            : "当前版本正在等待 AI 重新分析，旧建议不会作为当前结论展示。"}
+        </p>
+        {aiStatus === "failed" ? (
+          <button
+            type="button"
+            onClick={retryAiAnalysis}
+            className="mt-4 min-h-11 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf]"
+          >
+            重新进行 AI 分析
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
   if (!suggestion) {
-    return <div className="p-6 text-sm text-muted">没有需要审阅的建议。</div>;
+    return (
+      <div className="p-6 text-sm leading-6 text-muted" role="status">
+        AI 已完成分析，当前没有需要修改的高优先级问题。
+      </div>
+    );
   }
 
   function move(offset: number) {
@@ -278,13 +297,6 @@ export function SuggestionReview() {
     setBulkError("");
     setOptimizing(true);
     try {
-      if (generationSource === "rules") {
-        const result = await generateResumeSuggestions({
-          resume: analysis.resume,
-          claims: analysis.claims,
-        });
-        replaceAiSuggestions(result.suggestions, result.sourceVersion);
-      }
       const count = useAppStore.getState().applyAiSuggestions();
       setBulkMessage(
         count > 0
@@ -317,17 +329,11 @@ export function SuggestionReview() {
               </h2>
               <span
                 className={`inline-flex items-center gap-1 rounded-[6px] px-2 py-0.5 text-[11px] font-medium ${
-                  generationSource === "ai"
-                    ? "bg-[#edf5ff] text-brand"
-                    : "bg-[#fff7df] text-warning"
+                  "bg-[#edf5ff] text-brand"
                 }`}
               >
-                {generationSource === "ai" ? (
-                  <Sparkles aria-hidden="true" size={12} />
-                ) : (
-                  <AlertTriangle aria-hidden="true" size={12} />
-                )}
-                {generationSource === "ai" ? "AI 分析" : "本地规则"}
+                <Sparkles aria-hidden="true" size={12} />
+                AI 分析
               </span>
             </div>
             <p className="mt-0.5 text-xs text-muted">
@@ -335,7 +341,7 @@ export function SuggestionReview() {
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {generationSource === "rules" || automaticSuggestions.length > 0 ? (
+            {automaticSuggestions.length > 0 ? (
               <button
                 type="button"
                 onClick={() => void optimizeWithAi()}
@@ -354,9 +360,7 @@ export function SuggestionReview() {
                 ) : (
                   <>
                     <Sparkles aria-hidden="true" size={16} />
-                    {generationSource === "rules"
-                      ? "AI 重新分析并优化"
-                      : `AI 一键优化 ${automaticSuggestions.length} 条`}
+                    {`AI 一键优化 ${automaticSuggestions.length} 条`}
                   </>
                 )}
               </button>
@@ -392,13 +396,6 @@ export function SuggestionReview() {
             role="alert"
           >
             {bulkError}
-          </p>
-        ) : generationSource === "rules" ? (
-          <p
-            className="border-t border-line bg-[#fffaf0] px-5 py-2 text-xs leading-5 text-warning"
-            role="status"
-          >
-            本次 AI 调用未产出有效建议，当前显示的是本地规则结果。
           </p>
         ) : bulkMessage ? (
           <p
@@ -482,7 +479,7 @@ export function SuggestionReview() {
 
         <div className="mt-5 border-l-2 border-brand pl-3">
           <p className="text-xs font-medium text-muted">
-            {generationSource === "ai" ? "AI 分析依据" : "规则判断依据"}
+            AI 分析依据
           </p>
           <p className="mt-1 text-sm leading-6">{suggestion.rationale}</p>
         </div>

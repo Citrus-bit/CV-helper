@@ -37,23 +37,23 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 - PDF 输出：项目内 Typst CLI `.tools/typst/typst`（`0.15.1`）编译三套真实、可搜索 PDF；预览与下载复用同一二进制产物。路径可由 `TYPST_BIN` 覆盖。
 - 状态：当前活动会话保存在标签页级 `sessionStorage`；最近分析以 IndexedDB 保存结构快照和可选本地 PDF Blob。两者都执行 24 小时 TTL，并在应用运行期间或下次打开时清理；不要求 PostgreSQL、Redis、MinIO、Python 或 Docker 才能启动。
 
-本地直接运行使用 `pnpm dev`，Next.js 自动读取被 Git 忽略的 `.env.local`。如需启用 AI，只能在该私有文件中写入轮换后的新 `AI_API_KEY`，并把 `AI_PROVIDER` 设为 `provider_gateway`；不得把密钥写入 `.env.example`、代码或文档。
+本地直接运行使用 `pnpm dev`，Next.js 自动读取被 Git 忽略的 `.env.local`。上传和体验示例的评分/建议要求在该私有文件中配置轮换后的 `AI_API_KEY`，并把 `AI_PROVIDER` 设为 `provider_gateway`；没有 Key 时应用可以启动，但上传与示例不可分析。不得把密钥写入 `.env.example`、代码或文档。
 
 ### 已接通的隔离文档路径与本地容器
 
 - 文档解析：配置 `DOCUMENT_WORKER_URL` 后，`/api/analyze` 把 PDF 发送到 `services/document-worker`，由 PDFium/pdfplumber 完成原生提取、页面分类、必要 OCR 和页面预览；返回值经 Zod 转换为同一 `DocumentParseOutput`。未配置时使用上一节的 TypeScript baseline；配置后若 worker 网络不可用、超时、解析失败或响应结构非法，会降级到同机 TypeScript baseline，并把降级 warning 展示给用户。文件摘要不一致、413 资源硬门和用户取消必须失败关闭，不能通过 fallback 绕过。
 - OCR：worker、镜像和 Compose 均默认使用本地 Tesseract CLI，语言为 `chi_sim+eng`；PaddleOCR 仅是通过构建参数、显式 `OCR_PROVIDER=paddleocr` 和预置本地模型启用的可选增强，禁止运行时下载模型。
 - OCR 资源门：worker 每页最多处理 4 个去重区域、每份文档最多 8 个区域，并限制并发、字符、单词、图片框、像素、TSV/文本输出和 block 展开；文档预算默认 45 秒（最大 60 秒），单次 Tesseract 默认 12 秒（最大 20 秒）。超限返回稳定 warning，不丢弃已取得的原生结果。
-- AI：允许的十项生成式能力 `resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate`、`answer.coach` 已接入服务端 OpenAI-compatible provider gateway。网关只接收最小化、脱敏、guard 后 DTO；两项改写能力还会校验原文映射、保留术语、数字和高风险事实。除 `resume.chat` 外，未配置、超时、限流、5xx 或非法结果自动回退 baseline，用户取消除外；`resume.chat` 在未获得真实 provider 结果时返回明确错误，不把固定 baseline 话术展示为 AI 回复。当前默认 `AI_PROVIDER=baseline`，等待轮换后的新密钥再启用增强模式。
+- AI：允许的十项生成式能力已接入服务端 OpenAI-compatible provider gateway。上传、示例和 revision 重分析中的 `resume.score`、`resume.suggest` 使用 `fallbackPolicy: "forbid"`，必须同时返回 `@2.x+`；未配置、超时、限流、5xx、非法结构或事实安全失败时整体失败，不返回本地评分、模板建议或部分 AI 结果。`resume.chat` 同样不展示固定 baseline；本轮未要求改造的其他生成式能力保留 `allow` 兼容策略。建议 Provider 只返回精简候选，系统字段和 patch 由服务端生成，全部无效时只纠错重试一次。
 - 渲染：配置 worker 时，Web 优先调用 `/render-preview`；失败时可回退 Web 本地 Typst。Web 运行镜像固定携带校验过的 Typst `0.15.1`、`font-noto-cjk` 和 `templates/typst` 下三套模板；worker 内 `/usr/local/bin/typst` 读取只读 `/app/templates/typst` 与同类 CJK 字体。两条路径使用同一三模板和质量硬门。
 - 容器边界：Compose 中 Web/worker 均为非 root、只读根文件系统、移除 Linux capabilities 并使用独立临时目录；worker 位于 internal backend 网络且无外网出口，并设置 CPU、内存、进程、文件大小和执行时限。
 - 取消边界：Node 的请求取消会停止等待并阻止陈旧结果提交，但 Python 已进入 `run_in_threadpool` 的同步 OCR/渲染任务不能被该 `AbortSignal` 立即终止；遗留计算仍由 worker deadline、子进程 timeout、并发和资源限额约束。
 - 本地启动：`docker-compose -f infra/docker-compose.yml up --build` 默认只启动 Web、worker 和只绑定 `127.0.0.1` 的受限 loopback proxy。proxy 默认限制 5 秒上游连接、240 秒整体空闲和 32 个并发连接。Compose 自动读取被 Git 忽略的 `.env`；AI Secret 只能放在该文件或进程环境中。
-- 本地健康检查：`GET /api/health` 只返回 `document`、`ai`、`storage` 的抽象状态。组件状态为 `ready | degraded`，模式为 `baseline | isolated | enhanced | client_local`；响应不包含 URL、供应商、模型、密钥、容器名或错误正文。未显式配置外部依赖时，本地 document/AI baseline 和浏览器本地存储均属于 `ready`；只有显式选择隔离文档或增强 AI 但对应配置失效时才返回 `degraded`。
+- 本地健康检查：`GET /api/health` 只返回抽象状态，不含 URL、供应商、模型、密钥或错误正文。`ai: baseline/ready` 不代表上传分析可用；上传页只在 `enhanced/ready` 时开放提交，最终仍验证响应的评分与建议来源均为 `@2.x+`。
 - 未来基础设施：PostgreSQL、Redis 和 MinIO 仅保留在 `future-infra` Compose profile，当前业务不依赖也不连接这些服务。
 - 切换方式：文档服务和 AI 通过 adapter + 环境配置切换，不改变领域模型或客户端协议。
 
-隔离文档解析、OCR、渲染 adapter 与十项 AI provider gateway 均已接入服务端 Capability 路径；当前简历建议流使用 `resume.suggest`，持续编辑对话使用 `resume.chat`，两项 `copy.rewrite` 能力可被独立调用但未重复串入建议流。AI 默认关闭且尚未用真实供应商密钥验收；因此默认配置下编辑对话会明确报错并保留本地会话供重试。PostgreSQL、Redis/BullMQ、MinIO/S3、服务端 ASR、Vercel/Private Blob/Hosted 模式与任何其他云部署仍是后续目标，不得描述为已经投入使用。
+隔离文档解析、OCR、渲染 adapter 与十项 AI provider gateway 均已接入服务端 Capability 路径。没有有效 Provider 时上传、体验示例和编辑对话都会明确不可用；不能把 baseline 描述为已完成真实 AI 分析。PostgreSQL、Redis/BullMQ、MinIO/S3、服务端 ASR、Vercel/Private Blob/Hosted 模式与任何其他云部署仍是后续目标。
 
 ## Skill Extension Registry
 
@@ -65,7 +65,7 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 - `data scope` 是最大授权，不代表每次调用都会传入全部数据；调用方仍必须执行最小化和 PII 脱敏。
 - `network` 的 `none` 表示 baseline 不需要联网；候选 Skill 若需联网，必须重新审批 manifest。
 - provider gateway 只接受代码内静态批准的供应商 Base URL；不存在可由 `AI_API_ALLOWLIST` 或用户输入扩张的运行时白名单。
-- 所有回滚目标固定为对应能力经过测试的 `builtin.<capabilityId>@1.0.0`。新 Skill 失败、超时或输出不符合 Schema 时自动回退，且不得丢失会话 revision。
+- 所有 baseline 目标固定为对应的 `builtin.<capabilityId>@1.0.0`。默认 `allow` 调用可回退；上传/示例/revision 中的 `resume.score`、`resume.suggest` 固定 `forbid`，失败时不得执行这些目标。
 - extension 回退结果使用 `CapabilityResult.usedFallback: true`；当前字段不叫 `degraded`。取消调用直接传播，不以 baseline 覆盖用户取消。
 
 | Capability ID           | Baseline 实现                                                                                                                                                                           | 主要质量缺口 / 期待 Skill                                          | Data scope / Network                      | Eval suite                      | 状态 / 回滚                                      |
@@ -76,8 +76,8 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 | `evidence.mine`         | 从 AST 抽取动作、方法、结果与来源块                                                                                                                                                     | 隐含证据、附件联动、追问质量                                       | `resume_ast,source_blocks` / none         | `eval.evidence.mine.v1`         | baseline / `builtin.evidence.mine@1.0.0`         |
 | `claim.assess`          | 规则判定支持、待补证据和用户确认                                                                                                                                                        | 行业事实边界、数字可信度                                           | `evidence_graph` / none                   | `eval.claim.assess.v1`          | baseline / `builtin.claim.assess@1.0.0`          |
 | `claim.conflict`        | 相似声明间数值不一致启发式                                                                                                                                                              | 日期、角色、实体、语义冲突与跨附件核对                             | `evidence_graph` / none                   | `eval.claim.conflict.v1`        | baseline / `builtin.claim.conflict@1.0.0`        |
-| `resume.score`          | 六维 rubric 与可追溯扣分项                                                                                                                                                              | 行业/职级标定与评分校准                                            | `resume_ast,evidence_graph` / none        | `eval.resume.score.v1`          | baseline / `builtin.resume.score@1.0.0`          |
-| `resume.suggest`        | 证据约束的规则化改写建议                                                                                                                                                                | 专业招聘判断、自然表达、多语言                                     | `resume_ast,evidence_graph` / none        | `eval.resume.suggest.v1`        | baseline / `builtin.resume.suggest@1.0.0`        |
+| `resume.score`          | 六维 rubric baseline 仅供评测/非用户兼容；上传用户流禁止调用                                                                                                                             | 用户流要求真实 AI `@2.x+` 与可追溯评分依据                         | `resume_ast,evidence_graph` / provider_only in user flow | `eval.resume.score.v1` | baseline retained；user flow no fallback |
+| `resume.suggest`        | 规则建议 baseline 仅供评测/非用户兼容；上传用户流禁止调用                                                                                                                               | 用户流要求真实 AI `@2.x+`、editableTargets 和事实硬门              | `resume_ast,evidence_graph` / provider_only in user flow | `eval.resume.suggest.v1` | baseline retained；user flow no fallback |
 | `resume.chat`           | 固定、不可冒充真实 AI 的契约占位输出                                                                                                                                                    | 有界多轮上下文、revision 绑定、证据约束的持续编辑                  | `resume_ast,evidence_graph,interview_content` / none | `eval.resume.chat.v1` | baseline / `builtin.resume.chat@1.0.0` |
 | `resume.atsAudit`       | 联系方式、标准板块、表格角色与低置信文字规则                                                                                                                                            | 主流 ATS 差异、真实文件阅读顺序/搜索性与图标识别                   | `resume_ast,source_blocks` / none         | `eval.resume.ats.v1`            | baseline / `builtin.resume.atsAudit@1.0.0`       |
 | `jd.parse`              | 标题、职责、技能、硬条件词典解析                                                                                                                                                        | 行业本体、隐含要求、中文长句                                       | `job_description` / none                  | `eval.jd.parse.v1`              | baseline / `builtin.jd.parse@1.0.0`              |

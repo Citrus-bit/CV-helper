@@ -35,12 +35,14 @@ const navigation: Array<{
 
 function Navigation({
   pendingSuggestionCount,
+  aiReady,
 }: {
   pendingSuggestionCount: number;
+  aiReady: boolean;
 }) {
   const activeModule = useAppStore((state) => state.module);
   const setModule = useAppStore((state) => state.setModule);
-  const advanceLocked = pendingSuggestionCount > 0;
+  const advanceLocked = pendingSuggestionCount > 0 || !aiReady;
   return (
     <>
       <nav aria-label="工作台导航" className="space-y-1">
@@ -78,7 +80,9 @@ function Navigation({
             size={15}
             className="mt-0.5 shrink-0 text-warning"
           />
-          还有 {pendingSuggestionCount} 条建议待确认，处理后可进入下一阶段。
+          {aiReady
+            ? `还有 ${pendingSuggestionCount} 条建议待确认，处理后可进入下一阶段。`
+            : "当前版本尚未完成 AI 分析，岗位匹配和模拟面试暂不可用。"}
         </p>
       ) : null}
     </>
@@ -91,6 +95,11 @@ export function Workspace() {
   const pendingSuggestionCount = analysis.suggestions.filter(
     (suggestion) => suggestion.status === "pending",
   ).length;
+  const aiReady = Boolean(
+    analysis.processing.aiAnalysis?.status === "fresh" &&
+      analysis.processing.aiAnalysis.analyzedRevision ===
+        analysis.resume.revision,
+  );
   const undoStack = useAppStore((state) => state.undoStack);
   const undo = useAppStore((state) => state.undo);
   const goHome = useAppStore((state) => state.goHome);
@@ -184,7 +193,10 @@ export function Workspace() {
           </Tooltip.Portal>
         </Tooltip.Root>
         <div className="mt-8">
-          <Navigation pendingSuggestionCount={pendingSuggestionCount} />
+          <Navigation
+            pendingSuggestionCount={pendingSuggestionCount}
+            aiReady={aiReady}
+          />
         </div>
         <div className="mt-auto border-t border-line pt-4">
           <div className="flex items-start gap-2 px-2 text-xs leading-5 text-muted">

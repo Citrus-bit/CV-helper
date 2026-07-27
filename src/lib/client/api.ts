@@ -5,6 +5,7 @@ import {
   JobMatchBundleSchema,
   LayoutRecommendationSchema,
   RenderResponseSchema,
+  ResumeAnalysisResponseSchema,
   ResumeSuggestionResponseSchema,
   TranscriptionResponseSchema,
   type AnalysisBundle,
@@ -13,6 +14,7 @@ import {
   type JobMatchBundle,
   type LayoutRecommendation,
   type RenderResponse,
+  type ResumeAnalysisResponse,
   type ResumeSuggestionResponse,
   type TranscriptionResponse,
 } from "./contracts";
@@ -36,6 +38,10 @@ import {
   trackObjectUrl,
   trackedFetch,
 } from "./runtime-resources";
+import {
+  hasFreshRequiredAiAnalysis,
+  isRequiredAiSource,
+} from "./ai-analysis";
 
 type ResumeReference = {
   resumeId?: string;
@@ -60,13 +66,67 @@ function bindActiveResume(reference: ResumeReference) {
   return { resumeId, revision };
 }
 
-async function errorMessage(response: Response) {
-  try {
-    const payload = (await response.json()) as { error?: string };
-    return payload.error ?? `请求失败 (${response.status})`;
-  } catch {
-    return `请求失败 (${response.status})`;
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly retryable?: boolean,
+    readonly failedCapability?: string,
+    readonly retryAfterSeconds?: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
   }
+}
+
+async function apiError(response: Response) {
+  try {
+    const payload = (await response.json()) as {
+      error?: string;
+      code?: string;
+      retryable?: boolean;
+      failedCapability?: string;
+    };
+    const retryAfter = Number(response.headers.get("retry-after"));
+    return new ApiError(
+      payload.error ?? `请求失败 (${response.status})`,
+      response.status,
+      payload.code,
+      payload.retryable,
+      payload.failedCapability,
+      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
+    );
+  } catch {
+    return new ApiError(`请求失败 (${response.status})`, response.status);
+  }
+}
+
+export function assertFreshAiAnalysis(analysis: AnalysisBundle): AnalysisBundle {
+  if (!hasFreshRequiredAiAnalysis(analysis)) {
+    throw new ApiError(
+      "AI 分析来源校验失败，未载入本地模板结果，请重新进行 AI 分析。",
+      502,
+      "INVALID_AI_ANALYSIS",
+      true,
+    );
+  }
+  return analysis;
+}
+
+export async function aiAnalysisAvailable(signal?: AbortSignal) {
+  const response = await trackedFetch("/api/health", {
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) return false;
+  const payload = (await response.json()) as {
+    components?: { ai?: { status?: string; mode?: string } };
+  };
+  return (
+    payload.components?.ai?.status === "ready" &&
+    payload.components.ai.mode === "enhanced"
+  );
 }
 
 export async function analyzeResume(
@@ -81,8 +141,38 @@ export async function analyzeResume(
     body: form,
     signal,
   });
-  if (!response.ok) throw new Error(await errorMessage(response));
-  return AnalysisBundleSchema.parse(await response.json());
+  if (!response.ok) throw await apiError(response);
+  return assertFreshAiAnalysis(
+    AnalysisBundleSchema.parse(await response.json()),
+  );
+}
+
+export async function analyzeResumeRevision(
+  input: { resume: ResumeDocument; claims: Claim[] },
+  signal?: AbortSignal,
+): Promise<ResumeAnalysisResponse> {
+  const response = await trackedFetch("/api/resume-analysis", {
+    method: "POST",
+    headers: apiSessionHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify(input),
+    signal,
+  });
+  if (!response.ok) throw await apiError(response);
+  const result = ResumeAnalysisResponseSchema.parse(await response.json());
+  if (
+    result.resumeId !== input.resume.id ||
+    result.resumeRevision !== input.resume.revision ||
+    !isRequiredAiSource("resume.score", result.capabilityVersions["resume.score"]) ||
+    !isRequiredAiSource("resume.suggest", result.capabilityVersions["resume.suggest"])
+  ) {
+    throw new ApiError(
+      "AI 重分析结果与当前简历版本不一致，请重新进行 AI 分析。",
+      502,
+      "INVALID_AI_ANALYSIS",
+      true,
+    );
+  }
+  return result;
 }
 
 export async function generateResumeSuggestions(
@@ -95,7 +185,7 @@ export async function generateResumeSuggestions(
     body: JSON.stringify(input),
     signal,
   });
-  if (!response.ok) throw new Error(await errorMessage(response));
+  if (!response.ok) throw await apiError(response);
   return ResumeSuggestionResponseSchema.parse(await response.json());
 }
 
@@ -109,7 +199,7 @@ export async function sendResumeChatMessage(
     body: JSON.stringify(ResumeChatInputSchema.parse(input)),
     signal,
   });
-  if (!response.ok) throw new Error(await errorMessage(response));
+  if (!response.ok) throw await apiError(response);
   return ResumeChatResponseSchema.parse(await response.json());
 }
 
@@ -120,8 +210,10 @@ export async function loadDemoAnalysis(
     headers: apiSessionHeaders(),
     signal,
   });
-  if (!response.ok) throw new Error("示例暂时无法加载。");
-  return AnalysisBundleSchema.parse(await response.json());
+  if (!response.ok) throw await apiError(response);
+  return assertFreshAiAnalysis(
+    AnalysisBundleSchema.parse(await response.json()),
+  );
 }
 
 export async function matchJob(input: {
@@ -142,7 +234,7 @@ export async function matchJob(input: {
     headers: apiSessionHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ ...input, ...reference }),
   });
-  if (!response.ok) throw new Error(await errorMessage(response));
+  if (!response.ok) throw await apiError(response);
   return JobMatchBundleSchema.parse(await response.json());
 }
 
@@ -160,7 +252,7 @@ export async function createInterviewPlan(input: {
     headers: apiSessionHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ ...input, ...reference }),
   });
-  if (!response.ok) throw new Error(await errorMessage(response));
+  if (!response.ok) throw await apiError(response);
   return InterviewPlanSchema.parse({
     ...(await response.json()),
     sourceResumeId: reference.resumeId,
@@ -181,7 +273,7 @@ export async function evaluateAnswer(input: {
     headers: apiSessionHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ ...input, ...reference }),
   });
-  if (!response.ok) throw new Error(await errorMessage(response));
+  if (!response.ok) throw await apiError(response);
   return EvaluationResponseSchema.parse({
     ...(await response.json()),
     sourceResumeId: reference.resumeId,
@@ -199,7 +291,7 @@ export async function transcribeBrowserSpeech(input: {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ...input, isFinal: true }),
   });
-  if (!response.ok) throw new Error(await errorMessage(response));
+  if (!response.ok) throw await apiError(response);
   return TranscriptionResponseSchema.parse(await response.json());
 }
 
@@ -215,7 +307,7 @@ export async function renderResume(input: {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
-  if (!response.ok) throw new Error(await errorMessage(response));
+  if (!response.ok) throw await apiError(response);
   return RenderResponseSchema.parse(await response.json());
 }
 
@@ -229,7 +321,7 @@ export async function recommendLayout(input: {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
-  if (!response.ok) throw new Error(await errorMessage(response));
+  if (!response.ok) throw await apiError(response);
   return LayoutRecommendationSchema.parse(await response.json());
 }
 

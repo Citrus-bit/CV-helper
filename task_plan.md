@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-阶段 12：本地持久化的简历 AI 编辑对话
+阶段 13：上传与 revision 分析强制真实 AI
 
 ## 各阶段
 
@@ -128,10 +128,21 @@
 - [x] 重跑 TypeScript、ESLint、相关测试、生产构建与浏览器实流程
 - **状态：** complete
 
+### 阶段 13：上传与 revision 分析强制真实 AI
+
+- [x] 为 Capability Registry 增加禁止 baseline fallback 的调用策略与专用错误协议
+- [x] 将上传、示例和 revision 评分/建议切换为真实 AI 原子成功
+- [x] 精简 Provider 建议 wire schema、固定可编辑目标并增加一次结构纠错重试
+- [x] 增加 AI 新鲜度、revision 重分析、竞态保护与下游流程门
+- [x] 隔离旧本地规则记录，移除新流程中的本地建议展示与持久化
+- [x] 更新环境与正式文档，完成自动化与生产构建回归
+- [ ] 完成两份合成简历、三次连续成功的真实 Provider 终验
+- **状态：** in_progress
+
 ## 关键问题
 
 1. 项目内 Typst 0.15.1、Poppler 和本地中英文 Tesseract 模型已安装。Docker CLI、`docker-compose` 和 Colima 已安装并启动；`docker compose` 子命令当前不可用，容器验收使用 `docker-compose`，Web/worker 最终镜像均已构建并通过 smoke。
-2. 用户提供的旧 AI Key 已视为泄露且禁止使用；provider gateway 只读取新的服务端环境变量。十项静态白名单能力中，除 `resume.chat` 外未配置或失败时回退 baseline；`resume.chat` 必须显式失败，不能用固定话术伪装真实 AI。
+2. 用户提供的旧 AI Key 已视为泄露且禁止使用；provider gateway 只读取新的服务端环境变量。上传、示例和 revision 中的 `resume.score`、`resume.suggest` 以及 `resume.chat` 必须显式失败，不能用 baseline 伪装真实 AI；其他未纳入本轮的能力保持兼容策略。
 3. 用户已临时暂停 Vercel 部署；本阶段不保留 Private Blob、Hosted API、Vercel 配置或云端 worker 半成品。
 4. 阶段 6 最终验证通过：TypeScript、ESLint、33 个文件 / 179 项 Web 测试、32 项 document-worker 测试、3 项 loopback proxy 测试及 `git diff --check` 全部通过；其中健康路由 4 项测试通过。
 5. Compose 默认服务已精确验证为 Web、worker 和 loopback；`future-infra` profile 配置可解析。loopback 的 3 项资源边界测试通过。
@@ -152,8 +163,9 @@
 | Next.js + TypeScript 单体先交付          | 空项目中最快形成完整、可验证的 MVP，同时保留服务拆分边界                |
 | 原生 PDF 解析优先，OCR 仅 fallback       | 数字 PDF 的准确率、速度和布局信息均优于 OCR                             |
 | 静态白名单 Capability Registry           | 满足 Skill 可扩展性，同时避免运行任意不可信脚本                         |
-| 本地 baseline + 默认关闭的扩展入口       | 没有密钥也可完整体验；未来 provider 通过隔离 gateway 接入，不改业务模型 |
+| 本地 baseline 保留给确定性评测与非严格能力 | 上传评分/建议必须由 provider gateway 返回，缺少密钥时应用可启动但不能分析 |
 | 三套真实 PDF 输出统一由项目内 Typst 生成 | 预览与下载一致，便于质量审计；渲染失败直接阻断                          |
+| 上传评分与建议禁止 baseline fallback     | 用户要求真实 AI 分析；AI 失败必须显式失败，不能返回模板化本地结果        |
 
 ## 遇到的错误
 
@@ -194,6 +206,7 @@
 | `generate_openai_yaml.py` 的系统 Python 缺少 PyYAML              | 1        | 不增加全局依赖；改用脚本的 `--name` 参数绕过 frontmatter YAML 读取，继续生成确定性界面元数据                  |
 | 系统 Python 运行 Skill 校验时缺少 PyYAML                         | 1        | 改用 document-worker 已锁定且包含 PyYAML 的项目虚拟环境，Skill 与插件校验均通过                              |
 | 仓库已移除 Prettier，无法执行临时 Markdown `--check`             | 1        | 不重复引入未接线工具；使用 ESLint、人工审阅和 `git diff --check`，最终差异检查通过                            |
+| 真实 Provider 连续验收中 `resume.suggest` 返回 HTTP 429          | 2        | 保持阶段未完成；待 Provider 限流或配额恢复后重跑三次连续验收，禁止自动重试 429、baseline 或部分结果            |
 
 ## 备注
 

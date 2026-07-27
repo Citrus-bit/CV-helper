@@ -11,12 +11,15 @@ import {
 } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as Tooltip from "@radix-ui/react-tooltip";
 
 import type { AnalysisBundle } from "@/lib/client/contracts";
 import { useAppStore } from "@/lib/client/store";
+import { retainUploadFile } from "@/lib/client/retained-upload";
 import { UploadScreen } from "./upload-screen";
 
 const apiMocks = vi.hoisted(() => ({
+  aiAnalysisAvailable: vi.fn(async () => true),
   analyzeResume: vi.fn(),
   loadDemoAnalysis: vi.fn(),
 }));
@@ -93,7 +96,16 @@ function analysisFixture(): AnalysisBundle {
     processing: {
       extractionMode: "native",
       durationMs: 1,
-      capabilityVersions: {},
+      capabilityVersions: {
+        "resume.score": "resume.score@2.0.0",
+        "resume.suggest": "resume.suggest@2.0.0",
+      },
+      aiAnalysis: {
+        status: "fresh",
+        analyzedRevision: 0,
+        scoreSourceVersion: "resume.score@2.0.0",
+        suggestionSourceVersion: "resume.suggest@2.0.0",
+      },
     },
   };
 }
@@ -104,9 +116,13 @@ afterEach(() => {
     refreshRecentSessions: originalRefreshRecentSessions,
   });
   useAppStore.getState().reset();
+  useAppStore.setState({ recentAnalyses: [] });
+  retainUploadFile(null);
   window.sessionStorage.clear();
   apiMocks.analyzeResume.mockReset();
   apiMocks.loadDemoAnalysis.mockReset();
+  apiMocks.aiAnalysisAvailable.mockReset();
+  apiMocks.aiAnalysisAvailable.mockResolvedValue(true);
   vi.restoreAllMocks();
 });
 
@@ -122,7 +138,13 @@ describe("UploadScreen current session recovery", () => {
       recentAnalysesLoading: false,
     });
 
-    render(createElement(UploadScreen));
+    render(
+      createElement(
+        Tooltip.Provider,
+        null,
+        createElement(UploadScreen),
+      ),
+    );
 
     expect(screen.getByText("当前分析仍可继续")).toBeInTheDocument();
     expect(screen.getByText(/candidate\.pdf/)).toHaveTextContent(
@@ -130,6 +152,124 @@ describe("UploadScreen current session recovery", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "继续当前分析" }));
     expect(useAppStore.getState().stage).toBe("workspace");
+  });
+
+  it("isolates a legacy local analysis instead of reopening the workspace", () => {
+    const legacy = analysisFixture();
+    legacy.processing.capabilityVersions["resume.score"] =
+      "resume.score@1.0.0";
+    legacy.processing.capabilityVersions["resume.suggest"] =
+      "resume.suggest@1.0.0";
+    legacy.processing.aiAnalysis = undefined;
+    useAppStore.setState({
+      analysis: legacy,
+      stage: "upload",
+      recentAnalyses: [],
+      recentAnalysesLoading: false,
+      refreshRecentSessions: vi.fn(async () => undefined),
+    });
+
+    render(createElement(UploadScreen));
+
+    expect(screen.getByText("旧版本地分析")).toBeInTheDocument();
+    expect(
+      screen.getByText(/旧规则结果不会进入工作台/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "继续当前分析" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "重新上传 PDF" }),
+    ).toBeInTheDocument();
+  });
+
+  it("marks legacy recent records without presenting their local score as AI", async () => {
+    useAppStore.setState({
+      recentAnalyses: [
+        {
+          id: "legacy-record",
+          createdAt: "2026-07-27T00:00:00.000Z",
+          updatedAt: "2026-07-27T00:01:00.000Z",
+          expiresAt: "2026-07-28T00:00:00.000Z",
+          originalFileName: "legacy.pdf",
+          pageCount: 1,
+          parseMethod: "native",
+          resumeRevision: 0,
+          score: 88,
+          summary: "旧规则摘要",
+          summarySource: "rules",
+          pendingSuggestionCount: 3,
+          hasPdf: false,
+          isFreshAiAnalysis: false,
+        },
+      ],
+      recentAnalysesLoading: false,
+      refreshRecentSessions: vi.fn(async () => undefined),
+    });
+
+    render(
+      createElement(
+        Tooltip.Provider,
+        null,
+        createElement(UploadScreen),
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "重新上传 PDF" }),
+      ).toBeEnabled(),
+    );
+
+    expect(screen.getByText("旧版本地分析")).toBeInTheDocument();
+    expect(screen.queryByText("88")).not.toBeInTheDocument();
+    expect(screen.getByText(/旧分数不作为/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "继续分析" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps a newer failed revision recoverable beside an older AI archive", () => {
+    const current = analysisFixture();
+    current.resume.revision = 1;
+    current.processing.aiAnalysis!.status = "failed";
+    useAppStore.setState({
+      analysis: current,
+      stage: "upload",
+      recentAnalyses: [
+        {
+          id: current.resume.id,
+          createdAt: "2026-07-27T00:00:00.000Z",
+          updatedAt: "2026-07-27T00:01:00.000Z",
+          expiresAt: "2026-07-28T00:00:00.000Z",
+          originalFileName: current.resume.originalFileName,
+          pageCount: 1,
+          parseMethod: "native",
+          resumeRevision: 0,
+          score: 72,
+          summary: "旧 revision 的完整 AI 快照",
+          summarySource: "ai",
+          pendingSuggestionCount: 0,
+          hasPdf: true,
+          isFreshAiAnalysis: true,
+        },
+      ],
+      recentAnalysesLoading: false,
+      refreshRecentSessions: vi.fn(async () => undefined),
+    });
+
+    render(
+      createElement(
+        Tooltip.Provider,
+        null,
+        createElement(UploadScreen),
+      ),
+    );
+
+    expect(screen.getByText("当前分析仍可继续")).toBeInTheDocument();
+    expect(screen.getByText(/当前版本尚未完成 AI 分析/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "继续并重试 AI" }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -242,7 +382,6 @@ describe("UploadScreen file drag state", () => {
     const dropZone = screen.getByRole("region", {
       name: "PDF 简历上传区",
     });
-
     fireEvent.dragEnter(dropZone, { dataTransfer });
     fireEvent.dragLeave(dropZone, { dataTransfer });
     fireEvent.dragOver(dropZone, { dataTransfer });
@@ -415,6 +554,9 @@ describe("UploadScreen file drag state", () => {
     const dropZone = screen.getByRole("region", {
       name: "PDF 简历上传区",
     });
+    await waitFor(() =>
+      expect(dropZone).toHaveAttribute("data-ai-available", "true"),
+    );
 
     fireEvent.dragEnter(dropZone, { dataTransfer });
     fireEvent.drop(dropZone, { dataTransfer });

@@ -150,50 +150,29 @@ describe("OpenAI-compatible provider gateway", () => {
   });
 
   it("keeps valid AI findings when a sibling is invalid and replaces provider source IDs", async () => {
-    const originalText = resume.ast.sections[0].entries[0].bullets[0];
+    const localOriginalText = resume.ast.sections[0].entries[0].bullets[0];
+    const originalText = localOriginalText.normalize("NFKC");
     const patchPath = "/sections/0/entries/0/bullets/0";
     const providerResponse = {
       suggestions: [
         {
-          id: "invalid-number",
-          resumeRevision: resume.revision,
-          sourceBlockIds: ["block-result"],
           claimIds: ["claim-result"],
           kind: "rewrite",
-          status: "pending",
+          targetPath: patchPath,
           originalText,
           proposedText: "负责上线流程，将交付周期缩短 99%.",
           rationale: "把结果改成更大的数字。",
-          beforeHash: "provider-hash-invalid",
-          patches: [
-            {
-              operation: "replace",
-              path: patchPath,
-              value: "负责上线流程，将交付周期缩短 99%.",
-            },
-          ],
           affectedDimensions: ["impact"],
           factRisk: "low",
           interviewRisk: "high",
         },
         {
-          id: "valid-rewrite",
-          resumeRevision: resume.revision,
-          sourceBlockIds: ["block-contact"],
           claimIds: ["claim-result"],
           kind: "rewrite",
-          status: "pending",
+          targetPath: patchPath,
           originalText,
           proposedText: "上线流程负责，交付周期缩短 20%.",
           rationale: "把动作与结果并列，减少句中的弱连接词。",
-          beforeHash: "provider-hash-valid",
-          patches: [
-            {
-              operation: "replace",
-              path: patchPath,
-              value: "上线流程负责，交付周期缩短 20%.",
-            },
-          ],
           affectedDimensions: ["clarity"],
           factRisk: "none",
           interviewRisk: "none",
@@ -216,10 +195,145 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(result.sourceVersion).toBe("resume.suggest@2.0.0");
     expect(result.data.suggestions).toHaveLength(1);
     expect(result.data.suggestions[0]).toMatchObject({
-      originalText,
+      id: expect.stringMatching(/^suggestion-ai_/),
+      resumeRevision: resume.revision,
+      status: "pending",
+      originalText: localOriginalText,
       sourceBlockIds: ["block-result"],
       proposedText: "上线流程负责，交付周期缩短 20%.",
+      beforeHash: expect.stringMatching(/^hash_/),
+      patches: [{ operation: "replace", path: patchPath }],
     });
+  });
+
+  it("treats an explicit empty AI suggestion array as enhanced success", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(completionResponse({ suggestions: [] }));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    const result = await registry.invoke<
+      unknown,
+      { suggestions: Suggestion[] }
+    >("resume.suggest", { resume, claims }, context(), {
+      fallbackPolicy: "forbid",
+    });
+
+    expect(result.usedFallback).toBe(false);
+    expect(result.sourceVersion).toBe("resume.suggest@2.0.0");
+    expect(result.data.suggestions).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("retries once with safe rejection codes when every candidate is invalid", async () => {
+    const originalText =
+      resume.ast.sections[0].entries[0].bullets[0].normalize("NFKC");
+    const invalid = {
+      suggestions: [
+        {
+          claimIds: [],
+          kind: "rewrite",
+          targetPath: "/sections/99/text",
+          originalText,
+          proposedText: "负责上线流程，将交付周期缩短 20%.",
+          rationale: "使用未知路径。",
+          affectedDimensions: ["clarity"],
+          factRisk: "none",
+          interviewRisk: "none",
+        },
+      ],
+    };
+    const corrected = {
+      suggestions: [
+        {
+          claimIds: ["claim-result"],
+          kind: "rewrite",
+          targetPath: "/sections/0/entries/0/bullets/0",
+          originalText,
+          proposedText: "上线流程负责，交付周期缩短 20%.",
+          rationale: "调整语序，让动作与结果更直接。",
+          affectedDimensions: ["clarity"],
+          factRisk: "none",
+          interviewRisk: "none",
+        },
+      ],
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(completionResponse(invalid))
+      .mockResolvedValueOnce(completionResponse(corrected));
+    const events: ProviderGatewayLogEvent[] = [];
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: (event) => events.push(event),
+    });
+
+    const result = await registry.invoke<
+      unknown,
+      { suggestions: Suggestion[] }
+    >("resume.suggest", { resume, claims }, context(), {
+      fallbackPolicy: "forbid",
+    });
+
+    expect(result.usedFallback).toBe(false);
+    expect(result.data.suggestions).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondRequest = JSON.parse(
+      String(fetchMock.mock.calls[1][1]?.body),
+    );
+    expect(secondRequest.messages[0].content).toContain(
+      "UNKNOWN_TARGET_PATH",
+    );
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          attempt: 1,
+          outcome: "invalid_response",
+          invalidCandidateReasonCounts: { UNKNOWN_TARGET_PATH: 1 },
+        }),
+        expect.objectContaining({ attempt: 2, outcome: "success" }),
+      ]),
+    );
+  });
+
+  it("fails strict AI analysis after exactly two fully invalid generations", async () => {
+    const originalText =
+      resume.ast.sections[0].entries[0].bullets[0].normalize("NFKC");
+    const invalid = {
+      suggestions: [
+        {
+          claimIds: ["claim-result"],
+          kind: "rewrite",
+          targetPath: "/sections/0/entries/0/bullets/0",
+          originalText,
+          proposedText: "负责上线流程，将交付周期缩短 99%.",
+          rationale: "加入未被原文支持的数字。",
+          affectedDimensions: ["impact"],
+          factRisk: "high",
+          interviewRisk: "high",
+        },
+      ],
+    };
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(completionResponse(invalid)),
+    );
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    await expect(
+      registry.invoke("resume.suggest", { resume, claims }, context(), {
+        fallbackPolicy: "forbid",
+      }),
+    ).rejects.toMatchObject({ code: "EXECUTION_FAILED" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("deduplicates AI findings by target path, rationale, and question", async () => {
@@ -244,46 +358,24 @@ describe("OpenAI-compatible provider gateway", () => {
     dedupResume.ast.sections[0].sourceBlockIds = entry.sourceBlockIds;
 
     const rewrite = (index: number, rationale: string) => ({
-      id: `provider-rewrite-${index}-${rationale}`,
-      resumeRevision: dedupResume.revision,
-      sourceBlockIds: ["block-contact"],
       claimIds: [],
       kind: "rewrite",
-      status: "pending",
+      targetPath: `/sections/0/entries/0/bullets/${index}`,
       originalText: bullets[index],
       proposedText: `负责第 ${index + 1} 个交付流程.`,
       rationale,
-      beforeHash: `provider-hash-${index}`,
-      patches: [
-        {
-          operation: "replace",
-          path: `/sections/0/entries/0/bullets/${index}`,
-          value: `负责第 ${index + 1} 个交付流程.`,
-        },
-      ],
       affectedDimensions: ["clarity"],
       factRisk: "none",
       interviewRisk: "none",
     });
     const proofQuestion = "这项第一名表述是否有可核对的排名材料？";
     const needsProof = (index: number, rationale: string) => ({
-      id: `provider-proof-${index}`,
-      resumeRevision: dedupResume.revision,
-      sourceBlockIds: [`dedup-block-${index}`],
       claimIds: [],
       kind: "needs_proof",
-      status: "pending",
+      targetPath: `/sections/0/entries/0/bullets/${index}`,
       originalText: bullets[index],
       rationale,
       question: proofQuestion,
-      beforeHash: `provider-proof-hash-${index}`,
-      patches: [
-        {
-          operation: "replace",
-          path: `/sections/0/entries/0/bullets/${index}`,
-          value: bullets[index],
-        },
-      ],
       affectedDimensions: ["impact"],
       factRisk: "high",
       interviewRisk: "high",
@@ -291,7 +383,7 @@ describe("OpenAI-compatible provider gateway", () => {
     const providerResponse = {
       suggestions: [
         rewrite(0, "删除第一条中的弱化词。"),
-        { ...rewrite(1, "重复目标路径。"), patches: rewrite(0, "重复目标路径。").patches },
+        { ...rewrite(1, "重复目标路径。"), targetPath: rewrite(0, "重复目标路径。").targetPath },
         rewrite(2, "删除第一条中的弱化词。"),
         needsProof(3, "第三条中的绝对化结论缺少依据。"),
         needsProof(4, "第四条中的绝对化结论缺少依据。"),
@@ -341,23 +433,12 @@ describe("OpenAI-compatible provider gateway", () => {
     longResume.ast.sections[0].sourceBlockIds = entry.sourceBlockIds;
     const providerResponse = {
       suggestions: bullets.map((originalText, index) => ({
-        id: `provider-bulk-${index}`,
-        resumeRevision: longResume.revision,
-        sourceBlockIds: ["block-contact"],
         claimIds: [],
         kind: "rewrite",
-        status: "pending",
+        targetPath: `/sections/0/entries/0/bullets/${index}`,
         originalText,
         proposedText: `负责第 ${index + 1} 个交付流程.`,
         rationale: `删除第 ${index + 1} 条中的弱化词“主要”。`,
-        beforeHash: `provider-bulk-hash-${index}`,
-        patches: [
-          {
-            operation: "replace",
-            path: `/sections/0/entries/0/bullets/${index}`,
-            value: `负责第 ${index + 1} 个交付流程.`,
-          },
-        ],
         affectedDimensions: ["clarity"],
         factRisk: "none",
         interviewRisk: "none",
@@ -734,39 +815,38 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).response_format.type).toBe("json_object");
   });
 
-  it("retries with json_object when a provider mislabels an invalid schema as 429", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            error: {
-              message: "Invalid schema for response_format 'resume_score': required is missing.",
-              type: "invalid_request_error",
-              param: "response_format",
-              code: null,
-            },
-          }),
-          { status: 429 },
-        ),
-      )
-      .mockResolvedValueOnce(completionResponse({ ok: true }));
+  it("does not retry a 429 even when its body mentions response_format", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message:
+              "Invalid schema for response_format 'resume_score': required is missing.",
+            type: "rate_limit_error",
+            param: "response_format",
+            code: "rate_limited",
+          },
+        }),
+        { status: 429 },
+      ),
+    );
     const gateway = new OpenAiCompatibleGateway(
       loadProviderGatewayConfig(providerEnvironment)!,
       fetchMock,
       () => undefined,
     );
 
-    await expect(gateway.complete({
-      capabilityId: "copy.rewrite.zh",
-      context: context(),
-      dto: { safe: "input" },
-      outputSchema: z.object({ ok: z.boolean() }),
-      instruction: "Return the fixture.",
-    })).resolves.toMatchObject({ data: { ok: true } });
+    await expect(
+      gateway.complete({
+        capabilityId: "copy.rewrite.zh",
+        context: context(),
+        dto: { safe: "input" },
+        outputSchema: z.object({ ok: z.boolean() }),
+        instruction: "Return the fixture.",
+      }),
+    ).rejects.toMatchObject({ code: "HTTP_ERROR", status: 429 });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).response_format.type).toBe("json_object");
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("cancels an unbounded response stream as soon as it exceeds two megabytes", async () => {

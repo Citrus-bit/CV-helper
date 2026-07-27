@@ -9,6 +9,7 @@ import type {
   RenderResponse,
 } from "./contracts";
 import type { ResumeChatContext } from "@/lib/resume-chat";
+import { hasFreshRequiredAiAnalysis } from "./ai-analysis";
 
 export const RECENT_ANALYSIS_TTL_MS = 24 * 60 * 60 * 1000;
 export const RECENT_ANALYSIS_MAX_RECORDS = 10;
@@ -79,6 +80,7 @@ export type RecentAnalysisSummary = Pick<
   | "pendingSuggestionCount"
 > & {
   hasPdf: boolean;
+  isFreshAiAnalysis: boolean;
 };
 
 export type SaveRecentAnalysisInput = {
@@ -431,6 +433,7 @@ function summaries(records: RecentAnalysisRecord[]): RecentAnalysisSummary[] {
     summarySource: record.summarySource,
     pendingSuggestionCount: record.pendingSuggestionCount,
     hasPdf: Boolean(record.pdfBlob),
+    isFreshAiAnalysis: hasFreshRequiredAiAnalysis(record.payload.analysis),
   }));
 }
 
@@ -475,6 +478,20 @@ function buildRecord(
   measuredPdfSha256?: string,
 ): RecentAnalysisRecord {
   const analysis = withoutBinaryAnalysis(input.payload.analysis);
+  const aiAnalysis = analysis.processing.aiAnalysis;
+  if (
+    !aiAnalysis ||
+    aiAnalysis.status !== "fresh" ||
+    aiAnalysis.analyzedRevision !== analysis.resume.revision ||
+    !/^resume\.score@(?:[2-9]|\d{2,})\./.test(
+      aiAnalysis.scoreSourceVersion,
+    ) ||
+    !/^resume\.suggest@(?:[2-9]|\d{2,})\./.test(
+      aiAnalysis.suggestionSourceVersion,
+    )
+  ) {
+    throw new Error("Only a complete fresh AI analysis can be archived.");
+  }
   const pdfBlob = input.pdfBlob ?? existing?.pdfBlob;
   const incomingRenders = input.payload.renders ?? {};
   const renderCandidates = Object.keys(incomingRenders).length

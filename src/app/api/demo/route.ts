@@ -16,6 +16,7 @@ async function buildDemo(signal?: AbortSignal) {
     resumeId: "demo-product-manager-v1",
     signal,
     originalPdfBase64: pdf.toString("base64"),
+    requireAi: true,
   });
 }
 

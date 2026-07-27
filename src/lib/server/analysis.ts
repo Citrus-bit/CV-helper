@@ -16,7 +16,10 @@ import {
   type SourceBlock,
 } from "@/lib/domain";
 import type { ParsedPdfResult, ParsedSourceBlock } from "@/lib/server/pdf";
-import { invokeCapability } from "@/lib/server/capability-runtime";
+import {
+  invokeCapability,
+  invokeRequiredAiCapability,
+} from "@/lib/server/capability-runtime";
 import { mergeVisualResumeLines } from "@/lib/resume-line-normalization";
 
 type ResumeLine = {
@@ -367,6 +370,7 @@ export async function analyzeParsedResume(
     signal?: AbortSignal;
     originalPdfBase64?: string;
     documentCapabilityVersions?: Record<string, string>;
+    requireAi?: boolean;
   } = {},
 ): Promise<AnalysisBundle> {
   const startedAt = performance.now();
@@ -409,8 +413,19 @@ export async function analyzeParsedResume(
   // Provider gateways commonly enforce token budgets across concurrent requests.
   // Keep the two large structured completions serial so one analysis cannot
   // reject both enhancements at once while the local ATS audit runs in parallel.
-  const scoreResult = await invokeCapability("resume.score", { resume, claims }, context);
-  const suggestionResult = await invokeCapability("resume.suggest", { resume, claims }, context);
+  const invokeResumeCapability = options.requireAi
+    ? invokeRequiredAiCapability
+    : invokeCapability;
+  const scoreResult = await invokeResumeCapability(
+    "resume.score",
+    { resume, claims },
+    context,
+  );
+  const suggestionResult = await invokeResumeCapability(
+    "resume.suggest",
+    { resume, claims },
+    context,
+  );
   const atsResult = await atsResultPromise;
   const storyResults = await Promise.all(
     claims.slice(0, 8).map((claim) =>
@@ -447,6 +462,18 @@ export async function analyzeParsedResume(
         "resume.suggest": suggestionResult.sourceVersion,
         "resume.atsAudit": atsResult.sourceVersion,
         ...(storyResults[0] ? { "story.build": storyResults[0].sourceVersion } : {}),
+      },
+      aiAnalysis: {
+        status:
+          /^resume\.score@(?:[2-9]|\d{2,})\./.test(scoreResult.sourceVersion) &&
+          /^resume\.suggest@(?:[2-9]|\d{2,})\./.test(
+            suggestionResult.sourceVersion,
+          )
+            ? "fresh"
+            : "failed",
+        analyzedRevision: resume.revision,
+        scoreSourceVersion: scoreResult.sourceVersion,
+        suggestionSourceVersion: suggestionResult.sourceVersion,
       },
     },
   });

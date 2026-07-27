@@ -212,6 +212,7 @@ export async function POST(request: Request) {
       signal: request.signal,
       originalPdfBase64,
       documentCapabilityVersions: documentVersions,
+      requireAi: true,
     });
     result.processing.durationMs = performance.now() - startedAt;
     return jsonResponse(result);

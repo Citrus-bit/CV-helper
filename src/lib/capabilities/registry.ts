@@ -23,6 +23,12 @@ export type CapabilityRegistryOptions = {
   extensionMode?: "disabled" | "trusted_local" | "provider_gateway";
 };
 
+export type FallbackPolicy = "allow" | "forbid";
+
+export type CapabilityInvocationOptions = {
+  fallbackPolicy?: FallbackPolicy;
+};
+
 const providerGatewayCapabilityIds = new Set<CapabilityId>(PROVIDER_GATEWAY_CAPABILITY_IDS);
 const MAX_FALLBACK_RESERVE_MS = 2_000;
 const MIN_FALLBACK_RESERVE_MS = 50;
@@ -99,7 +105,12 @@ export class CapabilityRegistry {
     return this.extensions.delete(id);
   }
 
-  async invoke<I, O>(id: CapabilityId, input: I, contextInput: CapabilityContext): Promise<CapabilityResult<O>> {
+  async invoke<I, O>(
+    id: CapabilityId,
+    input: I,
+    contextInput: CapabilityContext,
+    invocationOptions: CapabilityInvocationOptions = {},
+  ): Promise<CapabilityResult<O>> {
     const parsedContext = CapabilityContextSchema.safeParse(contextInput);
     if (!parsedContext.success) {
       throw new CapabilityInvocationError(id, "INVALID_CONTEXT", parsedContext.error.message);
@@ -107,13 +118,25 @@ export class CapabilityRegistry {
     const context: CapabilityContext = { ...parsedContext.data, signal: contextInput.signal };
     const extension = this.extensions.get(id)?.capability;
     const baseline = this.baselines.get(id);
-    const primary = extension ?? baseline;
+    const fallbackPolicy = invocationOptions.fallbackPolicy ?? "allow";
+    const primary = fallbackPolicy === "forbid" ? extension : extension ?? baseline;
     if (!primary) {
-      throw new CapabilityInvocationError(id, "UNAVAILABLE", `${id} is not available.`);
+      throw new CapabilityInvocationError(
+        id,
+        "UNAVAILABLE",
+        fallbackPolicy === "forbid"
+          ? `${id} enhanced provider is not available.`
+          : `${id} is not available.`,
+      );
     }
     this.assertScopes(id, primary, context);
 
-    if (extension && baseline && this.shouldSkipExtensionForDeadline(context)) {
+    if (
+      fallbackPolicy === "allow" &&
+      extension &&
+      baseline &&
+      this.shouldSkipExtensionForDeadline(context)
+    ) {
       this.assertScopes(id, baseline, context);
       const fallbackResult = (await this.run(baseline, input, context, true)) as CapabilityResult<O>;
       return {
@@ -129,13 +152,17 @@ export class CapabilityRegistry {
     }
 
     try {
-      const primaryContext = extension ? this.reserveFallbackDeadline(context) : context;
+      const primaryContext =
+        fallbackPolicy === "allow" && extension
+          ? this.reserveFallbackDeadline(context)
+          : context;
       return (await this.run(primary, input, primaryContext, false)) as CapabilityResult<O>;
     } catch (primaryError) {
       if (primaryError instanceof CapabilityInvocationError && primaryError.code === "CANCELLED") {
         throw primaryError;
       }
-      if (!extension || !baseline) throw primaryError;
+      if (fallbackPolicy === "forbid" || !extension || !baseline)
+        throw primaryError;
       this.assertScopes(id, baseline, context);
       const fallbackResult = (await this.run(baseline, input, context, true)) as CapabilityResult<O>;
       return {

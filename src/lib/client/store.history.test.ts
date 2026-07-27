@@ -59,7 +59,7 @@ function analysisFixture(): AnalysisBundle {
       resumeRevision: 2,
       total: 78,
       summary: "重点经历清楚，可继续补强结果证据。",
-      sourceVersion: "resume.score@1.0.0",
+      sourceVersion: "resume.score@2.0.0",
       dimensions: [
         ["impact", 18, 25],
         ["completeness", 12, 15],
@@ -87,7 +87,16 @@ function analysisFixture(): AnalysisBundle {
     processing: {
       extractionMode: "native",
       durationMs: 12,
-      capabilityVersions: {},
+      capabilityVersions: {
+        "resume.score": "resume.score@2.0.0",
+        "resume.suggest": "resume.suggest@2.0.0",
+      },
+      aiAnalysis: {
+        status: "fresh",
+        analyzedRevision: 2,
+        scoreSourceVersion: "resume.score@2.0.0",
+        suggestionSourceVersion: "resume.suggest@2.0.0",
+      },
     },
   };
 }
@@ -554,6 +563,24 @@ describe("v2 to v3 session migration", () => {
 
     expect(merged.undoStack).toEqual([snapshot]);
     expect(merged.stage).toBe("workspace");
+  });
+
+  it("keeps a legacy baseline session on the upload screen", () => {
+    const analysis = analysisFixture();
+    analysis.processing.capabilityVersions["resume.score"] =
+      "resume.score@1.0.0";
+    analysis.processing.capabilityVersions["resume.suggest"] =
+      "resume.suggest@1.0.0";
+    analysis.processing.aiAnalysis = undefined;
+
+    const merged = mergePersistedSessionState(
+      { stage: "workspace", module: "job", analysis },
+      useAppStore.getState(),
+    );
+
+    expect(merged.stage).toBe("upload");
+    expect(merged.module).toBe("resume");
+    expect(merged.analysis).toBe(analysis);
   });
 
   it("normalizes incompatible interview progress instead of crossing plans", () => {

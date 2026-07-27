@@ -2,6 +2,7 @@ import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
 import {
+  CapabilityRegistry,
   CapabilityInvocationError,
   getCapabilityDescriptor,
   type Capability,
@@ -78,6 +79,168 @@ describe("CapabilityRegistry", () => {
     expect(result.usedFallback).toBe(true);
     expect(result.sourceVersion).toBe("resume.score@1.0.0");
     expect(result.warnings[0].code).toBe("EXTENSION_INVALID_OUTPUT");
+  });
+
+  it("forbids baseline execution when an enhanced provider is missing", async () => {
+    await expect(
+      createDefaultCapabilityRegistry().invoke(
+        "resume.score",
+        { resume: minimalResume, claims: [] },
+        fullContext,
+        { fallbackPolicy: "forbid" },
+      ),
+    ).rejects.toMatchObject({
+      capabilityId: "resume.score",
+      code: "UNAVAILABLE",
+    });
+  });
+
+  it("forbids baseline execution after an invalid enhanced response", async () => {
+    let baselineCalls = 0;
+    const registry = new CapabilityRegistry({ extensionMode: "trusted_local" });
+    registry.registerBaseline({
+      descriptor: {
+        ...getCapabilityDescriptor("resume.score"),
+        version: "1.0.0",
+        provenance: "builtin",
+      },
+      inputSchema: ResumeScoreInputSchema,
+      outputSchema: ResumeScoreOutputSchema,
+      execute: () => {
+        baselineCalls += 1;
+        return { data: ResumeScoreOutputSchema.parse({}) };
+      },
+    });
+    registry.registerExtension(
+      {
+        descriptor: {
+          ...getCapabilityDescriptor("resume.score"),
+          version: "2.0.0",
+          provenance: "unit-test",
+        },
+        inputSchema: ResumeScoreInputSchema,
+        outputSchema: ResumeScoreOutputSchema,
+        execute: () => ({ data: { total: "invalid" } as never }),
+      },
+      manifest(),
+    );
+
+    await expect(
+      registry.invoke(
+        "resume.score",
+        { resume: minimalResume, claims: [] },
+        fullContext,
+        { fallbackPolicy: "forbid" },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_OUTPUT" });
+    expect(baselineCalls).toBe(0);
+  });
+
+  it("forbids baseline execution after an enhanced provider error", async () => {
+    const registry = registryWithExtensions();
+    registry.registerExtension(
+      {
+        descriptor: {
+          ...getCapabilityDescriptor("resume.score"),
+          version: "2.0.0",
+          provenance: "unit-test",
+        },
+        inputSchema: ResumeScoreInputSchema,
+        outputSchema: ResumeScoreOutputSchema,
+        execute: () => {
+          throw new TypeError("provider network unavailable");
+        },
+      },
+      manifest(),
+    );
+
+    await expect(
+      registry.invoke(
+        "resume.score",
+        { resume: minimalResume, claims: [] },
+        fullContext,
+        { fallbackPolicy: "forbid" },
+      ),
+    ).rejects.toMatchObject({ code: "EXECUTION_FAILED" });
+  });
+
+  it("forbids baseline execution after an enhanced provider timeout", async () => {
+    const registry = registryWithExtensions();
+    registry.registerExtension(
+      {
+        descriptor: {
+          ...getCapabilityDescriptor("resume.score"),
+          version: "2.0.0",
+          provenance: "unit-test",
+          timeoutMs: 2,
+        },
+        inputSchema: ResumeScoreInputSchema,
+        outputSchema: ResumeScoreOutputSchema,
+        execute: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return { data: ResumeScoreOutputSchema.parse({}) };
+        },
+      },
+      manifest(),
+    );
+
+    await expect(
+      registry.invoke(
+        "resume.score",
+        { resume: minimalResume, claims: [] },
+        fullContext,
+        { fallbackPolicy: "forbid" },
+      ),
+    ).rejects.toMatchObject({ code: "TIMEOUT" });
+  });
+
+  it("returns only the enhanced source in forbid mode", async () => {
+    const registry = registryWithExtensions();
+    registry.registerExtension(
+      {
+        descriptor: {
+          ...getCapabilityDescriptor("resume.score"),
+          version: "2.1.0",
+          provenance: "unit-test",
+        },
+        inputSchema: ResumeScoreInputSchema,
+        outputSchema: ResumeScoreOutputSchema,
+        execute: () => ({
+          data: ResumeScoreOutputSchema.parse({
+            resumeId: minimalResume.id,
+            resumeRevision: minimalResume.revision,
+            total: 0,
+            dimensions: [
+              ["impact", 25],
+              ["completeness", 15],
+              ["clarity", 15],
+              ["structure", 15],
+              ["ats", 15],
+              ["language", 15],
+            ].map(([id, maxScore]) => ({
+              id,
+              label: id,
+              score: 0,
+              maxScore,
+            })),
+            summary: "Enhanced provider fixture.",
+          }),
+        }),
+      },
+      manifest(),
+    );
+
+    await expect(
+      registry.invoke(
+        "resume.score",
+        { resume: minimalResume, claims: [] },
+        fullContext,
+        { fallbackPolicy: "forbid" },
+      ),
+    ).resolves.toMatchObject({
+      sourceVersion: "resume.score@2.1.0",
+      usedFallback: false,
+    });
   });
 
   it("rejects invalid execution metadata and falls back to the baseline", async () => {

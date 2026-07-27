@@ -18,7 +18,7 @@ import {
 
 function analysisFixture(
   id: string,
-  sourceVersion = "resume.score@1.0.0",
+  sourceVersion = "resume.score@2.0.0",
 ): AnalysisBundle {
   return {
     resume: {
@@ -74,7 +74,16 @@ function analysisFixture(
     processing: {
       extractionMode: "native",
       durationMs: 10,
-      capabilityVersions: {},
+      capabilityVersions: {
+        "resume.score": sourceVersion,
+        "resume.suggest": "resume.suggest@2.0.0",
+      },
+      aiAnalysis: {
+        status: "fresh",
+        analyzedRevision: 0,
+        scoreSourceVersion: sourceVersion,
+        suggestionSourceVersion: "resume.suggest@2.0.0",
+      },
     },
   };
 }
@@ -173,6 +182,7 @@ describe("recent analysis IndexedDB repository", () => {
 
     archived.analysis.resume.revision = 1;
     archived.analysis.scorecard.resumeRevision = 1;
+    archived.analysis.processing.aiAnalysis!.analyzedRevision = 1;
     archived.renders = {};
     await saveRecentAnalysis(
       {

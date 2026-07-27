@@ -1,5 +1,18 @@
 # 进度日志
 
+## 会话：2026-07-27（阶段 13 强制真实 AI 分析）
+
+- **状态：** in_progress
+- 已完成真实链路复核：Provider 配置与模型可用，但上传结果出现 AI 评分成功、AI 建议回退 baseline 的部分成功。
+- 已确认根因范围包括 Registry 自动 fallback、Provider 建议输出契约不稳定、上传接口缺少原子 AI 门，以及 revision 后本地评分覆盖。
+- 本轮按用户批准计划实施：先建立禁止 fallback 的服务端契约和测试，再处理 Provider wire schema、revision 重分析、前端/历史兼容、文档与完整终验。
+- 已实现第一版 Registry `forbid` 策略、`AiAnalysisUnavailableError`、严格 AI 调用器、HTTP 错误映射，以及上传/示例的 `requireAi` 原子调用入口；`pnpm typecheck` 通过。
+- 第一轮 Web 回归为 55 个文件 / 304 项，其中 299 项通过、5 项失败；失败均为旧 API 成功用例未注入 Provider，实际按新契约返回 `503 AI_ANALYSIS_UNAVAILABLE`。下一步改造测试夹具并补充明确的 strict-AI 失败断言，不放宽生产逻辑。
+- Provider 精简 Schema、`editableTargets`、自然语言字段 PII 扫描、服务端 Suggestion 组装及一次纠错重试已完成第一版，TypeScript 继续通过。聚焦测试出现 4 个夹具迁移失败：1 个不完整 Scorecard、3 个仍返回旧完整 Suggestion 的 Provider 成功夹具；均需改为新契约后复测。
+- Registry 聚焦测试现为 12/12 通过；Provider 聚焦测试除一项仅因稳定 ID 断言分隔符不符外，其余 28 项通过。新增 `/api/resume-analysis` 原子接口并让兼容建议接口复用同一严格评分+建议流程；移除本地 revision Scorecard 后，类型检查准确暴露 Store 的三处旧读取，已进入状态机改造。
+- 上传页一次多区块补丁因事件处理代码的实际顺序与旧上下文不一致被拒绝；未产生部分修改。改为按 import/state、submit、控件、错误区四段精确应用。
+- 第一轮全量回归为 55 个文件 / 307 项，225 项通过、82 项失败。多数失败是 Store `setAnalysis()` 对内部测试 fixture 的重复强拦截造成的级联空状态；上传客户端已在调用 Store 前完成来源校验，因此撤掉 Store 重复门，仅保留 API 客户端校验与 IndexedDB 新记录硬门。其他失败按上传 mock、兼容路由 mock、revision 新语义和无 Provider 集成用例分别迁移。
+
 ## 会话：2026-07-24（阶段 12 本地持久化的简历 AI 编辑对话）
 
 ### 阶段 12：本地持久化的简历 AI 编辑对话
@@ -242,8 +255,8 @@
 
 | 问题           | 答案                                           |
 | -------------- | ---------------------------------------------- |
-| 我在哪里？     | 阶段 12：本地持久化的简历 AI 编辑对话（完成）  |
-| 我要去哪里？   | 保持当前工作树可提交，等待用户决定提交或继续验收 |
+| 我在哪里？     | 阶段 13：上传与 revision 分析强制真实 AI        |
+| 我要去哪里？   | 完成全量构建、Python 回归和真实 Provider 终验    |
 | 目标是什么？   | 交付可运行、可扩展、证据约束的简历分析助手 MVP |
 | 我学到了什么？ | 见 `findings.md`                               |
 | 我做了什么？   | 见上方记录                                     |
@@ -278,3 +291,20 @@
 - 面试设备检查与 `InterviewProgress` v1 已完成；主问题、两轮追问、追问评审和文字草稿可跨模块、返回首页和历史恢复继续，并按简历 revision/计划指纹防串状态。
 - JD 职位名、职级、地点、求职语言和正文草稿已进入 Store、会话存储与最近分析；任一字段变化会立即清除旧岗位结果、岗位版和面试计划。
 - 流程门已从组件按钮下沉到 Store 及会话/历史恢复路径。最终全量为 44 个文件 / 259 项 Web 测试，另有 34 项 worker 与 3 项 loopback proxy 测试全部通过。
+
+## 会话：2026-07-27（阶段 13 上传分析强制真实 AI）
+
+- **状态：** in_progress；实现、完整自动化、Python 回归和生产构建已完成，真实 Provider 三次连续成功验收因上游 429 尚未通过。
+- Registry 已增加 `allow | forbid` fallback policy；上传、示例和 revision 的 `resume.score`、`resume.suggest` 通过严格调用器验证非 fallback 与 `@2.x+` 来源。
+- `/api/analyze`、`/api/demo` 和新增 `/api/resume-analysis` 均采用评分+建议原子成功；错误统一为不含正文/Provider 细节的 `AI_ANALYSIS_UNAVAILABLE`。
+- Provider 建议改为精简候选 Schema、限定 `editableTargets`，系统字段与 patch 由服务端生成；部分非法候选过滤、显式空数组成功、全部非法只纠错一次。
+- revision 修改后本地只重建 Claim/Evidence/Story；AI 状态按 `stale → refreshing → fresh/failed`，旧请求取消且晚到响应不能覆盖新 revision。等待/失败期间旧分数隐藏，JD 和面试禁用。
+- 上传页会在 AI 未配置时禁用提交；失败保留 File 并提供重试。旧 baseline 历史与旧 sessionStorage 标为“旧版本地分析”，不能进入工作台或把旧分数显示为 AI。
+- 已新增严格 API、Provider 纠错、零建议、两次非法失败、旧记录隔离、revision 失败重试与竞态测试。当前 `pnpm typecheck`、`pnpm lint` 和全量 Web 测试已通过；最近一次全量为 56 个文件 / 319 项，后续新增聚焦测试也通过。
+- README、PRD、架构、Capability map、`.codex/PROJECT.md` 和 `.env.example` 已同步为“上传分析必须真实 AI”；最终 Provider 验收后再回填完成结论。
+- 2026-07-27 最终自动化回归已完成：`pnpm typecheck`、`pnpm lint`、`pnpm test`（57 个文件 / 333 项）、`pnpm build`、document-worker pytest（34 项）和 infra pytest（3 项）均通过。真实 Provider 的生产接口与浏览器终验仍在执行，未提前标记阶段完成。
+- 生产端口 `3002` 的第一份合成 PDF 上传返回 `503 AI_ANALYSIS_UNAVAILABLE`，失败能力为 `resume.score`；响应没有 AnalysisBundle、Provider 细节或本地模板结果。该失败说明原子门生效，但真实 Provider 验收尚未通过，正在以结构化安全日志定位原因。
+- 两次不含简历正文的最小 Provider 探针均未产生可记录的 HTTP 元数据；未读取响应正文、未输出凭证，也未据此放宽强制 AI 契约。按 `retryable: true` 语义改用不同合成简历执行一次应用级重试。
+- 第二份合成 PDF 请求约五分钟后同样返回 `AI_ANALYSIS_UNAVAILABLE`，失败能力仍为 `resume.score`，无 AnalysisBundle。
+- 第三份合成 PDF 在可观测生产进程中确认 `resume.score@2.0.0` 由 Provider 以 HTTP 200 成功返回（24.6 秒），随后 `resume.suggest@2.0.0` 的首轮 `json_schema` 请求被上游以 HTTP 429 拒绝（23.5 秒）；应用整体返回 503 且未泄漏已成功评分、未执行兼容格式重试或 baseline。真实连续成功验收仍未通过。
+- 生产浏览器使用真实文件选择器上传合成 PDF：等待页未展示提前结果；Provider 再次评分 200、建议 429 后，页面返回上传区，显示“AI 分析未完成，未返回本地模板结果”，保留“重新使用 AI 分析”，最近分析仍为空，未进入工作台。

@@ -49,6 +49,10 @@ import {
   type RecentAnalysisPayload,
   type RecentAnalysisSummary,
 } from "./recent-analysis";
+import {
+  hasFreshRequiredAiAnalysis,
+  hasRequiredAiProvenance,
+} from "./ai-analysis";
 import { applySuggestion, suggestionBeforeHashMatches } from "./resume";
 import { safeAiRewriteSuggestions } from "./suggestions";
 import { clearApiSessionId } from "./privacy";
@@ -76,6 +80,10 @@ import {
 export const SESSION_STORAGE_KEY_V2 = "resume-assistant-session-v2";
 export const SESSION_STORAGE_KEY_V3 = "resume-assistant-session-v3";
 const LOCAL_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+let activeRevisionAnalysis:
+  | { resumeId: string; revision: number; controller: AbortController }
+  | null = null;
 
 export type WorkspaceModule = "resume" | "job" | "interview";
 export type WorkspaceStage = "upload" | "analyzing" | "workspace";
@@ -147,6 +155,7 @@ export type AppState = {
   ) => void;
   applyAiSuggestions: () => number;
   applyManualResumeAst: (ast: ResumeAST, changeSummary?: string) => number | null;
+  retryAiAnalysis: () => void;
   beginResumeChatTurn: (content: string) => ResumeChatMessage | null;
   completeResumeChatTurn: (
     userMessageId: string,
@@ -282,6 +291,8 @@ function emptySessionState(
 
 function cancelWorkspaceActivity() {
   cancelAnalysisRequest();
+  activeRevisionAnalysis?.controller.abort();
+  activeRevisionAnalysis = null;
   cancelAllClientRequests();
   disposeRegisteredClientRuntimeActivities();
 }
@@ -328,15 +339,32 @@ function rebindPendingSuggestion(
     : { ...suggestion, status: "stale" };
 }
 
-function mergeLocalReanalysisVersions(
-  current: Record<string, string>,
-  local: Record<string, string>,
+function processingAfterLocalRevision(
+  analysis: AnalysisBundle,
+  localVersions: Record<string, string>,
 ) {
-  const suggestionVersion = current["resume.suggest"];
-  const merged = { ...current, ...local };
-  if (suggestionVersion) merged["resume.suggest"] = suggestionVersion;
-  else delete merged["resume.suggest"];
-  return merged;
+  const previousAi = analysis.processing.aiAnalysis;
+  return {
+    ...analysis.processing,
+    capabilityVersions: {
+      ...analysis.processing.capabilityVersions,
+      ...localVersions,
+    },
+    aiAnalysis: {
+      status: "stale" as const,
+      analyzedRevision:
+        previousAi?.analyzedRevision ?? analysis.scorecard.resumeRevision,
+      scoreSourceVersion:
+        previousAi?.scoreSourceVersion ??
+        analysis.processing.capabilityVersions["resume.score"] ??
+        analysis.scorecard.sourceVersion ??
+        "legacy.resume.score@0.0.0",
+      suggestionSourceVersion:
+        previousAi?.suggestionSourceVersion ??
+        analysis.processing.capabilityVersions["resume.suggest"] ??
+        "legacy.resume.suggest@0.0.0",
+    },
+  };
 }
 
 function persistedSnapshot(snapshotValue: Snapshot): Snapshot {
@@ -927,9 +955,13 @@ export function mergePersistedSessionState(
   )
     ? "resume"
     : requestedModule;
+  const legacyAnalysis = Boolean(
+    merged.analysis && !hasRequiredAiProvenance(merged.analysis),
+  );
   return {
     ...merged,
-    module: restoredModule,
+    stage: legacyAnalysis ? "upload" : merged.stage,
+    module: legacyAnalysis ? "resume" : restoredModule,
     jobDraft,
     jobMatch,
     activeResumeVariantId,
@@ -974,7 +1006,9 @@ export function readMigratedSessionValue(
 }
 
 function recentPayload(state: AppState): RecentAnalysisPayload | null {
-  if (!state.analysis) return null;
+  if (!state.analysis || !hasFreshRequiredAiAnalysis(state.analysis)) {
+    return null;
+  }
   return {
     analysis: state.analysis,
     jobDraft: state.jobDraft,
@@ -1029,6 +1063,161 @@ async function saveCurrentSessionToRecent(): Promise<RecentAnalysisSummary[]> {
     pdfBlob: state.sourcePdfBlob,
   };
   return saveRecentAnalysis(input);
+}
+
+function scheduleRevisionAiAnalysis(resumeId: string, revision: number) {
+  queueMicrotask(() => void refreshRevisionAiAnalysis(resumeId, revision));
+}
+
+function scheduleRevisionAiAnalysisTarget(
+  target: { resumeId: string; revision: number } | null,
+) {
+  if (target) scheduleRevisionAiAnalysis(target.resumeId, target.revision);
+}
+
+async function refreshRevisionAiAnalysis(resumeId: string, revision: number) {
+  activeRevisionAnalysis?.controller.abort();
+  const controller = new AbortController();
+  const request = { resumeId, revision, controller };
+  activeRevisionAnalysis = request;
+  const state = useAppStore.getState();
+  if (
+    state.analysis?.resume.id !== resumeId ||
+    state.analysis.resume.revision !== revision
+  ) {
+    activeRevisionAnalysis = null;
+    return;
+  }
+  useAppStore.setState({
+    analysis: {
+      ...state.analysis,
+      processing: {
+        ...state.analysis.processing,
+        aiAnalysis: {
+          ...(state.analysis.processing.aiAnalysis ?? {
+            analyzedRevision: state.analysis.scorecard.resumeRevision,
+            scoreSourceVersion:
+              state.analysis.scorecard.sourceVersion ??
+              "legacy.resume.score@0.0.0",
+            suggestionSourceVersion:
+              state.analysis.processing.capabilityVersions["resume.suggest"] ??
+              "legacy.resume.suggest@0.0.0",
+          }),
+          status: "refreshing",
+        },
+      },
+    },
+    error: null,
+  });
+  try {
+    const { analyzeResumeRevision } = await import("./api");
+    const current = useAppStore.getState().analysis;
+    if (
+      activeRevisionAnalysis !== request ||
+      !current ||
+      current.resume.id !== resumeId ||
+      current.resume.revision !== revision
+    ) {
+      return;
+    }
+    const result = await analyzeResumeRevision(
+      { resume: current.resume, claims: current.claims },
+      controller.signal,
+    );
+    const latest = useAppStore.getState();
+    if (
+      activeRevisionAnalysis !== request ||
+      latest.analysis?.resume.id !== result.resumeId ||
+      latest.analysis.resume.revision !== result.resumeRevision
+    ) {
+      return;
+    }
+    activeRevisionAnalysis = null;
+    useAppStore.setState({
+      analysis: {
+        ...latest.analysis,
+        scorecard: result.scorecard,
+        suggestions: result.suggestions,
+        processing: {
+          ...latest.analysis.processing,
+          capabilityVersions: {
+            ...latest.analysis.processing.capabilityVersions,
+            ...result.capabilityVersions,
+          },
+          aiAnalysis: {
+            status: "fresh",
+            analyzedRevision: result.resumeRevision,
+            scoreSourceVersion: result.capabilityVersions["resume.score"],
+            suggestionSourceVersion:
+              result.capabilityVersions["resume.suggest"],
+          },
+        },
+      },
+      selectedSuggestionId:
+        result.suggestions.find((suggestion) => suggestion.status === "pending")
+          ?.id ?? null,
+      error: null,
+    });
+    try {
+      const recentAnalyses = await saveCurrentSessionToRecent();
+      const settled = useAppStore.getState();
+      if (
+        settled.analysis?.resume.id === resumeId &&
+        settled.analysis.resume.revision === revision
+      ) {
+        useAppStore.setState({ recentAnalyses });
+      }
+    } catch (archiveError) {
+      const settled = useAppStore.getState();
+      if (
+        settled.analysis?.resume.id === resumeId &&
+        settled.analysis.resume.revision === revision
+      ) {
+        useAppStore.setState({
+          error:
+            archiveError instanceof Error
+              ? `AI 分析已完成，但本机记录保存失败：${archiveError.message}`
+              : "AI 分析已完成，但本机记录保存失败。",
+        });
+      }
+    }
+  } catch (error) {
+    if (activeRevisionAnalysis !== request) return;
+    activeRevisionAnalysis = null;
+    if (controller.signal.aborted) return;
+    const latest = useAppStore.getState();
+    if (
+      latest.analysis?.resume.id !== resumeId ||
+      latest.analysis.resume.revision !== revision
+    ) {
+      return;
+    }
+    useAppStore.setState({
+      analysis: {
+        ...latest.analysis,
+        processing: {
+          ...latest.analysis.processing,
+          aiAnalysis: {
+            ...(latest.analysis.processing.aiAnalysis ?? {
+              analyzedRevision: latest.analysis.scorecard.resumeRevision,
+              scoreSourceVersion:
+                latest.analysis.scorecard.sourceVersion ??
+                "legacy.resume.score@0.0.0",
+              suggestionSourceVersion:
+                latest.analysis.processing.capabilityVersions[
+                  "resume.suggest"
+                ] ?? "legacy.resume.suggest@0.0.0",
+            }),
+            status: "failed",
+          },
+        },
+      },
+      error:
+        error instanceof Error
+          ? error.message
+          : "当前版本的 AI 分析未完成，请重新进行 AI 分析。",
+    });
+  }
 }
 
 async function refreshCurrentSessionArchive(): Promise<
@@ -1114,9 +1303,13 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           if (state.homeNavigationPending) return state;
           const progressionLocked = Boolean(
-            state.analysis?.suggestions.some(
-              (suggestion) => suggestion.status === "pending",
-            ),
+            state.analysis &&
+              (state.analysis.processing.aiAnalysis?.status !== "fresh" ||
+                state.analysis.processing.aiAnalysis.analyzedRevision !==
+                  state.analysis.resume.revision ||
+                state.analysis.suggestions.some(
+                  (suggestion) => suggestion.status === "pending",
+                )),
           );
           if (progressionLocked && module !== "resume") return state;
           return { module };
@@ -1158,7 +1351,8 @@ export const useAppStore = create<AppState>()(
             ? state
             : { selectedSuggestionId, previewMode: "original" },
         ),
-      decideSuggestion: (id, status, manualText) =>
+      decideSuggestion: (id, status, manualText) => {
+        let aiRevision: { resumeId: string; revision: number } | null = null;
         set((state) => {
           if (!state.analysis || state.homeNavigationPending) return state;
           const current = state.analysis.suggestions.find(
@@ -1240,6 +1434,7 @@ export const useAppStore = create<AppState>()(
               ? syncAcceptedUserClaims(state.analysis, decided)
               : null;
           if (changed) {
+            aiRevision = { resumeId: resume.id, revision: resume.revision };
             const reanalysis = reanalyzeResumeRevision({
               analysis: state.analysis,
               resume,
@@ -1258,16 +1453,12 @@ export const useAppStore = create<AppState>()(
               resume,
               claims: reanalysis.claims,
               evidence: reanalysis.evidence,
-              scorecard: reanalysis.scorecard,
               suggestions,
               stories: reanalysis.stories,
-              processing: {
-                ...state.analysis.processing,
-                capabilityVersions: mergeLocalReanalysisVersions(
-                  state.analysis.processing.capabilityVersions,
-                  reanalysis.capabilityVersions,
-                ),
-              },
+              processing: processingAfterLocalRevision(
+                state.analysis,
+                reanalysis.capabilityVersions,
+              ),
             };
             const finalText =
               status === "manual"
@@ -1322,7 +1513,9 @@ export const useAppStore = create<AppState>()(
                 }
               : {}),
           };
-        }),
+        });
+        scheduleRevisionAiAnalysisTarget(aiRevision);
+      },
       replaceAiSuggestions: (incoming, sourceVersion) =>
         set((state) => {
           if (
@@ -1367,6 +1560,7 @@ export const useAppStore = create<AppState>()(
         }),
       applyAiSuggestions: () => {
         let appliedCount = 0;
+        let aiRevision: { resumeId: string; revision: number } | null = null;
         set((state) => {
           if (!state.analysis || state.homeNavigationPending) return state;
           const candidates = safeAiRewriteSuggestions(state.analysis);
@@ -1392,6 +1586,7 @@ export const useAppStore = create<AppState>()(
             revision: state.analysis.resume.revision + 1,
             ast: nextAst,
           };
+          aiRevision = { resumeId: resume.id, revision: resume.revision };
           const firstApplied = applied.values().next().value!;
           const reanalysis = reanalyzeResumeRevision({
             analysis: state.analysis,
@@ -1415,16 +1610,12 @@ export const useAppStore = create<AppState>()(
             resume,
             claims: reanalysis.claims,
             evidence: reanalysis.evidence,
-            scorecard: reanalysis.scorecard,
             suggestions,
             stories: reanalysis.stories,
-            processing: {
-              ...state.analysis.processing,
-              capabilityVersions: mergeLocalReanalysisVersions(
-                state.analysis.processing.capabilityVersions,
-                reanalysis.capabilityVersions,
-              ),
-            },
+            processing: processingAfterLocalRevision(
+              state.analysis,
+              reanalysis.capabilityVersions,
+            ),
           };
           return {
             analysis: nextAnalysis,
@@ -1441,6 +1632,7 @@ export const useAppStore = create<AppState>()(
             interviewSessionVersion: state.interviewSessionVersion + 1,
           };
         });
+        scheduleRevisionAiAnalysisTarget(aiRevision);
         return appliedCount;
       },
       applyManualResumeAst: (ast, changeSummary = "已直接编辑简历内容。") => {
@@ -1478,16 +1670,12 @@ export const useAppStore = create<AppState>()(
             resume,
             claims: reanalysis.claims,
             evidence: reanalysis.evidence,
-            scorecard: reanalysis.scorecard,
             suggestions,
             stories: reanalysis.stories,
-            processing: {
-              ...state.analysis.processing,
-              capabilityVersions: mergeLocalReanalysisVersions(
-                state.analysis.processing.capabilityVersions,
-                reanalysis.capabilityVersions,
-              ),
-            },
+            processing: processingAfterLocalRevision(
+              state.analysis,
+              reanalysis.capabilityVersions,
+            ),
           };
           appliedRevision = resume.revision;
           return {
@@ -1506,12 +1694,21 @@ export const useAppStore = create<AppState>()(
           };
         });
         if (appliedRevision !== null) {
-          void saveCurrentSessionToRecent().then(
-            (recentAnalyses) => set({ recentAnalyses }),
-            () => undefined,
-          );
+          const currentResume = get().analysis?.resume;
+          if (currentResume && currentResume.revision === appliedRevision) {
+            scheduleRevisionAiAnalysis(
+              currentResume.id,
+              currentResume.revision,
+            );
+          }
         }
         return appliedRevision;
+      },
+      retryAiAnalysis: () => {
+        const resume = get().analysis?.resume;
+        if (resume) {
+          scheduleRevisionAiAnalysis(resume.id, resume.revision);
+        }
       },
       beginResumeChatTurn: (content) => {
         const normalized = content.trim();
@@ -1746,7 +1943,10 @@ export const useAppStore = create<AppState>()(
             interviewSessionVersion: state.interviewSessionVersion + 1,
           };
         }),
-      undo: () =>
+      undo: () => {
+        activeRevisionAnalysis?.controller.abort();
+        activeRevisionAnalysis = null;
+        let aiRevision: { resumeId: string; revision: number } | null = null;
         set((state) => {
           if (
             !state.analysis ||
@@ -1756,6 +1956,17 @@ export const useAppStore = create<AppState>()(
             return state;
           const previous = state.undoStack[state.undoStack.length - 1];
           const restored = restoreSnapshot(state.analysis, previous);
+          const restoredAi = restored.processing?.aiAnalysis;
+          if (
+            !restoredAi ||
+            restoredAi.status !== "fresh" ||
+            restoredAi.analyzedRevision !== restored.resume.revision
+          ) {
+            aiRevision = {
+              resumeId: restored.resume.id,
+              revision: restored.resume.revision,
+            };
+          }
           const invalidatesDerived =
             previous.resume.id !== state.analysis.resume.id ||
             previous.resume.revision !== state.analysis.resume.revision ||
@@ -1782,7 +1993,9 @@ export const useAppStore = create<AppState>()(
                 }
               : {}),
           };
-        }),
+        });
+        scheduleRevisionAiAnalysisTarget(aiRevision);
+      },
       updateJobDraft: (update) =>
         set((state) => {
           if (state.homeNavigationPending || state.stage !== "workspace")
@@ -2107,6 +2320,15 @@ export const useAppStore = create<AppState>()(
         }
 
         const analysis = parsedAnalysis.data;
+        if (!hasFreshRequiredAiAnalysis(analysis)) {
+          set({
+            stage: "upload",
+            error: record.pdfBlob
+              ? "这是一条旧版本地分析，请使用原 PDF 重新进行 AI 分析。"
+              : "这是一条旧版本地分析，原 PDF 已释放，请重新上传后进行 AI 分析。",
+          });
+          return false;
+        }
         const parsedJobMatch = record.payload.jobMatch
           ? JobMatchBundleSchema.safeParse(record.payload.jobMatch)
           : null;

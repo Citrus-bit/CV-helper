@@ -4,19 +4,15 @@ import type {
   EvidenceAsset,
   InterviewStory,
   ResumeDocument,
-  ScoreDimension,
-  Scorecard,
   Suggestion,
 } from "@/lib/domain";
 import {
   claimParts,
-  clamp,
   excerpt,
   extractKeywords,
   keywordOverlap,
   normalizeText,
   numericTokens,
-  round,
   splitStatements,
   stableId,
 } from "@/lib/baseline/utils";
@@ -28,18 +24,9 @@ type ResumeLine = {
 
 export type RevisionReanalysis = Pick<
   AnalysisBundle,
-  "claims" | "evidence" | "scorecard" | "stories"
+  "claims" | "evidence" | "stories"
 > & {
   capabilityVersions: Record<string, string>;
-};
-
-const DIMENSION_LABELS: Record<ScoreDimension["id"], string> = {
-  impact: "成果与影响力",
-  completeness: "信息完整性",
-  clarity: "清晰与精炼",
-  structure: "结构与版式",
-  ats: "ATS 可解析性",
-  language: "语言规范性",
 };
 
 function allResumeLines(resume: ResumeDocument): ResumeLine[] {
@@ -126,124 +113,6 @@ function claimForLine(
     confidence: line.sourceBlockIds.length ? 0.7 : 0.6,
     missingInformation: parts.missingInformation,
   } satisfies Claim;
-}
-
-function scoreDimension(
-  id: ScoreDimension["id"],
-  score: number,
-  maxScore: number,
-  deductions: string[],
-  evidence: string[] = [],
-): ScoreDimension {
-  return {
-    id,
-    label: DIMENSION_LABELS[id],
-    score: round(clamp(score, 0, maxScore), 1),
-    maxScore,
-    evidence,
-    deductions,
-  };
-}
-
-function scoreResume(resume: ResumeDocument, claims: Claim[]): Scorecard {
-  const entries = resume.ast.sections.flatMap((section) => section.entries);
-  const bullets = entries.flatMap((entry) => entry.bullets);
-  const metricBullets = bullets.filter(
-    (bullet) => numericTokens(bullet).length > 0,
-  );
-  const contact = resume.ast.contact;
-  const sectionTypes = new Set(
-    resume.ast.sections.map((section) => section.type),
-  );
-  const averageBulletLength = bullets.length
-    ? bullets.reduce((sum, bullet) => sum + bullet.length, 0) / bullets.length
-    : 0;
-  const lowConfidenceBlocks = resume.sourceBlocks.filter(
-    (block) => block.confidence < 0.75,
-  );
-  const inconsistentPunctuation =
-    bullets.some((bullet) => /[。.]$/.test(bullet)) &&
-    bullets.some((bullet) => !/[。.]$/.test(bullet));
-
-  const dimensions = [
-    scoreDimension(
-      "impact",
-      8 +
-        Math.min(9, metricBullets.length * 2.25) +
-        Math.min(8, claims.filter((claim) => claim.result).length),
-      25,
-      metricBullets.length ? [] : ["经历描述缺少可核实的结果或影响"],
-      metricBullets.slice(0, 3),
-    ),
-    scoreDimension(
-      "completeness",
-      4 +
-        (contact.name ? 2 : 0) +
-        (contact.email || contact.phone ? 2 : 0) +
-        (sectionTypes.has("experience") ? 3 : 0) +
-        (sectionTypes.has("education") ? 2 : 0) +
-        (sectionTypes.has("skills") ? 2 : 0),
-      15,
-      [
-        ...(!contact.name ? ["缺少姓名"] : []),
-        ...(!contact.email && !contact.phone ? ["缺少可用联系方式"] : []),
-        ...(!sectionTypes.has("experience") ? ["缺少经历板块"] : []),
-      ],
-    ),
-    scoreDimension(
-      "clarity",
-      9 +
-        (bullets.length ? 3 : 0) +
-        (averageBulletLength > 0 && averageBulletLength <= 120 ? 3 : 0),
-      15,
-      [
-        ...(averageBulletLength > 120 ? ["部分要点过长，影响快速浏览"] : []),
-        ...(!bullets.length ? ["缺少可扫描的要点列表"] : []),
-      ],
-    ),
-    scoreDimension(
-      "structure",
-      7 + Math.min(5, sectionTypes.size) + (entries.length ? 3 : 0),
-      15,
-      resume.ast.sections.length ? [] : ["未识别到稳定的板块层级"],
-    ),
-    scoreDimension(
-      "ats",
-      15 -
-        Math.min(6, lowConfidenceBlocks.length) -
-        (resume.parseMethod === "ocr" ? 2 : 0),
-      15,
-      [
-        ...(lowConfidenceBlocks.length
-          ? [`${lowConfidenceBlocks.length} 个文本块解析置信度较低`]
-          : []),
-        ...(resume.parseMethod === "ocr" ? ["全文依赖 OCR，建议人工核对"] : []),
-      ],
-    ),
-    scoreDimension(
-      "language",
-      12 + (bullets.length ? 2 : 0) - (inconsistentPunctuation ? 2 : 0),
-      15,
-      inconsistentPunctuation ? ["要点结尾标点不一致"] : [],
-    ),
-  ];
-  const total = round(
-    dimensions.reduce((sum, dimension) => sum + dimension.score, 0),
-    1,
-  );
-  return {
-    resumeId: resume.id,
-    resumeRevision: resume.revision,
-    total,
-    dimensions,
-    summary:
-      total >= 85
-        ? "结构与内容基础扎实，可继续做岗位定制。"
-        : total >= 70
-          ? "基础完整，优先补强成果证据与表达密度。"
-          : "建议先补齐核心信息和可核实的经历证据。",
-    sourceVersion: "resume.score@1.0.0",
-  };
 }
 
 function storyForClaim(
@@ -473,7 +342,6 @@ export function reanalyzeResumeRevision(input: {
   const assessedClaims = markConflicts(
     claims.map((claim) => assessClaim(claim, currentEvidenceById)),
   );
-  const scorecard = scoreResume(resume, assessedClaims);
   const stories = assessedClaims
     .slice(0, 8)
     .map((claim) => storyForClaim(claim, evidence));
@@ -481,13 +349,11 @@ export function reanalyzeResumeRevision(input: {
   return {
     claims: assessedClaims,
     evidence,
-    scorecard,
     stories,
     capabilityVersions: {
       "evidence.mine": "evidence.mine@1.0.0",
       "claim.assess": "claim.assess@1.0.0",
       "claim.conflict": "claim.conflict@1.0.0",
-      "resume.score": "resume.score@1.0.0",
       ...(stories.length ? { "story.build": "story.build@1.0.0" } : {}),
     },
   };

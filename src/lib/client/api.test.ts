@@ -63,7 +63,7 @@ describe("version-bound client requests", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(loadDemoAnalysis()).rejects.toThrow("示例暂时无法加载");
+    await expect(loadDemoAnalysis()).rejects.toThrow("请求失败 (503)");
 
     const request = fetchMock.mock.calls[0][1] as RequestInit;
     expect(new Headers(request.headers).has("x-resume-session")).toBe(false);

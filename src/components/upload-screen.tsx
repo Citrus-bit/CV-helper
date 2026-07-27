@@ -18,9 +18,23 @@ import {
   useState,
   type DragEvent as ReactDragEvent,
 } from "react";
-import { analyzeResume, loadDemoAnalysis } from "@/lib/client/api";
+import {
+  aiAnalysisAvailable,
+  analyzeResume,
+  ApiError,
+  loadDemoAnalysis,
+} from "@/lib/client/api";
 import { beginAnalysisRequest } from "@/lib/client/analysis-request";
 import { useAppStore } from "@/lib/client/store";
+import {
+  hasFreshRequiredAiAnalysis,
+  hasRequiredAiProvenance,
+} from "@/lib/client/ai-analysis";
+import { getRecentAnalysis } from "@/lib/client/recent-analysis";
+import {
+  getRetainedUploadFile,
+  retainUploadFile,
+} from "@/lib/client/retained-upload";
 import {
   EstimatedProgressText,
   estimatedDurations,
@@ -59,6 +73,10 @@ export function UploadScreen() {
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [retryFile, setRetryFile] = useState<File | null>(() =>
+    getRetainedUploadFile(),
+  );
+  const [aiAvailable, setAiAvailable] = useState<boolean | null>(null);
   const [initialRecentLoadPending, setInitialRecentLoadPending] =
     useState(true);
   const [openingId, setOpeningId] = useState<string | null>(null);
@@ -67,7 +85,9 @@ export function UploadScreen() {
   const [clearing, setClearing] = useState(false);
   const setStage = useAppStore((state) => state.setStage);
   const setAnalysis = useAppStore((state) => state.setAnalysis);
+  const retryAiAnalysis = useAppStore((state) => state.retryAiAnalysis);
   const analysis = useAppStore((state) => state.analysis);
+  const sourcePdfBlob = useAppStore((state) => state.sourcePdfBlob);
   const recentAnalyses = useAppStore((state) => state.recentAnalyses);
   const recentAnalysesLoading = useAppStore(
     (state) => state.recentAnalysesLoading,
@@ -82,9 +102,27 @@ export function UploadScreen() {
   const setError = useAppStore((state) => state.setError);
   const hasUnarchivedCurrentAnalysis = Boolean(
     analysis &&
+    hasRequiredAiProvenance(analysis) &&
     !recentAnalysesLoading &&
-    !recentAnalyses.some((record) => record.id === analysis.resume.id),
+    !recentAnalyses.some(
+      (record) =>
+        record.id === analysis.resume.id &&
+        record.resumeRevision === analysis.resume.revision &&
+        record.isFreshAiAnalysis,
+    ),
   );
+  const hasLegacyCurrentAnalysis = Boolean(
+    analysis && !hasRequiredAiProvenance(analysis),
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void aiAnalysisAvailable(controller.signal).then(
+      (available) => setAiAvailable(available),
+      () => setAiAvailable(false),
+    );
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -203,6 +241,12 @@ export function UploadScreen() {
 
   async function submit(file: File) {
     setError(null);
+    retainUploadFile(file);
+    setRetryFile(file);
+    if (aiAvailable !== true) {
+      setError("AI 服务尚未配置，当前不会提供本地模板分析。");
+      return;
+    }
     if (
       file.type !== "application/pdf" &&
       !file.name.toLowerCase().endsWith(".pdf")
@@ -220,6 +264,8 @@ export function UploadScreen() {
     try {
       const analysis = await analyzeResume(file, request.signal);
       if (!request.settle()) return;
+      retainUploadFile(null);
+      setRetryFile(null);
       setAnalysis(analysis, file);
     } catch (requestError) {
       if (!request.settle()) return;
@@ -228,12 +274,58 @@ export function UploadScreen() {
         return;
       }
       setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "分析失败，请重试。",
+        requestError instanceof ApiError && requestError.retryAfterSeconds
+          ? `${requestError.message} 可在 ${requestError.retryAfterSeconds} 秒后重试。`
+          : requestError instanceof Error
+            ? requestError.message
+            : "分析失败，请重试。",
       );
       setStage("upload");
+    } finally {
+      setBusy(false);
     }
+  }
+
+  async function reanalyzeRecent(id: string) {
+    setOpeningId(id);
+    setError(null);
+    try {
+      const record = await getRecentAnalysis(id);
+      if (!record) {
+        await refreshRecentSessions();
+        setError("这条记录已过期或不存在。");
+        return;
+      }
+      if (!record.pdfBlob) {
+        setError("这条旧版本地分析没有保留原 PDF，请重新上传后使用 AI 分析。");
+        inputRef.current?.click();
+        return;
+      }
+      const file = new File([record.pdfBlob], record.originalFileName, {
+        type: "application/pdf",
+      });
+      await submit(file);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "无法读取这条旧版本地分析。",
+      );
+    } finally {
+      setOpeningId(null);
+    }
+  }
+
+  function reanalyzeLegacyCurrent() {
+    if (!analysis || !sourcePdfBlob) {
+      setError("旧版本地分析没有可复用的原 PDF，请重新上传后使用 AI 分析。");
+      inputRef.current?.click();
+      return;
+    }
+    const file = new File([sourcePdfBlob], analysis.resume.originalFileName, {
+      type: "application/pdf",
+    });
+    void submit(file);
   }
 
   async function restoreRecent(id: string) {
@@ -284,6 +376,10 @@ export function UploadScreen() {
 
   async function loadDemo() {
     setError(null);
+    if (aiAvailable !== true) {
+      setError("AI 服务尚未配置，体验示例当前不可分析。");
+      return;
+    }
     const request = beginAnalysisRequest();
     setBusy(true);
     setStage("analyzing");
@@ -303,6 +399,8 @@ export function UploadScreen() {
           : "示例暂时无法加载。",
       );
       setStage("upload");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -353,6 +451,7 @@ export function UploadScreen() {
           role="region"
           aria-label="PDF 简历上传区"
           aria-busy={busy}
+          data-ai-available={aiAvailable === true ? "true" : "false"}
           data-drag-active={dragging ? "true" : "false"}
           className={`relative grid min-h-[340px] place-items-center overflow-hidden rounded-[8px] border bg-surface px-6 py-10 shadow-panel transition-colors duration-200 ${
             dragging ? "border-brand bg-[#f3f8ff]" : "border-line"
@@ -364,7 +463,7 @@ export function UploadScreen() {
             event.preventDefault();
             resetDragState();
             const file = event.dataTransfer.files.item(0);
-            if (file) void submit(file);
+            if (file && aiAvailable === true) void submit(file);
           }}
         >
           <input
@@ -376,7 +475,7 @@ export function UploadScreen() {
             aria-label="选择 PDF 简历"
             onChange={(event) => {
               const file = event.target.files?.[0];
-              if (file) void submit(file);
+              if (file && aiAvailable === true) void submit(file);
               event.target.value = "";
             }}
           />
@@ -392,7 +491,7 @@ export function UploadScreen() {
             </p>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || aiAvailable !== true}
               onClick={() => inputRef.current?.click()}
               className="mt-7 inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#075bbf] disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -401,7 +500,7 @@ export function UploadScreen() {
             </button>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || aiAvailable !== true}
               onClick={() => void loadDemo()}
               className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-[8px] px-4 py-2 text-sm font-medium text-brand transition-colors hover:bg-[#edf5ff] disabled:opacity-50"
             >
@@ -416,8 +515,27 @@ export function UploadScreen() {
             className="mt-4 rounded-[8px] border border-[#f0b8b4] bg-[#fff7f6] px-4 py-3 text-sm text-danger"
             role="alert"
           >
-            {error}
+            <p>{error}</p>
+            {retryFile ? (
+              <button
+                type="button"
+                disabled={busy || aiAvailable !== true}
+                onClick={() => void submit(retryFile)}
+                className="mt-3 min-h-11 rounded-[8px] bg-brand px-4 text-sm font-medium text-white disabled:opacity-45"
+              >
+                重新使用 AI 分析
+              </button>
+            ) : null}
           </div>
+        ) : null}
+
+        {aiAvailable === false && !error ? (
+          <p
+            className="mt-4 rounded-[8px] border border-[#f0b8b4] bg-[#fff7f6] px-4 py-3 text-sm text-danger"
+            role="status"
+          >
+            AI 服务尚未配置，当前不会提供本地模板分析。
+          </p>
         ) : null}
 
         {hasUnarchivedCurrentAnalysis && analysis ? (
@@ -433,8 +551,10 @@ export function UploadScreen() {
                 当前分析仍可继续
               </p>
               <p className="mt-1 truncate text-sm text-muted">
-                {analysis.resume.originalFileName} · 质量分{" "}
-                {Math.round(analysis.scorecard.total)}· 尚未写入最近记录
+                {analysis.resume.originalFileName} ·{" "}
+                {hasFreshRequiredAiAnalysis(analysis)
+                  ? `AI 质量分 ${Math.round(analysis.scorecard.total)} · 尚未写入最近记录`
+                  : "当前版本尚未完成 AI 分析，可继续编辑或重试"}
               </p>
             </div>
             <button
@@ -442,11 +562,35 @@ export function UploadScreen() {
               onClick={() => {
                 setError(null);
                 setStage("workspace");
+                if (!hasFreshRequiredAiAnalysis(analysis)) {
+                  retryAiAnalysis();
+                }
               }}
               className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-[#075bbf]"
             >
-              继续当前分析
+                {hasFreshRequiredAiAnalysis(analysis)
+                  ? "继续当前分析"
+                  : "继续并重试 AI"}
               <ArrowRight aria-hidden="true" size={16} />
+            </button>
+          </aside>
+        ) : null}
+
+        {hasLegacyCurrentAnalysis && analysis ? (
+          <aside className="mt-4 flex min-h-20 items-center justify-between gap-6 rounded-[8px] border border-[#ead59b] bg-[#fffaf0] px-5 py-4">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-ink">旧版本地分析</p>
+              <p className="mt-1 text-sm text-muted">
+                {analysis.resume.originalFileName} 的旧规则结果不会进入工作台，请重新使用 AI 分析。
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={busy || aiAvailable !== true}
+              onClick={reanalyzeLegacyCurrent}
+              className="min-h-11 shrink-0 rounded-[8px] bg-brand px-4 text-sm font-medium text-white disabled:opacity-45"
+            >
+              {sourcePdfBlob ? "使用 AI 重新分析" : "重新上传 PDF"}
             </button>
           </aside>
         ) : null}
@@ -579,6 +723,11 @@ export function UploadScreen() {
                       <h3 className="truncate text-sm font-semibold">
                         {record.originalFileName}
                       </h3>
+                      {!record.isFreshAiAnalysis ? (
+                        <span className="shrink-0 rounded-[6px] bg-[#fff3d6] px-2 py-0.5 text-[11px] font-medium text-[#8a5a00]">
+                          旧版本地分析
+                        </span>
+                      ) : null}
                       {!record.hasPdf ? (
                         <span className="shrink-0 rounded-[6px] bg-[#f0f1f3] px-2 py-0.5 text-[11px] text-muted">
                           PDF 已释放
@@ -587,7 +736,7 @@ export function UploadScreen() {
                     </div>
                     <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">
                       <span className="font-medium text-ink">
-                        {record.summarySource === "ai" ? "AI 摘要" : "规则摘要"}
+                        {record.isFreshAiAnalysis ? "AI 摘要" : "旧版规则摘要"}
                         ：
                       </span>
                       {record.summary}
@@ -603,12 +752,20 @@ export function UploadScreen() {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-2xl font-semibold tabular-nums">
-                      {Math.round(record.score)}
-                    </p>
-                    <p className="text-xs text-muted">
-                      质量分 · 待处理 {record.pendingSuggestionCount}
-                    </p>
+                    {record.isFreshAiAnalysis ? (
+                      <>
+                        <p className="text-2xl font-semibold tabular-nums">
+                          {Math.round(record.score)}
+                        </p>
+                        <p className="text-xs text-muted">
+                          AI 质量分 · 待处理 {record.pendingSuggestionCount}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs leading-5 text-muted">
+                        旧分数不作为<br />当前 AI 结论
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center justify-end gap-2">
                     {deletingId === record.id ? (
@@ -624,7 +781,11 @@ export function UploadScreen() {
                         <button
                           type="button"
                           disabled={openingId !== null || deletingId !== null}
-                          onClick={() => void restoreRecent(record.id)}
+                          onClick={() =>
+                            record.isFreshAiAnalysis
+                              ? void restoreRecent(record.id)
+                              : void reanalyzeRecent(record.id)
+                          }
                           className="inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf] disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           {openingId === record.id ? (
@@ -637,7 +798,11 @@ export function UploadScreen() {
                               />
                             </>
                           ) : (
-                            "继续分析"
+                            record.isFreshAiAnalysis
+                              ? "继续分析"
+                              : record.hasPdf
+                                ? "使用 AI 重新分析"
+                                : "重新上传 PDF"
                           )}
                           <ArrowRight aria-hidden="true" size={16} />
                         </button>

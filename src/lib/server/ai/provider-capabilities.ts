@@ -36,6 +36,7 @@ import {
 import {
   resolveResumeTextSourceBlocks,
   resolveResumeTextTarget,
+  ScoreDimensionIdSchema,
   type Claim,
   type Suggestion,
 } from "@/lib/domain";
@@ -46,6 +47,32 @@ import { PiiProjector } from "./pii-projection";
 type GatewayInputMap = Pick<BaselineCapabilityInputMap, ProviderGatewayCapabilityId>;
 type GatewayOutputMap = Pick<BaselineCapabilityOutputMap, ProviderGatewayCapabilityId>;
 type GatewayCapability = Capability<GatewayInputMap[ProviderGatewayCapabilityId], GatewayOutputMap[ProviderGatewayCapabilityId]>;
+
+export const ProviderSuggestionSchema = z.object({
+  kind: z.enum(["rewrite", "ask_user", "needs_proof"]),
+  targetPath: z.string().startsWith("/"),
+  originalText: z.string(),
+  proposedText: z.string().optional(),
+  rationale: z.string().min(1).max(1_500),
+  question: z.string().min(1).max(1_000).optional(),
+  claimIds: z.array(z.string()).max(20),
+  affectedDimensions: z.array(ScoreDimensionIdSchema).max(6),
+  factRisk: z.enum(["none", "low", "medium", "high"]),
+  interviewRisk: z.enum(["none", "low", "medium", "high"]),
+});
+
+export const ProviderSuggestionOutputSchema = z.object({
+  suggestions: z.array(ProviderSuggestionSchema).max(16),
+});
+
+type ProviderSuggestion = z.infer<typeof ProviderSuggestionSchema>;
+type EditableTarget = {
+  path: string;
+  originalText: string;
+  localOriginalText: string;
+  sourceBlockIds: string[];
+  validClaimIds: string[];
+};
 
 export const PROVIDER_GATEWAY_MANIFEST: SkillManifest = {
   id: "builtin.provider-gateway",
@@ -142,6 +169,111 @@ function minimalResume(
   };
 }
 
+function editableTargets(
+  input: GatewayInputMap["resume.suggest"],
+  projector: PiiProjector,
+): EditableTarget[] {
+  const candidates: Array<{ path: string; text: string }> = [];
+  if (input.resume.ast.summary) {
+    candidates.push({ path: "/summary", text: input.resume.ast.summary });
+  }
+  input.resume.ast.sections.forEach((section, sectionIndex) => {
+    if (section.text) {
+      candidates.push({
+        path: `/sections/${sectionIndex}/text`,
+        text: section.text,
+      });
+    }
+    section.entries.forEach((entry, entryIndex) => {
+      if (entry.summary) {
+        candidates.push({
+          path: `/sections/${sectionIndex}/entries/${entryIndex}/summary`,
+          text: entry.summary,
+        });
+      }
+      entry.bullets.forEach((text, bulletIndex) => {
+        candidates.push({
+          path: `/sections/${sectionIndex}/entries/${entryIndex}/bullets/${bulletIndex}`,
+          text,
+        });
+      });
+    });
+  });
+
+  return candidates.flatMap(({ path, text }) => {
+    const projectedText = projector.redact(text);
+    // A target containing projected PII cannot be safely round-tripped into a
+    // ready-to-apply rewrite, so it is excluded from automatic editing.
+    if (projector.containsSensitiveValue(text)) return [];
+    const sourceBlocks = resolveResumeTextSourceBlocks(
+      input.resume,
+      path,
+      text,
+    );
+    if (sourceBlocks.length === 0) return [];
+    const sourceIds = new Set(sourceBlocks.map((block) => block.id));
+    return [
+      {
+        path,
+        originalText: projectedText,
+        localOriginalText: text,
+        sourceBlockIds: [...sourceIds],
+        validClaimIds: input.claims
+          .filter(
+            (claim) =>
+              validFactClaim(claim) &&
+              claim.sourceBlockIds.some((sourceId) => sourceIds.has(sourceId)),
+          )
+          .map((claim) => claim.id),
+      },
+    ];
+  });
+}
+
+function resumeNaturalLanguagePayload(value: ReturnType<typeof minimalResume>) {
+  return {
+    sections: value.resume.sections.map((section) => ({
+      title: section.title,
+      text: section.text,
+      entries: section.entries.map((entry) => ({
+        title: entry.title,
+        subtitle: entry.subtitle,
+        organization: entry.organization,
+        summary: entry.summary,
+        bullets: entry.bullets,
+        keywords: entry.keywords,
+      })),
+    })),
+    sourceBlocks: value.resume.sourceBlocks.map((block) => block.text),
+    claims: value.claims.map((claim) => claim.text),
+  };
+}
+
+function providerInputPiiPayload<K extends ProviderGatewayCapabilityId>(
+  id: K,
+  input: GatewayInputMap[K],
+  dto: unknown,
+  projector: PiiProjector,
+): unknown {
+  if (id === "resume.score") {
+    return resumeNaturalLanguagePayload(
+      minimalResume(input as GatewayInputMap["resume.score"], projector),
+    );
+  }
+  if (id === "resume.suggest") {
+    const suggestionInput = input as GatewayInputMap["resume.suggest"];
+    return {
+      editableTargets: editableTargets(suggestionInput, projector).map(
+        (target) => target.originalText,
+      ),
+      claims: suggestionInput.claims.map((claim) =>
+        projector.redact(claim.text),
+      ),
+    };
+  }
+  return dto;
+}
+
 function resumeGroundingCorpus(
   input: GatewayInputMap["resume.score"],
   projector: PiiProjector,
@@ -173,8 +305,27 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
   const sanitize = (value: string) => projector.redact(value);
   switch (id) {
     case "resume.score":
-    case "resume.suggest":
       return minimalResume(input as GatewayInputMap["resume.score"], projector);
+    case "resume.suggest": {
+      const suggestionInput = input as GatewayInputMap["resume.suggest"];
+      const projected = minimalResume(suggestionInput, projector);
+      return {
+        resume: {
+          id: projected.resume.id,
+          revision: projected.resume.revision,
+          locale: projected.resume.locale,
+        },
+        claims: projected.claims,
+        editableTargets: editableTargets(suggestionInput, projector).map(
+          (target) => ({
+            path: target.path,
+            originalText: target.originalText,
+            sourceBlockIds: target.sourceBlockIds,
+            validClaimIds: target.validClaimIds,
+          }),
+        ),
+      };
+    }
     case "resume.chat": {
       const chatInput = input as GatewayInputMap["resume.chat"];
       return {
@@ -495,7 +646,7 @@ function validateSuggestionCandidate(
   };
 }
 
-function validateSuggestionOutput(
+function validateCanonicalSuggestionOutput(
   input: GatewayInputMap["resume.suggest"] | GatewayInputMap["resume.chat"],
   output: GatewayOutputMap["resume.suggest"],
   confirmedFacts: readonly string[] = [],
@@ -547,13 +698,210 @@ function validateSuggestionOutput(
   return { suggestions };
 }
 
+class ProviderSuggestionOutputValidationError extends ProviderGatewayError {
+  constructor(readonly reasonCounts: Readonly<Record<string, number>>) {
+    super("INVALID_RESPONSE");
+    this.name = "ProviderSuggestionOutputValidationError";
+  }
+}
+
+function validateProviderSuggestionCandidate(
+  input: GatewayInputMap["resume.suggest"],
+  candidate: ProviderSuggestion,
+  targets: ReadonlyMap<string, EditableTarget>,
+  claims: ReadonlyMap<string, Claim>,
+  seenPaths: ReadonlySet<string>,
+  projector: PiiProjector,
+): Suggestion {
+  const reject = (reason: string): never => {
+    throw new SuggestionValidationError(reason);
+  };
+  const target = targets.get(candidate.targetPath) ?? reject("UNKNOWN_TARGET_PATH");
+  if (seenPaths.has(candidate.targetPath)) reject("DUPLICATE_TARGET_PATH");
+  if (candidate.originalText !== target.originalText) {
+    reject("ORIGINAL_TEXT_MISMATCH");
+  }
+  const validClaimIds = new Set(target.validClaimIds);
+  if (candidate.claimIds.some((claimId) => !validClaimIds.has(claimId))) {
+    reject("INVALID_CLAIM_ID");
+  }
+  assertNoProjectedPii(
+    {
+      originalText: candidate.originalText,
+      proposedText: candidate.proposedText,
+      rationale: candidate.rationale,
+      question: candidate.question,
+      claimTexts: candidate.claimIds.map((claimId) => claims.get(claimId)?.text ?? ""),
+    },
+    projector,
+  );
+
+  const isRewrite = candidate.kind === "rewrite";
+  const replacement = isRewrite
+    ? candidate.proposedText?.trim() || reject("INVALID_REWRITE")
+    : target.localOriginalText;
+  if (
+    isRewrite &&
+    (replacement === target.originalText || candidate.question !== undefined)
+  ) {
+    reject("INVALID_REWRITE");
+  }
+  if (
+    !isRewrite &&
+    (!candidate.question?.trim() ||
+      (candidate.proposedText !== undefined &&
+        candidate.proposedText !== target.originalText))
+  ) {
+    reject("INVALID_QUESTION");
+  }
+
+  const supportedText = [
+    target.originalText,
+    ...candidate.claimIds.map((claimId) =>
+      projector.redact(claims.get(claimId)!.text),
+    ),
+  ].join(" ");
+  const introducedNumbers = numericTokens(replacement).filter(
+    (number) => !numericTokens(supportedText).includes(number),
+  );
+  if (introducedNumbers.length > 0) reject("INTRODUCED_NUMBER");
+  const supportedLexemes = factualLexemes(supportedText);
+  if (
+    [...factualLexemes(replacement)].some(
+      (lexeme) => !supportedLexemes.has(lexeme),
+    ) ||
+    UNSUPPORTED_FACT_PATTERNS.some(
+      (pattern) => pattern.test(replacement) && !pattern.test(supportedText),
+    )
+  ) {
+    reject("INTRODUCED_FACT");
+  }
+
+  return {
+    id: stableId(
+      "suggestion-ai",
+      `${input.resume.id}:${input.resume.revision}:${candidate.kind}:${target.localOriginalText}:${candidate.targetPath}`,
+    ),
+    resumeRevision: input.resume.revision,
+    sourceBlockIds: target.sourceBlockIds,
+    claimIds: candidate.claimIds,
+    kind: candidate.kind,
+    status: "pending",
+    originalText: target.localOriginalText,
+    proposedText: isRewrite ? replacement : undefined,
+    rationale: candidate.rationale,
+    question: candidate.question,
+    beforeHash: stableId("hash", target.localOriginalText),
+    patches: [
+      {
+        operation: "replace",
+        path: target.path,
+        value: replacement,
+      },
+    ],
+    affectedDimensions: candidate.affectedDimensions,
+    factRisk: candidate.factRisk,
+    interviewRisk: candidate.interviewRisk,
+  };
+}
+
+function validateProviderSuggestionOutput(
+  input: GatewayInputMap["resume.suggest"],
+  output: z.infer<typeof ProviderSuggestionOutputSchema>,
+  projector: PiiProjector,
+): GatewayOutputMap["resume.suggest"] {
+  if (output.suggestions.length === 0) return { suggestions: [] };
+  const targets = new Map(
+    editableTargets(input, projector).map((target) => [target.path, target]),
+  );
+  const claims = new Map(input.claims.map((claim) => [claim.id, claim]));
+  const seenPaths = new Set<string>();
+  const seenRationales = new Set<string>();
+  const seenQuestions = new Set<string>();
+  const reasonCounts: Record<string, number> = {};
+  const suggestions: Suggestion[] = [];
+  const rejectCandidate = (reason: string) => {
+    reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
+  };
+
+  for (const candidate of output.suggestions) {
+    if (suggestions.length >= 8) break;
+    const rationaleKey = normalizedGroundingText(candidate.rationale);
+    const questionKey = candidate.question
+      ? normalizedGroundingText(candidate.question)
+      : "";
+    if (
+      seenRationales.has(rationaleKey) ||
+      (questionKey && seenQuestions.has(questionKey))
+    ) {
+      rejectCandidate("DUPLICATE_ANALYSIS");
+      continue;
+    }
+    try {
+      const suggestion = validateProviderSuggestionCandidate(
+        input,
+        candidate,
+        targets,
+        claims,
+        seenPaths,
+        projector,
+      );
+      suggestions.push(suggestion);
+      seenPaths.add(candidate.targetPath);
+      seenRationales.add(rationaleKey);
+      if (questionKey) seenQuestions.add(questionKey);
+    } catch (error) {
+      if (!(error instanceof SuggestionValidationError)) throw error;
+      rejectCandidate(error.reason);
+    }
+  }
+  if (suggestions.length === 0) {
+    throw new ProviderSuggestionOutputValidationError(reasonCounts);
+  }
+  if (Object.keys(reasonCounts).length > 0) {
+    console.info("ai_resume_suggestion_candidates_filtered", {
+      invalidCandidateReasonCounts: reasonCounts,
+    });
+  }
+  return { suggestions };
+}
+
 function validateOutput<K extends ProviderGatewayCapabilityId>(
   id: K,
   input: GatewayInputMap[K],
   output: GatewayOutputMap[K],
 ): GatewayOutputMap[K] {
   const projector = projectorForInput(id, input);
-  assertNoProjectedPii(output, projector);
+  const naturalLanguageOutput =
+    id === "resume.score"
+      ? (() => {
+          const score = output as GatewayOutputMap["resume.score"];
+          return {
+            summary: score.summary,
+            dimensions: score.dimensions.map((dimension) => ({
+              label: dimension.label,
+              evidence: dimension.evidence,
+              deductions: dimension.deductions,
+            })),
+          };
+        })()
+      : id === "resume.chat"
+        ? (() => {
+            const chat = output as GatewayOutputMap["resume.chat"];
+            return {
+              reply: chat.reply,
+              summary: chat.summary,
+              confirmedFacts: chat.confirmedFacts,
+              suggestions: chat.suggestions.map((suggestion) => ({
+                originalText: suggestion.originalText,
+                proposedText: suggestion.proposedText,
+                rationale: suggestion.rationale,
+                question: suggestion.question,
+              })),
+            };
+          })()
+        : output;
+  assertNoProjectedPii(naturalLanguageOutput, projector);
   switch (id) {
     case "resume.score": {
       const scoreInput = input as GatewayInputMap["resume.score"];
@@ -639,7 +987,7 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
       ) {
         throw new ProviderGatewayError("INVALID_RESPONSE");
       }
-      const validatedSuggestions = validateSuggestionOutput(
+      const validatedSuggestions = validateCanonicalSuggestionOutput(
         chatInput,
         { suggestions: chatOutput.suggestions },
         [...chatInput.confirmedFacts, ...confirmedFacts],
@@ -651,10 +999,7 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
       } as GatewayOutputMap[K];
     }
     case "resume.suggest":
-      return validateSuggestionOutput(
-        input as GatewayInputMap["resume.suggest"],
-        output as GatewayOutputMap["resume.suggest"],
-      ) as GatewayOutputMap[K];
+      throw new ProviderGatewayError("INVALID_RESPONSE");
     case "jd.parse": {
       const jobInput = input as GatewayInputMap["jd.parse"];
       const jobOutput = output as GatewayOutputMap["jd.parse"];
@@ -850,12 +1195,12 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
     "Every evidence string must be an exact verbatim substring of a supplied section, claim, or source block; put interpretation only in deductions.",
   ].join(" "),
   "resume.suggest": [
-    "Task: act as a senior resume editor and return only the most important actionable findings from the supplied experience or project bullets, ordered by recruiter impact, with at most 8 suggestions.",
+    "Task: act as a senior resume editor and return only the most important actionable findings from the supplied editableTargets, ordered by recruiter impact, with at most 8 suggestions.",
     "For every item, diagnose that exact sentence rather than applying a generic checklist. rationale must identify the concrete wording or information issue in originalText, explain its effect on a recruiter, and state what the proposed change improves. Do not reuse stock rationales, repeated sentence templates, or the same question across unrelated bullets.",
     "When a fact-preserving improvement is possible, return kind rewrite with a complete, ready-to-paste replacement sentence. Prefer concise action-method-result ordering and remove weak, repetitive, or vague phrasing, but do not demand a metric when the source contains none.",
     "Use ask_user or needs_proof only when a specific missing or unsupported fact materially blocks a useful edit. question must name the exact project, action, result, or phrase that needs clarification and must not be a generic request for metrics.",
-    "Every suggestion must cite supplied sourceBlockIds or claimIds and use at most one replace JSON Pointer patch targeting an existing resume text field.",
-    "originalText must exactly equal the current value at the patch path, including punctuation and whitespace, and proposedText must exactly equal the patch value.",
+    "Choose targetPath only from editableTargets.path. originalText must exactly equal that target's originalText, including punctuation and whitespace. Cite only claimIds listed in that target's validClaimIds.",
+    "Do not generate IDs, revision values, statuses, hashes, sourceBlockIds, or patches; the server creates all system fields after validation.",
     "A rewrite may only rearrange factual words already present in originalText or cited valid claims; never introduce new numbers, achievements, responsibilities, tools, credentials, ranking, business scope, or implied ownership.",
     "Omit bullets that are already strong or do not have a material, fully supported improvement; do not return use_as_is placeholders.",
   ].join(" "),
@@ -890,6 +1235,66 @@ const schemas = {
   "answer.coach": [AnswerCoachInputSchema, AnswerCoachOutputSchema],
 } as const;
 
+async function completeProviderSuggestions(
+  gateway: OpenAiCompatibleGateway,
+  input: GatewayInputMap["resume.suggest"],
+  context: CapabilityContext,
+  projector: PiiProjector,
+  dto: unknown,
+) {
+  let correctionReasonCodes: string[] | undefined;
+  for (const generationAttempt of [1, 2] as const) {
+    const startedAt = performance.now();
+    try {
+      const completion = await gateway.complete({
+        capabilityId: "resume.suggest",
+        context,
+        dto,
+        piiPayload: providerInputPiiPayload(
+          "resume.suggest",
+          input,
+          dto,
+          projector,
+        ),
+        outputSchema: ProviderSuggestionOutputSchema,
+        instruction: providerInstructions["resume.suggest"],
+        generationAttempt,
+        correctionReasonCodes,
+      });
+      const data = validateProviderSuggestionOutput(
+        input,
+        completion.data,
+        projector,
+      );
+      return { data, usage: completion.usage };
+    } catch (error) {
+      const reasonCounts =
+        error instanceof ProviderSuggestionOutputValidationError
+          ? error.reasonCounts
+          : error instanceof ProviderGatewayError &&
+              error.code === "INVALID_RESPONSE" &&
+              (error.status === 200 || error.status === undefined)
+            ? {
+                [error.status === 200
+                  ? "INVALID_RESPONSE_SCHEMA"
+                  : "PII_OR_FACT_SAFETY_REJECTION"]: 1,
+              }
+            : null;
+      if (!reasonCounts || generationAttempt === 2) throw error;
+      gateway.recordInvalidCandidates({
+        capabilityId: "resume.suggest",
+        context,
+        generationAttempt,
+        format: "json_schema",
+        reasonCounts,
+        durationMs: Math.max(0, performance.now() - startedAt),
+      });
+      correctionReasonCodes = Object.keys(reasonCounts);
+    }
+  }
+  throw new ProviderGatewayError("INVALID_RESPONSE");
+}
+
 function providerCapability<K extends ProviderGatewayCapabilityId>(
   id: K,
   gateway: OpenAiCompatibleGateway,
@@ -910,19 +1315,33 @@ function providerCapability<K extends ProviderGatewayCapabilityId>(
     async execute(input: GatewayInputMap[K], context: CapabilityContext) {
       const projector = projectorForInput(id, input);
       const dto = projectInput(id, input, projector);
+      const piiPayload = providerInputPiiPayload(id, input, dto, projector);
       try {
-        projector.assertSafe(dto);
+        projector.assertSafe(piiPayload);
       } catch (cause) {
         throw new ProviderGatewayError("UNSAFE_INPUT", undefined, { cause });
       }
-      const completion = await gateway.complete({
-        capabilityId: id,
-        context,
-        dto,
-        outputSchema,
-        instruction: providerInstructions[id],
-      });
-      const data = validateOutput(id, input, completion.data);
+      const completion =
+        id === "resume.suggest"
+          ? await completeProviderSuggestions(
+              gateway,
+              input as GatewayInputMap["resume.suggest"],
+              context,
+              projector,
+              dto,
+            )
+          : await gateway.complete({
+              capabilityId: id,
+              context,
+              dto,
+              piiPayload,
+              outputSchema,
+              instruction: providerInstructions[id],
+            });
+      const data =
+        id === "resume.suggest"
+          ? (completion.data as GatewayOutputMap[K])
+          : validateOutput(id, input, completion.data as GatewayOutputMap[K]);
       return {
         data,
         confidence: 0.76,

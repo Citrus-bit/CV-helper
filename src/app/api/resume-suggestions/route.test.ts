@@ -4,12 +4,12 @@ import { stableId } from "@/lib/baseline/utils";
 import { ResumeDocumentSchema, SuggestionSchema } from "@/lib/domain";
 
 const mocks = vi.hoisted(() => ({
-  invokeCapability: vi.fn(),
+  analyzeResumeRevisionWithAi: vi.fn(),
   enforceAiRateLimit: vi.fn(),
 }));
 
-vi.mock("@/lib/server/capability-runtime", () => ({
-  invokeCapability: mocks.invokeCapability,
+vi.mock("@/lib/server/resume-analysis", () => ({
+  analyzeResumeRevisionWithAi: mocks.analyzeResumeRevisionWithAi,
 }));
 
 vi.mock("@/lib/server/ai-rate-limit", async (importOriginal) => {
@@ -103,16 +103,21 @@ function request() {
 
 describe("POST /api/resume-suggestions", () => {
   beforeEach(() => {
-    mocks.invokeCapability.mockReset();
+    mocks.analyzeResumeRevisionWithAi.mockReset();
     mocks.enforceAiRateLimit.mockReset();
   });
 
   it("returns only enhanced AI suggestions", async () => {
-    mocks.invokeCapability.mockResolvedValue({
-      data: { suggestions: [suggestion] },
-      sourceVersion: "resume.suggest@2.0.0",
+    mocks.analyzeResumeRevisionWithAi.mockResolvedValue({
+      resumeId: resume.id,
+      resumeRevision: resume.revision,
+      scorecard: {},
+      suggestions: [suggestion],
+      capabilityVersions: {
+        "resume.score": "resume.score@2.0.0",
+        "resume.suggest": "resume.suggest@2.0.0",
+      },
       durationMs: 1234,
-      usedFallback: false,
     });
 
     const response = await POST(request());
@@ -126,18 +131,20 @@ describe("POST /api/resume-suggestions", () => {
   });
 
   it("fails visibly instead of returning baseline template suggestions", async () => {
-    mocks.invokeCapability.mockResolvedValue({
-      data: { suggestions: [suggestion] },
-      sourceVersion: "resume.suggest@1.0.0",
-      durationMs: 30,
-      usedFallback: true,
-    });
+    mocks.analyzeResumeRevisionWithAi.mockRejectedValue(
+      new (await import("@/lib/server/ai/required-ai")).AiAnalysisUnavailableError(
+        "resume.suggest",
+        "provider_error",
+        true,
+      ),
+    );
 
     const response = await POST(request());
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
-      error: expect.stringContaining("未使用本地模板替代"),
+      code: "AI_ANALYSIS_UNAVAILABLE",
+      failedCapability: "resume.suggest",
     });
   });
 });

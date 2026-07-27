@@ -193,7 +193,16 @@ function analysisFixture(): AnalysisBundle {
     processing: {
       extractionMode: "native",
       durationMs: 10,
-      capabilityVersions: {},
+      capabilityVersions: {
+        "resume.score": "resume.score@2.0.0",
+        "resume.suggest": "resume.suggest@2.0.0",
+      },
+      aiAnalysis: {
+        status: "fresh",
+        analyzedRevision: 0,
+        scoreSourceVersion: "resume.score@2.0.0",
+        suggestionSourceVersion: "resume.suggest@2.0.0",
+      },
     },
   };
 }
@@ -481,7 +490,8 @@ describe("evidence confirmation", () => {
 
     const accepted = useAppStore.getState().analysis!;
     expect(accepted.resume.revision).toBe(1);
-    expect(accepted.scorecard.resumeRevision).toBe(1);
+    expect(accepted.scorecard.resumeRevision).toBe(0);
+    expect(accepted.processing.aiAnalysis?.status).not.toBe("fresh");
     expect(accepted.resume.ast.sections[0].entries[0].bullets[0]).toBe(
       confirmedText,
     );

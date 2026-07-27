@@ -1,5 +1,17 @@
 # 发现与决策
 
+## 2026-07-27 阶段 13 强制真实 AI 分析
+
+- 真实生产链路复核证明当前实现只部分达标：`resume.score@2.0.0` 成功，但 `resume.suggest` 因 Provider 响应校验失败回退到 `resume.suggest@1.0.0`；主上传接口仍返回 200。
+- `/api/capabilities` 的 `enhanced` 只代表 Provider Extension 已注册，不证明本次模型调用成功；最终真值必须来自每次分析响应的 capability version 与 `usedFallback`。
+- 当前客户端 revision 变更会调用 `reanalyzeResumeRevision()` 生成 `resume.score@1.0.0` 并覆盖 AI 分数，且保留旧 `resume.suggest@2.x` 标记；这会把本地评分与旧 AI 建议混成当前结果，必须改成显式 stale/refreshing/failed 状态并调用真实 AI。
+- 现有最近记录已经包含 `summarySource: "ai" | "rules"`，可用于非破坏性隔离旧 baseline 记录，无需自动删除用户数据。
+- 本阶段决定保留本地 PDF/OCR/证据/ATS/安全能力，但用户可见的评分和建议必须同时来自 `@2.x+`；AI 失败时不计算或返回 baseline 结果。
+- 第一版严格调用改造保持 TypeScript 通过；既有测试只在五个仍期待无 Provider 返回 200 的上传/示例用例上失败，说明主要兼容工作应落在测试 Provider 注入和旧调用者迁移，而不是恢复 baseline。
+- 新 Provider wire Schema 会主动拒绝旧夹具中的 `id`/`revision`/hash/patch 责任模型；旧成功用例因此回退 baseline，证明测试必须切换到 `targetPath` 精简响应，不能为了兼容测试重新扩大模型输出面。
+- `PiiProjector.redact()` 会执行 NFKC，可能把全角中文标点投影为半角；Provider 比较必须使用投影原文，但服务端生成 `beforeHash`、最终 `originalText` 和问询类 patch 时必须恢复本地 AST 的精确原文，否则合法 AI 建议会在应用阶段变 stale。
+- 真实 Provider 终验中已观察到评分 HTTP 200 后建议 HTTP 429；应用正确丢弃部分评分并返回 `AI_ANALYSIS_UNAVAILABLE`。这证明原子门和“429 不做格式兼容重试”在真实链路生效，但也意味着当前外部 Provider 状态尚不能支持三次连续成功的最终完成声明。
+
 ## 2026-07-27 阶段 12 收尾验证
 
 - 正式源码现有 31 个 Capability，开发期共享映射为 31/31 且无重复；新增 `resume.chat` 归属 `resume-evidence-review`，provider gateway 静态白名单为 10 项。
@@ -255,3 +267,13 @@ _每执行2次查看/浏览器/搜索操作后更新此文件_
 - `pii.redact` 当前 detection type 仅覆盖邮箱、电话、证件号、地址和 URL；姓名及上下文残留由 provider projection 外围控制。Registry 文档已拆开记录，避免把外围测试误算为 Capability 能力。
 - 导出 `overallScore` 是服务器自动审计分，领域 Rubric 的 100 分是人工评审辅助；`ExportQualityReport.downloadable` 只表示产物通过质量门，真正下载仍需当前预览 SHA 与用户明确确认。
 - 官方验证、程序化 31 项映射核对、链接检查、两轮前向试跑和独立只读审查均通过，最终无 blocker 或 medium。
+
+## 2026-07-27 阶段 13 强制真实 AI 发现
+
+- 仅在 API 层检查 Provider 配置不足以证明真实 AI 成功；客户端和持久化边界也必须验证 `processing.aiAnalysis.status === "fresh"`、当前 revision 以及 `resume.score@2.x+` / `resume.suggest@2.x+` 两个来源。
+- Provider 直接生成 ID、hash、revision、状态和完整 patch 会把技术字段混入 PII 扫描，也扩大无意义 Schema 失败面。精简 ProviderSuggestion + 服务端派生系统字段后，事实验证和重试原因都更稳定。
+- `PiiProjector.redact()` 会做 NFKC 规范化，中文全角标点可能改变；Provider 往返比较必须使用投影原文，最终 `beforeHash` 和 patch 必须重新绑定本地精确原文。
+- AI 明确返回空建议与“模型返回建议但全部被安全门拒绝”语义不同：前者是真实成功，后者必须纠错一次并在仍无有效结果时整体失败。
+- revision AI 成功后的 IndexedDB 保存失败不能反向把 `fresh` 改成 `failed`；AI 结果状态与本机归档状态需要分开处理。
+- 旧记录仅看 `summarySource` 不足以证明当前 AI 完整性；列表摘要需要从保存的 AnalysisBundle 重新计算 fresh 元数据，旧规则分数不应在首页显示成当前 AI 结论。
+- 模块级 File 缓存能跨上传页卸载保留重试文件，但 React purity 规则不允许组件直接修改外部变量；使用独立 retained-upload 封装并以组件 state 反映当前重试文件可同时满足保留语义与 lint。

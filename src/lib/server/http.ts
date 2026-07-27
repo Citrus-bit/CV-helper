@@ -4,6 +4,7 @@ import { CapabilityInvocationError } from "@/lib/capabilities";
 import { PdfInputError } from "@/lib/server/pdf";
 import { DocumentWorkerError } from "@/lib/server/document-worker";
 import { AiRateLimitError } from "@/lib/server/ai-rate-limit";
+import { AiAnalysisUnavailableError } from "@/lib/server/ai/required-ai";
 
 const NO_STORE_HEADERS = {
   "cache-control": "no-store",
@@ -145,6 +146,17 @@ export function routeErrorResponse(error: unknown) {
         status: 429,
         headers: { "retry-after": String(error.retryAfterSeconds) },
       },
+    );
+  }
+  if (error instanceof AiAnalysisUnavailableError) {
+    return jsonResponse(
+      {
+        error: error.message,
+        code: "AI_ANALYSIS_UNAVAILABLE",
+        retryable: error.retryable,
+        failedCapability: error.failedCapability,
+      },
+      { status: error.status },
     );
   }
   if (error instanceof RequestInputError) {

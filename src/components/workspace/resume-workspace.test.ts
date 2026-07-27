@@ -14,12 +14,19 @@ const storeMock = vi.hoisted(() => ({
 vi.mock("@/lib/client/store", () => ({
   useAppStore: (selector: (state: unknown) => unknown) =>
     selector({
-      analysis: { scorecard: {}, resume: { sourceBlocks: [] } },
+      analysis: {
+        scorecard: {},
+        resume: { id: "resume-1", revision: 0, sourceBlocks: [] },
+        processing: {
+          aiAnalysis: { status: "fresh", analyzedRevision: 0 },
+        },
+      },
       jobMatch: null,
       activeResumeVariantId: null,
       setResumeVariant: vi.fn(),
       resumePanel: storeMock.resumePanel,
       setResumePanel: storeMock.setResumePanel,
+      retryAiAnalysis: vi.fn(),
     }),
 }));
 

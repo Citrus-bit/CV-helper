@@ -1,8 +1,8 @@
 # 简历分析助手 MVP 产品需求文档
 
 版本：`0.1.0`  
-状态：本地桌面 MVP，阶段 9 交付审计中
-日期：2026-07-23
+状态：本地桌面 MVP，阶段 13 强制真实 AI 分析实施中
+日期：2026-07-27
 
 ## 1. 产品定义
 
@@ -12,7 +12,7 @@
 
 MVP 的主闭环为：
 
-`上传 PDF → 原生解析/必要 OCR → 评分与分块建议 → 用户逐条确认 → JD 证据匹配（可选）→ 真实 PDF 预览与导出 → 语音模拟面试`
+`上传 PDF → 原生解析/必要 OCR → 真实 AI 评分与分块建议 → 用户逐条确认 → 当前 revision 真实 AI 重分析 → JD 证据匹配（可选）→ 真实 PDF 预览与导出 → 语音模拟面试`
 
 ### 1.1 目标用户
 
@@ -22,12 +22,13 @@ MVP 的主闭环为：
 
 ### 1.2 MVP 成功标准
 
-- 没有外部服务密钥时，用户仍能完成上传、分析、建议审阅、三模板预览、PDF 下载和文字降级的面试流程。
+- 上传分析只有在 `resume.score@2.x+` 与 `resume.suggest@2.x+` 同时成功时才完成；没有有效服务端 AI 配置时应用可以启动，但上传和体验示例不可分析，也不返回本地模板结果。
 - 数字 PDF 优先使用原生文字层；`digital` 页不调用 OCR，OCR 只补充 `scan`/`mixed` 页。隔离 worker 与无 Docker fallback 可采用不同的补充粒度，但都不得以全量 OCR 替代可用的原生文字。
 - 每个被接受的事实性改写都能追溯到原文或用户确认；待补证据内容不能直接接受。
 - 所有可下载 PDF 均通过硬性质量检查，且与用户确认的预览是同一产物。
 - JD 匹配结论能追溯到具体要求和简历证据，并明确不代表录取概率。
 - 本轮只交付本地桌面版；Vercel、Private Blob、Hosted 模式、云端 worker 和签名下载均已推迟，不在当前实现或验收范围。
+- Provider 未配置、超时、限流、网络失败、结构非法或事实安全校验失败时，上传请求原子失败；响应中不得包含本地评分、规则建议或已经成功的另一项 AI 部分结果。
 
 ## 2. 信息架构
 
@@ -53,6 +54,7 @@ MVP 的主闭环为：
 - 记录包含分析、JD 草稿/结果、面试设备阶段/进度和当前模块快照；原 PDF 只存当前设备的 IndexedDB，新版 PDF 按需重新渲染。
 - 所有记录 24 小时后过期，并在应用运行期间或下次打开时清理；总容量最多 50 MB。超限先移除最旧记录的 PDF Blob 并保留结构摘要，再淘汰最旧记录。
 - 原 PDF 已被容量策略清理时仍可恢复分析，但原稿预览会明确要求重新上传。
+- 新记录只有在当前 revision 具有完整 `fresh` AI 元数据且评分/建议来源均为 `@2.x+` 时才创建。旧 baseline 记录不删除，但标为“旧版本地分析”，不展示旧分数为 AI 结论，也不能直接进入工作台；有 PDF 时可重新使用 AI 分析，无 PDF 时要求重新上传。
 - “清空本机记录”经确认后终止未完成请求、释放对象 URL，并清除 IndexedDB、当前会话和旧版存储键。
 
 ## 3. 简历优化
@@ -60,9 +62,11 @@ MVP 的主闭环为：
 ### 3.1 上传与处理
 
 - 首页首屏直接显示 PDF 拖放区和文件选择按钮，不设置营销式中间页。
+- 上传页先读取抽象健康状态；AI 未配置时禁用选择、拖放提交和体验示例，并显示“当前不会提供本地模板分析”。健康状态只用于快速提示，最终成功仍以响应中的两个 `@2.x+` 来源为准。
 - 支持中英文 PDF，最大 10 MB、5 页；拒绝扩展名伪装、损坏、加密或超限文件。
 - 分析期间显示诚实的不确定等待状态，说明会处理原生文字、必要 OCR、证据、评分和建议，但不把这些内容伪装成后端已上报的逐阶段进度；完成后一次性进入结果页，失败或取消时提供明确恢复路径。
 - 原始 PDF 不可变，只保存在当前设备；保留至单条删除、全部清空、容量淘汰或 24 小时 TTL 到期。到期后的物理删除在应用运行期间或下次打开时执行。
+- 上传失败后留在上传页、保留已选择 File 并提供“重新使用 AI 分析”；取消不显示失败提示。只有评分和建议均成功后才进入工作台并写入最近记录。
 
 ### 3.2 解析策略
 
@@ -78,6 +82,8 @@ MVP 的主闭环为：
 
 通用质量分为 100 分：成果与影响力 25、信息完整性 15、清晰与精炼 15、结构与版式 15、ATS 可解析性 15、语言规范性 15。评分必须绑定 Resume revision，展示依据和扣分项。
 
+用户可见评分必须来自 `resume.score@2.x+`，逐条诊断和建议必须来自 `resume.suggest@2.x+`。两项在上传、体验示例和 revision 重分析中都使用禁止 fallback 的原子调用：任一失败则整体失败。AI 明确返回零条建议是合法成功，此时显示“AI 已完成分析，当前没有需要修改的高优先级问题”，但建议来源仍必须是 `resume.suggest@2.x+`。
+
 建议类型：
 
 - `use_as_is`：表达与事实均清晰，无需修改。
@@ -87,6 +93,8 @@ MVP 的主闭环为：
 - `ask_user`：必须先提出一个具体问题，获得回答后重新生成建议。
 
 每条建议展示原文、新文本、理由、关联评分维度、来源块、事实风险和面试追问风险。用户可接受、拒绝、手改或撤销。修改产生新 revision，旧建议标为 `stale`，不得静默覆盖。
+
+修改后本地只重建 Claim、Evidence 和 Story，AI 状态按 `stale → refreshing → fresh/failed` 转换。本地不得生成用户可见的新分数；旧 AI 分数在等待期间隐藏。每个新 revision 取消旧请求，晚到响应只有在简历 ID/revision 仍完全一致时才能应用。失败时保留编辑内容和撤销能力，只提供重试；`stale`、`refreshing` 或 `failed` 状态下 JD 匹配和模拟面试禁用。
 
 ### 3.4 持续 AI 编辑对话
 
@@ -157,10 +165,10 @@ MVP 的主闭环为：
 
 - 运行时 Capability 契约版本为 `1.0`，MVP 内置实现版本为 `1.0.0`；候选 Skill 必须声明兼容契约及明确回滚目标。
 - 前端只读取 `FeatureAvailability` 的 `available`、`baseline | enhanced | unavailable`、locale 和 fallback 状态，不暴露供应商、密钥或内部实现。
-- 所有核心 Capability 都有内置 baseline。配置本地服务端 provider gateway 后，十项白名单能力 `resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate`、`answer.coach` 可进入增强模式。除 `resume.chat` 外，增强能力超时、异常或输出不合法时回退 baseline，并以 `usedFallback: true` 返回，前端可提示已回退且保留当前操作和 revision；`resume.chat` 无真实 AI 结果时必须返回明确错误、保留本地对话供重试，不得显示固定话术冒充模型回复。
+- 所有核心 Capability 都保留内置 baseline 供确定性评测和兼容场景。配置服务端 provider gateway 后，十项白名单能力 `resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate`、`answer.coach` 可进入增强模式。用户上传、体验示例和 revision 重分析中的 `resume.score`、`resume.suggest` 明确使用 `fallbackPolicy: "forbid"`，`resume.chat` 也不展示固定 baseline；本轮未要求改造的其他能力保留 `allow` 兼容策略。
 - 用户不能上传或执行任意 Skill。所有运行时 Skill 由服务器白名单、版本锁定和 feature flag 管理。
 - 任意扩展执行仍默认关闭；只有 canonical Schema、禁网且有 baseline 的受信本地候选可进入评测。`provider_gateway` 只允许上述十项能力，其中 `resume.chat` 与 `copy.rewrite.zh/en` 必须通过原文映射、保留术语、数字、高风险事实和 revision 检查；其余能力保持确定性 baseline。
-- Provider Base URL 必须命中代码内静态批准列表，不能通过环境变量或用户输入扩大；本地默认 `AI_PROVIDER=baseline`，只有配置轮换后的新服务端 Key 才能启用增强模式。
+- Provider Base URL 必须命中代码内静态批准列表，不能通过环境变量或用户输入扩大；上传分析要求 `AI_PROVIDER=provider_gateway` 和有效的服务端 Key。没有 Key 时应用仍可启动，但上传与体验示例不可用。
 - 新 Skill 不得绕过事实安全、人工确认、隐私、导出质检或“不承诺录取”的产品底线。
 - 仓库内另有统一的 Codex Development Skill Toolkit，用于帮助开发者实现、审查和评测上述能力。它不会出现在用户界面，不会在产品请求中自动执行，也不改变 FeatureAvailability、数据保留、人工确认或 fallback 行为。
 - 开发套件以一个总入口路由六个领域 Skill，并共享同一份 Capability map；这项组织方式只减少工程规则分散，不新增 MVP 用户功能或外部数据处理方。
@@ -168,14 +176,14 @@ MVP 的主闭环为：
 ## 8. 隐私、安全与数据生命周期
 
 - 上传前清楚说明处理目的、保留时间和删除入口；只收集完成当前功能所需的数据。
-- 联系方式等无关 PII 在发送给模型或外部 Skill 前脱敏，并向用户披露供应商和用途。投影规则覆盖普通叙述中的姓名以及未带“地址”标签的中英文地址；投影后仍命中疑似 PII 时必须 fail closed，拒绝 provider 请求并回退 baseline。
+- 联系方式等无关 PII 在发送给模型或外部 Skill 前脱敏，并向用户披露供应商和用途。投影规则覆盖普通叙述中的姓名以及未带“地址”标签的中英文地址；PII 复检只扫描自然语言字段，不把 revision、哈希、技术 ID 或 JSON Pointer 当作正文。上传评分/建议投影后仍命中疑似 PII 时必须 fail closed，整个 AI 分析失败，不能回退 baseline。
 - 简历与 JD 以不可信数据边界封装，内容中的指令不能改变系统规则或获得工具权限。
 - 配置 `DOCUMENT_WORKER_URL` 时，解析/OCR 运行在禁网、非 root、只读根文件系统且受 CPU/内存/进程/时限约束的本地 Python worker；OCR 另有每页/文档区域、并发、字符、像素、输出和 deadline 上限。未配置时仍使用 Next.js TypeScript baseline。Node 请求取消会停止等待，但不能立即终止 Python 已进入 `run_in_threadpool` 的同步 OCR/渲染任务；该残留计算继续受 worker deadline、子进程 timeout 和资源限额约束。浏览器中的原稿比较使用 IndexedDB/当前会话内的本地 PDF。
 - Provider gateway 只接收脱敏、最小化结构 DTO，不接收姓名、电话、邮箱、链接、原 PDF、页面图片或无关证据正文；API Key 只从 Next.js 服务端环境变量读取。
 - 日志只保存 trace、能力版本、阶段、耗时、错误码和用量，不保存简历正文、JD、录音、转写全文或完整提示。
 - MVP 不创建应用侧音频文件；活动状态存于 `sessionStorage`，最近分析存于 IndexedDB。两者在 24 小时后到期，并通过定时、focus、visibility、rehydrate 和读取时在应用运行期间或下次打开时清理；用户可删除单条或立即清空本机记录。
 - `pnpm dev` 的私有配置放在 `.env.local`，Docker Compose 的私有配置放在 `.env`；两者均被 Git 忽略。`.env.example`、客户端 bundle、日志和文档均不得包含 API Key。
-- 本地 `GET /api/health` 只披露 `document`、`ai`、`storage` 的抽象健康状态：`ready | degraded` 和 `baseline | isolated | enhanced | client_local`。不得返回 URL、供应商、模型、密钥、容器名或错误正文；未启用增强依赖时，本地 baseline 视为 `ready`，只有显式配置失效才标记 `degraded`。
+- 本地 `GET /api/health` 只披露 `document`、`ai`、`storage` 的抽象健康状态：`ready | degraded` 和 `baseline | isolated | enhanced | client_local`。不得返回 URL、供应商、模型、密钥、容器名或错误正文；AI `baseline/ready` 只表示应用可启动和非严格能力可用，不表示上传分析可用，上传页只接受 `enhanced/ready`。
 
 ## 9. 非功能要求
 
@@ -193,7 +201,7 @@ MVP 的主闭环为：
 
 本地 Docker 路径可用；安全健康端点已有 4 项 Vitest，覆盖 baseline `ready`、isolated/enhanced `ready` 且无实现细节泄漏、显式配置失效时 `degraded`，以及 `no-store` 的 Schema 合法响应。Gitleaks 对全部 Git 历史、当前差异、未跟踪源码和提交消息均未发现密钥。Vercel、Private Blob 与 Hosted 模式仍延期，不属于本轮发布验收。
 
-这些结果只代表已登记 fixture、构建和 smoke 范围。Provider gateway 已接线但默认关闭且未使用真实新密钥验收，不得把确定性 baseline 描述成已经具有外部大模型质量。下列生产级门槛仍需完成，包括 40 份文档样本、OCR 召回率、Safari/屏幕阅读器、持久化幂等与对象所有权：
+这些结果只代表已登记 fixture、构建和 smoke 范围。Provider gateway 已接线，上传分析已禁止 baseline，但在完成两份合成简历、三次连续上传的真实 Provider 终验前仍不得标记为最终实现。下列生产级门槛仍需完成，包括 40 份文档样本、OCR 召回率、Safari/屏幕阅读器、持久化幂等与对象所有权：
 
 - 至少 40 份脱敏/合成样本覆盖中英文、单双栏、数字、扫描、混合、旋转和异常 PDF。
 - 原生文本字符召回率目标 ≥ 99%；清晰扫描件 OCR 字符召回率目标 ≥ 95%；人工抽检阅读顺序正确率 ≥ 95%。这些是待生产样本验证的目标，不是当前已证明指标。

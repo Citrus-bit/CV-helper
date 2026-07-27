@@ -88,6 +88,7 @@ Owner: `resume-safety-evaluation`.
 - Extension kinds: `adapter`, `rule_pack`, `knowledge_pack`, `prompt_policy`.
 - Network policies: `none`, `provider_only`, `allowlist`.
 - Provider gateway allowlist: `resume.score`, `resume.suggest`, `resume.chat`, `jd.parse`, `job.match`, `copy.rewrite.zh`, `copy.rewrite.en`, `interview.plan`, `answer.evaluate`, `answer.coach`.
-- `resume.chat` is the one user-facing exception to normal runtime fallback: if a real provider result is unavailable, `/api/resume-chat` returns an explicit error and never presents the builtin fixed response as an AI turn.
+- Upload, demo, and revision flows invoke `resume.score` and `resume.suggest` with `fallbackPolicy: forbid`; both must return matching `@2.x+` provider sources or the whole analysis fails. Their baselines remain only for deterministic evaluation and non-user compatibility scenarios.
+- `resume.chat` also returns an explicit error when a real provider result is unavailable and never presents the builtin fixed response as an AI turn.
 - Frontend availability modes: `baseline`, `enhanced`, `unavailable`.
 - A runtime result must include structured data, confidence, evidence references, warnings, source version, duration, usage when applicable, and `usedFallback`.

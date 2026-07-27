@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const apiMocks = vi.hoisted(() => ({
+  analyzeResumeRevision: vi.fn(),
+}));
+
+vi.mock("./api", () => ({
+  analyzeResumeRevision: apiMocks.analyzeResumeRevision,
+}));
 
 import {
   ResumeASTSchema,
@@ -119,8 +127,37 @@ function analysisFixture(revision = 0, proofRequired = false): AnalysisBundle {
     processing: {
       extractionMode: "native",
       durationMs: 10,
-      capabilityVersions: {},
+      capabilityVersions: {
+        "resume.score": "resume.score@2.0.0",
+        "resume.suggest": "resume.suggest@2.0.0",
+      },
+      aiAnalysis: {
+        status: "fresh",
+        analyzedRevision: revision,
+        scoreSourceVersion: "resume.score@2.0.0",
+        suggestionSourceVersion: "resume.suggest@2.0.0",
+      },
     },
+  };
+}
+
+function aiRevisionResult(revision: number, total = 84) {
+  const fixture = analysisFixture(revision);
+  return {
+    resumeId: fixture.resume.id,
+    resumeRevision: revision,
+    scorecard: {
+      ...fixture.scorecard,
+      total,
+      summary: `AI 已分析版本 ${revision}`,
+      sourceVersion: "resume.score@2.1.0",
+    },
+    suggestions: [],
+    capabilityVersions: {
+      "resume.score": "resume.score@2.1.0",
+      "resume.suggest": "resume.suggest@2.1.0",
+    },
+    durationMs: 25,
   };
 }
 
@@ -214,7 +251,15 @@ function seedDerived(revision: number) {
   });
 }
 
+beforeEach(() => {
+  apiMocks.analyzeResumeRevision.mockReset();
+  apiMocks.analyzeResumeRevision.mockImplementation(
+    () => new Promise(() => undefined),
+  );
+});
+
 afterEach(() => {
+  useAppStore.getState().goHomeWithoutArchive();
   useAppStore.getState().reset();
 });
 
@@ -251,7 +296,8 @@ describe("resume-derived state revisions", () => {
         ],
       },
     });
-    expect(state.analysis?.scorecard.resumeRevision).toBe(1);
+    expect(state.analysis?.scorecard.resumeRevision).toBe(0);
+    expect(state.analysis?.processing.aiAnalysis?.status).not.toBe("fresh");
     expect(state.analysis?.suggestions[0]?.status).toBe("stale");
     expect(state.undoStack).toHaveLength(1);
     expect(state.resumePanel).toBe("templates");
@@ -624,7 +670,7 @@ describe("resume-derived state revisions", () => {
     expect(useAppStore.getState().selectedSuggestionId).toBe("suggestion-ai-1");
   });
 
-  it("recomputes the score and creates verified evidence for a manual factual rewrite", () => {
+  it("keeps the old AI score hidden while rebuilding evidence for a manual factual rewrite", () => {
     const analysis = analysisFixture();
     analysis.scorecard.total = 99;
     analysis.scorecard.dimensions.forEach((dimension) => {
@@ -638,15 +684,8 @@ describe("resume-derived state revisions", () => {
       .decideSuggestion("suggestion-1", "manual", manualText);
 
     const revised = useAppStore.getState().analysis!;
-    expect(revised.scorecard).toMatchObject({
-      resumeRevision: 1,
-      sourceVersion: "resume.score@1.0.0",
-    });
-    expect(revised.scorecard.total).toBeCloseTo(75.3, 1);
-    expect(revised.scorecard.total).not.toBe(99);
-    expect(
-      revised.scorecard.dimensions.flatMap((dimension) => dimension.evidence),
-    ).not.toContain("旧评分证据");
+    expect(revised.scorecard).toMatchObject({ resumeRevision: 0, total: 99 });
+    expect(revised.processing.aiAnalysis?.status).not.toBe("fresh");
     const manualEvidence = revised.evidence.find(
       (asset) =>
         asset.kind === "user_statement" && asset.content === manualText,
@@ -660,6 +699,152 @@ describe("resume-derived state revisions", () => {
     ).toMatchObject({
       title: manualText,
       evidenceAssetIds: expect.arrayContaining([manualEvidence!.id]),
+    });
+  });
+
+  it("moves a manual edit through stale, refreshing, and fresh AI states", async () => {
+    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(
+      aiRevisionResult(1, 87),
+    );
+    useAppStore.getState().setAnalysis(analysisFixture());
+    const edited = structuredClone(ast);
+    edited.contact.headline = "平台开发工程师";
+
+    expect(
+      useAppStore.getState().applyManualResumeAst(edited, "修改职业标题"),
+    ).toBe(1);
+    expect(
+      useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+    ).toBe("stale");
+
+    await vi.waitFor(() =>
+      expect(apiMocks.analyzeResumeRevision).toHaveBeenCalledOnce(),
+    );
+    await vi.waitFor(() =>
+      expect(
+        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+      ).toBe("fresh"),
+    );
+
+    expect(useAppStore.getState().analysis).toMatchObject({
+      resume: { revision: 1 },
+      scorecard: { resumeRevision: 1, total: 87 },
+      suggestions: [],
+      processing: {
+        aiAnalysis: {
+          status: "fresh",
+          analyzedRevision: 1,
+          scoreSourceVersion: "resume.score@2.1.0",
+          suggestionSourceVersion: "resume.suggest@2.1.0",
+        },
+      },
+    });
+  });
+
+  it("keeps the edited AST and undo history when AI refresh fails, then retries", async () => {
+    apiMocks.analyzeResumeRevision.mockRejectedValueOnce(
+      new Error("AI 分析未完成，未返回本地模板结果，请稍后重试。"),
+    );
+    useAppStore.getState().setAnalysis(analysisFixture());
+    const edited = structuredClone(ast);
+    edited.contact.headline = "后端平台工程师";
+
+    useAppStore.getState().applyManualResumeAst(edited, "修改职业标题");
+    await vi.waitFor(() =>
+      expect(
+        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+      ).toBe("failed"),
+    );
+
+    expect(useAppStore.getState().analysis?.resume.ast.contact.headline).toBe(
+      "后端平台工程师",
+    );
+    expect(useAppStore.getState().undoStack).toHaveLength(1);
+    expect(useAppStore.getState().error).toContain("AI 分析未完成");
+
+    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(
+      aiRevisionResult(1, 90),
+    );
+    useAppStore.getState().retryAiAnalysis();
+    await vi.waitFor(() =>
+      expect(
+        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+      ).toBe("fresh"),
+    );
+    expect(useAppStore.getState().analysis?.scorecard.total).toBe(90);
+    expect(useAppStore.getState().analysis?.resume.ast.contact.headline).toBe(
+      "后端平台工程师",
+    );
+  });
+
+  it("aborts and ignores a late response from an older revision", async () => {
+    let resolveFirst: (value: ReturnType<typeof aiRevisionResult>) => void =
+      () => undefined;
+    let resolveSecond: (value: ReturnType<typeof aiRevisionResult>) => void =
+      () => undefined;
+    apiMocks.analyzeResumeRevision
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+    useAppStore.getState().setAnalysis(analysisFixture());
+    const firstEdit = structuredClone(ast);
+    firstEdit.contact.headline = "第一版标题";
+    useAppStore.getState().applyManualResumeAst(firstEdit, "第一次修改");
+    await vi.waitFor(() =>
+      expect(apiMocks.analyzeResumeRevision).toHaveBeenCalledTimes(1),
+    );
+    const firstSignal = apiMocks.analyzeResumeRevision.mock.calls[0][1] as
+      | AbortSignal
+      | undefined;
+
+    const secondEdit = structuredClone(firstEdit);
+    secondEdit.contact.headline = "第二版标题";
+    useAppStore.getState().applyManualResumeAst(secondEdit, "第二次修改");
+    await vi.waitFor(() =>
+      expect(apiMocks.analyzeResumeRevision).toHaveBeenCalledTimes(2),
+    );
+    expect(firstSignal?.aborted).toBe(true);
+
+    resolveFirst(aiRevisionResult(1, 11));
+    await Promise.resolve();
+    expect(useAppStore.getState().analysis).toMatchObject({
+      resume: { revision: 2 },
+      scorecard: { total: 60 },
+    });
+
+    resolveSecond(aiRevisionResult(2, 92));
+    await vi.waitFor(() =>
+      expect(useAppStore.getState().analysis).toMatchObject({
+        resume: { revision: 2 },
+        scorecard: { resumeRevision: 2, total: 92 },
+        processing: { aiAnalysis: { status: "fresh" } },
+      }),
+    );
+  });
+
+  it("restores a complete AI snapshot on undo without requesting it again", async () => {
+    useAppStore.getState().setAnalysis(analysisFixture());
+    const edited = structuredClone(ast);
+    edited.contact.headline = "待撤销标题";
+    useAppStore.getState().applyManualResumeAst(edited, "临时修改");
+    useAppStore.getState().undo();
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
+    expect(useAppStore.getState().analysis).toMatchObject({
+      resume: { revision: 0 },
+      processing: { aiAnalysis: { status: "fresh", analyzedRevision: 0 } },
     });
   });
 
