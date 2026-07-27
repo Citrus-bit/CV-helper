@@ -5,10 +5,10 @@ import { getOfflineTesseractOptions } from "@/lib/server/ocr";
 import { loadPdfJs } from "@/lib/server/pdfjs";
 
 export const MAX_PDF_BYTES = 10 * 1024 * 1024;
-export const MAX_PDF_PAGES = 5;
-export const MAX_PDF_PAGE_EDGE_POINTS = 2_000;
-export const MAX_PDF_PREVIEW_PIXELS = 20_000_000;
-export const MAX_PDF_CHARACTERS_PER_PAGE = 40_000;
+const MAX_PDF_PAGES = 5;
+const MAX_PDF_PAGE_EDGE_POINTS = 2_000;
+const MAX_PDF_PREVIEW_PIXELS = 20_000_000;
+const MAX_PDF_CHARACTERS_PER_PAGE = 40_000;
 
 export type ParsedPageSource = "digital" | "scan" | "mixed";
 
@@ -24,7 +24,7 @@ export type ParsedSourceBlock = {
   style?: SourceBlock["style"];
 };
 
-export type ParsedPdfPage = {
+type ParsedPdfPage = {
   pageIndex: number;
   width: number;
   height: number;

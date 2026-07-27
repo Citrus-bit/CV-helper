@@ -141,6 +141,17 @@ function resumeFixture(): ResumeDocument {
 }
 
 describe("capability catalog", () => {
+  it("exposes contracts and registry operations without leaking raw implementations", async () => {
+    const baselineApi = await import("@/lib/baseline");
+
+    expect(baselineApi).toHaveProperty("ResumeScoreInputSchema");
+    expect(baselineApi).toHaveProperty("createDefaultCapabilityRegistry");
+    expect(baselineApi).toHaveProperty("invokeBaselineCapability");
+    expect(baselineApi).not.toHaveProperty("resumeScoreCapability");
+    expect(baselineApi).not.toHaveProperty("documentParseCapability");
+    expect(baselineApi).not.toHaveProperty("defaultCapabilityRegistry");
+  });
+
   it("statically describes every planned capability", () => {
     expect(CAPABILITY_CATALOG.size).toBe(CAPABILITY_IDS.length);
     for (const id of CAPABILITY_IDS) {

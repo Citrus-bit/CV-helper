@@ -33,7 +33,7 @@ function defineCapability<I, O>(
   return { descriptor: getCapabilityDescriptor(id), inputSchema, outputSchema, execute };
 }
 
-export const speechTranscribeCapability = defineCapability(
+const speechTranscribeCapability = defineCapability(
   "speech.transcribe",
   SpeechTranscribeInputSchema,
   SpeechTranscribeOutputSchema,
@@ -61,7 +61,7 @@ export const speechTranscribeCapability = defineCapability(
   },
 );
 
-export const accessibilityAuditCapability = defineCapability(
+const accessibilityAuditCapability = defineCapability(
   "accessibility.audit",
   AccessibilityAuditInputSchema,
   AccessibilityAuditOutputSchema,
@@ -117,7 +117,7 @@ export const accessibilityAuditCapability = defineCapability(
   },
 );
 
-export const securityAuditCapability = defineCapability(
+const securityAuditCapability = defineCapability(
   "security.audit",
   SecurityAuditInputSchema,
   SecurityAuditOutputSchema,
@@ -184,7 +184,7 @@ function includesJson(actual: JsonValue | undefined, expected: JsonValue | undef
   return false;
 }
 
-export const llmEvalCapability = defineCapability(
+const llmEvalCapability = defineCapability(
   "llm.eval",
   LlmEvalInputSchema,
   LlmEvalOutputSchema,

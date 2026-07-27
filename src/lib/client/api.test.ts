@@ -3,9 +3,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 
-import type { AnalysisBundle, RenderResponse } from "./contracts";
+import type { RenderResponse } from "./contracts";
 import { downloadVerifiedResume, loadDemoAnalysis, matchJob } from "./api";
-import { useAppStore } from "./store";
 import { ResumeASTSchema } from "@/lib/domain";
 
 const ast = ResumeASTSchema.parse({
@@ -17,14 +16,10 @@ const ast = ResumeASTSchema.parse({
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  useAppStore.getState().reset();
 });
 
 describe("version-bound client requests", () => {
-  it("sends the active resume revision with a job-match request", async () => {
-    useAppStore.setState({
-      analysis: { resume: { id: "resume-current", revision: 6 } } as AnalysisBundle,
-    });
+  it("sends the explicitly provided resume revision with a job-match request", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: "stop after request capture" }), {
         status: 500,
@@ -41,6 +36,7 @@ describe("version-bound client requests", () => {
         location: "上海",
         language: "zh-CN",
         resumeId: "resume-current",
+        revision: 6,
         ast,
         claims: [],
         evidence: [],

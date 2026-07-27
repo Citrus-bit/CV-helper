@@ -6,7 +6,6 @@ import {
   LayoutRecommendationSchema,
   RenderResponseSchema,
   ResumeAnalysisResponseSchema,
-  ResumeSuggestionResponseSchema,
   TranscriptionResponseSchema,
   type AnalysisBundle,
   type EvaluationResponse,
@@ -15,7 +14,6 @@ import {
   type LayoutRecommendation,
   type RenderResponse,
   type ResumeAnalysisResponse,
-  type ResumeSuggestionResponse,
   type TranscriptionResponse,
 } from "./contracts";
 import type {
@@ -25,6 +23,7 @@ import type {
   InterviewStory,
   ResumeAST,
   ResumeDocument,
+  ResumeTemplateId,
 } from "@/lib/domain";
 import {
   ResumeChatInputSchema,
@@ -32,7 +31,6 @@ import {
   type ResumeChatInput,
   type ResumeChatResponse,
 } from "@/lib/resume-chat";
-import { useAppStore, type TemplateId } from "./store";
 import {
   revokeTrackedObjectUrl,
   trackObjectUrl,
@@ -42,29 +40,6 @@ import {
   hasFreshRequiredAiAnalysis,
   isRequiredAiSource,
 } from "./ai-analysis";
-
-type ResumeReference = {
-  resumeId?: string;
-  revision?: number;
-};
-
-function apiSessionHeaders(
-  additional: Record<string, string> = {},
-): Record<string, string> {
-  return additional;
-}
-
-function bindActiveResume(reference: ResumeReference) {
-  const activeResume = useAppStore.getState().analysis?.resume;
-  const resumeId = reference.resumeId ?? activeResume?.id;
-  const revision =
-    reference.revision ??
-    (activeResume?.id === resumeId ? activeResume?.revision : undefined);
-  if (!resumeId || revision === undefined) {
-    throw new Error("无法确认当前简历版本，请重新载入后再试。");
-  }
-  return { resumeId, revision };
-}
 
 export class ApiError extends Error {
   constructor(
@@ -102,7 +77,7 @@ async function apiError(response: Response) {
   }
 }
 
-export function assertFreshAiAnalysis(analysis: AnalysisBundle): AnalysisBundle {
+function assertFreshAiAnalysis(analysis: AnalysisBundle): AnalysisBundle {
   if (!hasFreshRequiredAiAnalysis(analysis)) {
     throw new ApiError(
       "AI 分析来源校验失败，未载入本地模板结果，请重新进行 AI 分析。",
@@ -137,7 +112,6 @@ export async function analyzeResume(
   form.append("file", file);
   const response = await trackedFetch("/api/analyze", {
     method: "POST",
-    headers: apiSessionHeaders(),
     body: form,
     signal,
   });
@@ -153,7 +127,7 @@ export async function analyzeResumeRevision(
 ): Promise<ResumeAnalysisResponse> {
   const response = await trackedFetch("/api/resume-analysis", {
     method: "POST",
-    headers: apiSessionHeaders({ "content-type": "application/json" }),
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
     signal,
   });
@@ -175,27 +149,13 @@ export async function analyzeResumeRevision(
   return result;
 }
 
-export async function generateResumeSuggestions(
-  input: { resume: ResumeDocument; claims: Claim[] },
-  signal?: AbortSignal,
-): Promise<ResumeSuggestionResponse> {
-  const response = await trackedFetch("/api/resume-suggestions", {
-    method: "POST",
-    headers: apiSessionHeaders({ "content-type": "application/json" }),
-    body: JSON.stringify(input),
-    signal,
-  });
-  if (!response.ok) throw await apiError(response);
-  return ResumeSuggestionResponseSchema.parse(await response.json());
-}
-
 export async function sendResumeChatMessage(
   input: ResumeChatInput,
   signal?: AbortSignal,
 ): Promise<ResumeChatResponse> {
   const response = await trackedFetch("/api/resume-chat", {
     method: "POST",
-    headers: apiSessionHeaders({ "content-type": "application/json" }),
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(ResumeChatInputSchema.parse(input)),
     signal,
   });
@@ -207,7 +167,6 @@ export async function loadDemoAnalysis(
   signal?: AbortSignal,
 ): Promise<AnalysisBundle> {
   const response = await trackedFetch("/api/demo", {
-    headers: apiSessionHeaders(),
     signal,
   });
   if (!response.ok) throw await apiError(response);
@@ -223,61 +182,58 @@ export async function matchJob(input: {
   location?: string;
   language?: "zh-CN" | "en-US";
   resumeId: string;
-  revision?: number;
+  revision: number;
   ast: ResumeAST;
   claims: Claim[];
   evidence: EvidenceAsset[];
 }): Promise<JobMatchBundle> {
-  const reference = bindActiveResume(input);
   const response = await trackedFetch("/api/job-match", {
     method: "POST",
-    headers: apiSessionHeaders({ "content-type": "application/json" }),
-    body: JSON.stringify({ ...input, ...reference }),
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
   });
   if (!response.ok) throw await apiError(response);
   return JobMatchBundleSchema.parse(await response.json());
 }
 
 export async function createInterviewPlan(input: {
-  resumeId?: string;
-  revision?: number;
+  resumeId: string;
+  revision: number;
   ast: ResumeAST;
   claims: Claim[];
   stories: InterviewStory[];
   jdText?: string;
 }): Promise<InterviewPlan> {
-  const reference = bindActiveResume(input);
   const response = await trackedFetch("/api/interview/plan", {
     method: "POST",
-    headers: apiSessionHeaders({ "content-type": "application/json" }),
-    body: JSON.stringify({ ...input, ...reference }),
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
   });
   if (!response.ok) throw await apiError(response);
   return InterviewPlanSchema.parse({
     ...(await response.json()),
-    sourceResumeId: reference.resumeId,
-    sourceResumeRevision: reference.revision,
+    sourceResumeId: input.resumeId,
+    sourceResumeRevision: input.revision,
   });
 }
 
 export async function evaluateAnswer(input: {
-  resumeId?: string;
-  revision?: number;
+  resumeId: string;
+  revision: number;
   question: InterviewQuestion;
   answer: string;
   claims: Claim[];
 }): Promise<EvaluationResponse> {
-  const reference = bindActiveResume(input);
   const response = await trackedFetch("/api/interview/evaluate", {
     method: "POST",
-    headers: apiSessionHeaders({ "content-type": "application/json" }),
-    body: JSON.stringify({ ...input, ...reference }),
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
   });
   if (!response.ok) throw await apiError(response);
   return EvaluationResponseSchema.parse({
     ...(await response.json()),
-    sourceResumeId: reference.resumeId,
-    sourceResumeRevision: reference.revision,
+    sourceResumeId: input.resumeId,
+    sourceResumeRevision: input.revision,
   });
 }
 
@@ -299,7 +255,7 @@ export async function renderResume(input: {
   resumeId: string;
   revision: number;
   ast: ResumeAST;
-  template: TemplateId;
+  template: ResumeTemplateId;
   sourcePageCount?: number;
 }): Promise<RenderResponse> {
   const response = await trackedFetch("/api/render", {
@@ -314,7 +270,7 @@ export async function renderResume(input: {
 export async function recommendLayout(input: {
   ast: ResumeAST;
   targetPages: number;
-  preferredTemplate?: TemplateId;
+  preferredTemplate?: ResumeTemplateId;
 }): Promise<LayoutRecommendation> {
   const response = await trackedFetch("/api/layout-recommend", {
     method: "POST",
@@ -337,7 +293,7 @@ function arrayBufferSha256(bytes: ArrayBuffer) {
 
 export async function downloadVerifiedResume(input: {
   revision: number;
-  template: TemplateId;
+  template: ResumeTemplateId;
   render: RenderResponse;
 }) {
   if (!input.render.hardGate.passed || !input.render.report.downloadable) {

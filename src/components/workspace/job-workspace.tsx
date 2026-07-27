@@ -97,6 +97,7 @@ export function JobWorkspace() {
         location: jobDraft.location.trim() || undefined,
         language: jobDraft.language,
         resumeId: analysis.resume.id,
+        revision: analysis.resume.revision,
         ast: analysis.resume.ast,
         claims: analysis.claims,
         evidence: analysis.evidence,

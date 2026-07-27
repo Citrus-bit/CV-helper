@@ -10,7 +10,6 @@ import {
   qualityThresholdCheck,
 } from "@/lib/export-quality";
 import {
-  renderResumePdf,
   type RenderableResume,
   type ResumeTemplateId,
 } from "@/lib/server/typst";
@@ -972,21 +971,4 @@ export async function auditRenderedPdf(
     clearTimeout(timeout);
     options.signal?.removeEventListener("abort", abortFromParent);
   }
-}
-
-export async function renderAuditedResume(
-  ast: ResumeAST,
-  meta: RenderAuditMeta,
-  options: RenderAuditOptions = {},
-): Promise<{ pdf: Buffer; report: ExportQualityReport }> {
-  const resume = toRenderableResume(ast);
-  const pdf = await renderResumePdf(resume, meta.template);
-  const report = await auditRenderedPdf(
-    pdf,
-    resume,
-    meta,
-    astContentFragments(ast),
-    options,
-  );
-  return { pdf, report };
 }

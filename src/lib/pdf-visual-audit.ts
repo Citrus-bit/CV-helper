@@ -13,7 +13,7 @@ export type PdfVisualMetrics = {
   luminanceStandardDeviation: number;
 };
 
-export const PDF_VISUAL_THRESHOLDS = {
+const PDF_VISUAL_THRESHOLDS = {
   visiblePixelContrast: 12,
   strongPixelContrast: 32,
   minimumVisiblePixelRatio: 0.001,

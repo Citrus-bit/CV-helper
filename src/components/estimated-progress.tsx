@@ -27,7 +27,7 @@ export function estimatedProgressAt(
   return Math.min(99, Math.floor(1 + 98 * easedRatio));
 }
 
-export function useEstimatedProgress(expectedDurationMs: number) {
+function useEstimatedProgress(expectedDurationMs: number) {
   const [progress, setProgress] = useState(1);
 
   useEffect(() => {

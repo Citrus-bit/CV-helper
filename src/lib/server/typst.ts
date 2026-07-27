@@ -3,7 +3,9 @@ import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-export type ResumeTemplateId = "professional" | "minimal" | "compact";
+import type { ResumeTemplateId } from "@/lib/domain";
+
+export type { ResumeTemplateId };
 
 export type RenderableResume = {
   profile: {

@@ -9,9 +9,9 @@ import { PiiProjector } from "./pii-projection";
 const DEFAULT_PROVIDER_ALLOWLIST = ["https://yunwu.ai/v1"] as const;
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_PROVIDER_INPUT_BYTES = 256 * 1024;
-const MAX_PROVIDER_OUTPUT_TOKENS = 4_096;
 const JSON_OBJECT_PREFERRED_CAPABILITIES = new Set<ProviderGatewayCapabilityId>([
   "resume.score",
+  "resume.suggest",
   "resume.chat",
   "jd.parse",
   "answer.evaluate",
@@ -180,8 +180,8 @@ const ChatCompletionResponseSchema = z.object({
     .min(1),
   usage: z
     .object({
-      prompt_tokens: z.number().int().nonnegative().max(1_000_000).optional(),
-      completion_tokens: z.number().int().nonnegative().max(MAX_PROVIDER_OUTPUT_TOKENS).optional(),
+      prompt_tokens: z.number().int().nonnegative().optional(),
+      completion_tokens: z.number().int().nonnegative().optional(),
     })
     .optional(),
 });
@@ -335,7 +335,6 @@ export class OpenAiCompatibleGateway {
         body: JSON.stringify({
           model: this.config.model,
           temperature: 0.2,
-          max_tokens: MAX_PROVIDER_OUTPUT_TOKENS,
           messages: [
             {
               role: "system",

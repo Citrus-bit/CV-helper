@@ -12,6 +12,7 @@ import {
   JobPostingSchema,
   RequirementEvidenceMapSchema,
   ResumeDocumentSchema,
+  ResumeTemplateIdSchema,
   ResumeVariantSchema,
   ScorecardSchema,
   SuggestionSchema,
@@ -41,15 +42,6 @@ export const AnalysisBundleSchema = z.object({
   }),
 });
 export type AnalysisBundle = z.infer<typeof AnalysisBundleSchema>;
-
-export const ResumeSuggestionResponseSchema = z.object({
-  suggestions: z.array(SuggestionSchema),
-  sourceVersion: z.string().min(1),
-  durationMs: z.number().nonnegative(),
-});
-export type ResumeSuggestionResponse = z.infer<
-  typeof ResumeSuggestionResponseSchema
->;
 
 export const ResumeAnalysisRequestSchema = z.object({
   resume: ResumeDocumentSchema,
@@ -196,14 +188,14 @@ export const TranscriptionResponseSchema = z.object({
 export type TranscriptionResponse = z.infer<typeof TranscriptionResponseSchema>;
 
 export const LayoutRecommendationSchema = z.object({
-  recommendedTemplate: z.enum(["professional", "minimal", "compact"]),
+  recommendedTemplate: ResumeTemplateIdSchema,
   estimatedPages: z.number().int().positive(),
   density: z.enum(["light", "balanced", "dense"]),
   reasons: z.array(z.string().min(1)).min(1),
   rankings: z
     .array(
       z.object({
-        template: z.enum(["professional", "minimal", "compact"]),
+        template: ResumeTemplateIdSchema,
         score: z.number().min(0).max(100),
         estimatedPages: z.number().int().positive(),
       }),
@@ -214,7 +206,7 @@ export type LayoutRecommendation = z.infer<typeof LayoutRecommendationSchema>;
 
 export const RenderResponseSchema = z
   .object({
-    template: z.enum(["professional", "minimal", "compact"]),
+    template: ResumeTemplateIdSchema,
     pdfBase64: z.string().min(1),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     byteLength: z.number().int().positive(),

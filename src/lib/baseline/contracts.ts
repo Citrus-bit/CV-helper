@@ -14,6 +14,7 @@ import {
   RequirementEvidenceMapSchema,
   ResumeASTSchema,
   ResumeDocumentSchema,
+  ResumeTemplateIdSchema,
   ScorecardSchema,
   SourceBlockSchema,
   SuggestionSchema,
@@ -82,7 +83,7 @@ export const DocumentSegmentOutputSchema = z.object({
   ),
 });
 
-export const ResumeTemplateSchema = z.enum(["professional", "minimal", "compact"]);
+export const ResumeTemplateSchema = ResumeTemplateIdSchema;
 export const LayoutRecommendInputSchema = z.object({
   ast: ResumeASTSchema,
   targetPages: z.number().int().min(1).max(2).default(1),
@@ -316,6 +317,7 @@ export const ResumeScoreOutputSchema = ScorecardSchema;
 export const ResumeSuggestInputSchema = z.object({
   resume: ResumeDocumentSchema,
   claims: z.array(ClaimSchema).default([]),
+  scoreContext: ResumeScoreOutputSchema.optional(),
 });
 export const ResumeSuggestOutputSchema = z.object({ suggestions: z.array(SuggestionSchema) });
 

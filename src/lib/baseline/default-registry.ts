@@ -17,7 +17,7 @@ export function createDefaultCapabilityRegistry(options?: CapabilityRegistryOpti
   return registry;
 }
 
-export const defaultCapabilityRegistry = createDefaultCapabilityRegistry();
+const defaultCapabilityRegistry = createDefaultCapabilityRegistry();
 
 export function invokeBaselineCapability<K extends BaselineCapabilityId>(
   id: K,

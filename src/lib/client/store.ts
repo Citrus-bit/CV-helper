@@ -28,7 +28,11 @@ import type {
   SuggestionPatch,
   SuggestionStatus,
 } from "@/lib/domain";
-import { ResumeASTSchema, type ResumeAST } from "@/lib/domain";
+import {
+  ResumeASTSchema,
+  type ResumeAST,
+  type ResumeTemplateId,
+} from "@/lib/domain";
 import {
   claimParts,
   excerpt,
@@ -86,11 +90,11 @@ let activeRevisionAnalysis:
   | null = null;
 
 export type WorkspaceModule = "resume" | "job" | "interview";
-export type WorkspaceStage = "upload" | "analyzing" | "workspace";
-export type TemplateId = "professional" | "minimal" | "compact";
-export type PreviewMode = "original" | "current" | "compare";
+type WorkspaceStage = "upload" | "analyzing" | "workspace";
+export type TemplateId = ResumeTemplateId;
+type PreviewMode = "original" | "current" | "compare";
 export type ResumePanel = "suggestions" | "chat" | "templates";
-export type InterviewProgressUpdate = Partial<
+type InterviewProgressUpdate = Partial<
   Pick<
     InterviewProgress,
     | "questionIndex"
@@ -576,7 +580,7 @@ export function isRenderForAnalysis(
   );
 }
 
-export type ActiveResumeTarget = {
+type ActiveResumeTarget = {
   kind: "base" | "job_variant";
   id: string;
   revision: number;
@@ -584,7 +588,7 @@ export type ActiveResumeTarget = {
   ast: ResumeAST;
 };
 
-export function getActiveResumeTarget(
+function getActiveResumeTarget(
   state: Pick<AppState, "analysis" | "jobMatch" | "activeResumeVariantId">,
 ): ActiveResumeTarget | null {
   if (!state.analysis) return null;
@@ -612,7 +616,7 @@ export function getActiveResumeTarget(
   };
 }
 
-export function isRenderForActiveResume(
+function isRenderForActiveResume(
   state: Pick<AppState, "analysis" | "jobMatch" | "activeResumeVariantId">,
   render: RenderResponse,
 ) {
@@ -626,7 +630,7 @@ export function isRenderForActiveResume(
   );
 }
 
-export function isJobMatchForAnalysis(
+function isJobMatchForAnalysis(
   analysis: AnalysisBundle | null,
   jobMatch: JobMatchBundle,
 ) {
@@ -648,7 +652,7 @@ export function isJobMatchForAnalysis(
   );
 }
 
-export function isInterviewPlanForAnalysis(
+function isInterviewPlanForAnalysis(
   analysis: AnalysisBundle | null,
   plan: InterviewPlan,
 ) {
@@ -676,7 +680,7 @@ function isEvaluationForState(
   );
 }
 
-export function interviewPlanFingerprint(plan: InterviewPlan) {
+function interviewPlanFingerprint(plan: InterviewPlan) {
   return stableId("interview_plan", JSON.stringify(plan));
 }
 
@@ -726,7 +730,7 @@ function newInterviewProgress(
   };
 }
 
-export function normalizeInterviewProgress(
+function normalizeInterviewProgress(
   analysis: AnalysisBundle | null,
   plan: InterviewPlan | null,
   evaluations: readonly EvaluationResponse[],

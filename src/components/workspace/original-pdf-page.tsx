@@ -7,7 +7,7 @@ import type { BoundingBox } from "@/lib/domain";
 
 import { renderPdfPage } from "./pdf-page-renderer";
 
-export type PdfHighlight = {
+type PdfHighlight = {
   id: string;
   bbox: BoundingBox;
 };

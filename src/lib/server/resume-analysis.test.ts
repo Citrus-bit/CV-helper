@@ -97,6 +97,11 @@ describe("revision AI analysis service", () => {
     expect(
       mocks.invokeRequiredAiCapability.mock.calls.map((call) => call[0]),
     ).toEqual(["resume.score", "resume.suggest"]);
+    expect(mocks.invokeRequiredAiCapability.mock.calls[1]?.[1]).toMatchObject({
+      resume,
+      claims: [],
+      scoreContext: scoreData(),
+    });
     expect(result).toMatchObject({
       resumeId: resume.id,
       resumeRevision: resume.revision,

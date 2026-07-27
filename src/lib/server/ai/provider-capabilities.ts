@@ -48,7 +48,7 @@ type GatewayInputMap = Pick<BaselineCapabilityInputMap, ProviderGatewayCapabilit
 type GatewayOutputMap = Pick<BaselineCapabilityOutputMap, ProviderGatewayCapabilityId>;
 type GatewayCapability = Capability<GatewayInputMap[ProviderGatewayCapabilityId], GatewayOutputMap[ProviderGatewayCapabilityId]>;
 
-export const ProviderSuggestionSchema = z.object({
+const ProviderSuggestionSchema = z.object({
   kind: z.enum(["rewrite", "ask_user", "needs_proof"]),
   targetPath: z.string().startsWith("/"),
   originalText: z.string(),
@@ -61,7 +61,7 @@ export const ProviderSuggestionSchema = z.object({
   interviewRisk: z.enum(["none", "low", "medium", "high"]),
 });
 
-export const ProviderSuggestionOutputSchema = z.object({
+const ProviderSuggestionOutputSchema = z.object({
   suggestions: z.array(ProviderSuggestionSchema).max(16),
 });
 
@@ -249,6 +249,26 @@ function resumeNaturalLanguagePayload(value: ReturnType<typeof minimalResume>) {
   };
 }
 
+function projectedScoreContext(
+  score: NonNullable<GatewayInputMap["resume.suggest"]["scoreContext"]>,
+  sanitize: (value: string) => string,
+) {
+  return {
+    resumeId: score.resumeId,
+    resumeRevision: score.resumeRevision,
+    total: score.total,
+    summary: sanitize(score.summary),
+    dimensions: score.dimensions.map((dimension) => ({
+      id: dimension.id,
+      label: sanitize(dimension.label),
+      score: dimension.score,
+      maxScore: dimension.maxScore,
+      evidence: dimension.evidence.map(sanitize),
+      deductions: dimension.deductions.map(sanitize),
+    })),
+  };
+}
+
 function providerInputPiiPayload<K extends ProviderGatewayCapabilityId>(
   id: K,
   input: GatewayInputMap[K],
@@ -262,13 +282,17 @@ function providerInputPiiPayload<K extends ProviderGatewayCapabilityId>(
   }
   if (id === "resume.suggest") {
     const suggestionInput = input as GatewayInputMap["resume.suggest"];
+    const sanitize = (value: string) => projector.redact(value);
     return {
       editableTargets: editableTargets(suggestionInput, projector).map(
         (target) => target.originalText,
       ),
       claims: suggestionInput.claims.map((claim) =>
-        projector.redact(claim.text),
+        sanitize(claim.text),
       ),
+      scoreContext: suggestionInput.scoreContext
+        ? projectedScoreContext(suggestionInput.scoreContext, sanitize)
+        : undefined,
     };
   }
   return dto;
@@ -316,6 +340,9 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
           locale: projected.resume.locale,
         },
         claims: projected.claims,
+        scoreContext: suggestionInput.scoreContext
+          ? projectedScoreContext(suggestionInput.scoreContext, sanitize)
+          : undefined,
         editableTargets: editableTargets(suggestionInput, projector).map(
           (target) => ({
             path: target.path,
@@ -705,6 +732,20 @@ class ProviderSuggestionOutputValidationError extends ProviderGatewayError {
   }
 }
 
+class ProviderScoreOutputValidationError extends ProviderGatewayError {
+  constructor(
+    readonly reasonCodes: readonly string[],
+    cause?: unknown,
+  ) {
+    super(
+      "INVALID_RESPONSE",
+      undefined,
+      cause === undefined ? undefined : { cause },
+    );
+    this.name = "ProviderScoreOutputValidationError";
+  }
+}
+
 function validateProviderSuggestionCandidate(
   input: GatewayInputMap["resume.suggest"],
   candidate: ProviderSuggestion,
@@ -901,7 +942,17 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
             };
           })()
         : output;
-  assertNoProjectedPii(naturalLanguageOutput, projector);
+  try {
+    assertNoProjectedPii(naturalLanguageOutput, projector);
+  } catch (error) {
+    if (id === "resume.score") {
+      console.warn("ai_resume_score_rejected", {
+        reasonCodes: ["PII_OUTPUT"],
+      });
+      throw new ProviderScoreOutputValidationError(["PII_OUTPUT"], error);
+    }
+    throw error;
+  }
   switch (id) {
     case "resume.score": {
       const scoreInput = input as GatewayInputMap["resume.score"];
@@ -915,21 +966,32 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
         ["language", 15],
       ]);
       const groundedResume = resumeGroundingCorpus(scoreInput, projector);
-      if (
-        score.resumeId !== scoreInput.resume.id ||
-        score.resumeRevision !== scoreInput.resume.revision ||
-        new Set(score.dimensions.map((dimension) => dimension.id)).size !== 6 ||
-        score.dimensions.some((dimension) => expectedMax.get(dimension.id) !== dimension.maxScore) ||
-        score.dimensions.some(
-          (dimension) =>
-            dimension.label.length > 80 ||
-            dimension.evidence.length > 8 ||
-            dimension.deductions.length > 8 ||
-            [...dimension.evidence, ...dimension.deductions].some((item) => item.length > 500),
-        ) ||
-        score.summary.length > 1_000
-      ) {
-        throw new ProviderGatewayError("INVALID_RESPONSE");
+      const dimensionIds = score.dimensions.map((dimension) => dimension.id);
+      if (new Set(dimensionIds).size !== expectedMax.size) {
+        console.warn("ai_resume_score_rejected", {
+          reasonCodes: ["DUPLICATE_OR_MISSING_DIMENSION"],
+        });
+        throw new ProviderScoreOutputValidationError([
+          "DUPLICATE_OR_MISSING_DIMENSION",
+        ]);
+      }
+      const normalizationReasonCodes = [
+        ...(score.resumeId !== scoreInput.resume.id
+          ? ["RESUME_ID_REPLACED"]
+          : []),
+        ...(score.resumeRevision !== scoreInput.resume.revision
+          ? ["RESUME_REVISION_REPLACED"]
+          : []),
+        ...(score.dimensions.some(
+          (dimension) => expectedMax.get(dimension.id) !== dimension.maxScore,
+        )
+          ? ["DIMENSION_MAX_REPLACED"]
+          : []),
+      ];
+      if (normalizationReasonCodes.length > 0) {
+        console.info("ai_resume_score_normalized", {
+          reasonCodes: normalizationReasonCodes,
+        });
       }
       const dimensionLabels = new Map(
         scoreInput.resume.locale === "en-US"
@@ -950,12 +1012,18 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
               ["language", "语言"],
             ],
       );
-      const dimensions = score.dimensions.map((dimension) => ({
-        ...dimension,
-        score: Math.min(dimension.score, dimension.maxScore),
-        evidence: dimension.evidence.filter((evidence) => isGroundedFragment(evidence, groundedResume)),
-        label: dimensionLabels.get(dimension.id)!,
-      }));
+      const dimensions = score.dimensions.map((dimension) => {
+        const maxScore = expectedMax.get(dimension.id)!;
+        return {
+          ...dimension,
+          score: Math.min(dimension.score, maxScore),
+          maxScore,
+          evidence: dimension.evidence.filter((evidence) =>
+            isGroundedFragment(evidence, groundedResume),
+          ),
+          label: dimensionLabels.get(dimension.id)!,
+        };
+      });
       const ordered = [...dimensions].sort(
         (left, right) => right.score / right.maxScore - left.score / left.maxScore,
       );
@@ -963,6 +1031,8 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
       const weakest = dimensionLabels.get(ordered.at(-1)!.id)!;
       return {
         ...score,
+        resumeId: scoreInput.resume.id,
+        resumeRevision: scoreInput.resume.revision,
         total: dimensions.reduce((sum, dimension) => sum + dimension.score, 0),
         dimensions,
         summary:
@@ -1193,9 +1263,11 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
     "Return exactly these six dimensions and maxima: impact 25, completeness 15, clarity 15, structure 15, ats 15, language 15.",
     "Each score must be between zero and its dimension maximum, and total must equal the sum of all six scores.",
     "Every evidence string must be an exact verbatim substring of a supplied section, claim, or source block; put interpretation only in deductions.",
+    "Never output or infer any person's name, email, phone number, URL, postal or residential address, or exact location, even if the input contains a redaction token. Do not use name, contact, address, or location labels; refer only to the resume or candidate generically.",
   ].join(" "),
   "resume.suggest": [
     "Task: act as a senior resume editor and return only the most important actionable findings from the supplied editableTargets, ordered by recruiter impact, with at most 8 suggestions.",
+    "scoreContext is the validated result of the immediately preceding independent resume.score request. Use it as read-only context to prioritize suggestions and avoid contradicting that assessment.",
     "For every item, diagnose that exact sentence rather than applying a generic checklist. rationale must identify the concrete wording or information issue in originalText, explain its effect on a recruiter, and state what the proposed change improves. Do not reuse stock rationales, repeated sentence templates, or the same question across unrelated bullets.",
     "When a fact-preserving improvement is possible, return kind rewrite with a complete, ready-to-paste replacement sentence. Prefer concise action-method-result ordering and remove weak, repetitive, or vague phrasing, but do not demand a metric when the source contains none.",
     "Use ask_user or needs_proof only when a specific missing or unsupported fact materially blocks a useful edit. question must name the exact project, action, result, or phrase that needs clarification and must not be a generic request for metrics.",
@@ -1234,6 +1306,66 @@ const schemas = {
   "answer.evaluate": [AnswerEvaluateInputSchema, AnswerEvaluateOutputSchema],
   "answer.coach": [AnswerCoachInputSchema, AnswerCoachOutputSchema],
 } as const;
+
+async function completeProviderScore(
+  gateway: OpenAiCompatibleGateway,
+  input: GatewayInputMap["resume.score"],
+  context: CapabilityContext,
+  projector: PiiProjector,
+  dto: unknown,
+) {
+  let correctionReasonCodes: string[] | undefined;
+  for (const generationAttempt of [1, 2] as const) {
+    const startedAt = performance.now();
+    try {
+      const completion = await gateway.complete({
+        capabilityId: "resume.score",
+        context,
+        dto,
+        piiPayload: providerInputPiiPayload(
+          "resume.score",
+          input,
+          dto,
+          projector,
+        ),
+        outputSchema: ResumeScoreOutputSchema,
+        instruction: providerInstructions["resume.score"],
+        generationAttempt,
+        correctionReasonCodes,
+      });
+      return {
+        data: validateOutput("resume.score", input, completion.data),
+        usage: completion.usage,
+      };
+    } catch (error) {
+      const reasonCodes =
+        error instanceof ProviderScoreOutputValidationError
+          ? [...error.reasonCodes]
+          : error instanceof ProviderGatewayError &&
+              error.code === "INVALID_RESPONSE" &&
+              (error.status === 200 || error.status === undefined)
+            ? [
+                error.status === 200
+                  ? "INVALID_RESPONSE_SCHEMA"
+                  : "INVALID_SCORE_OUTPUT",
+              ]
+            : null;
+      if (!reasonCodes || generationAttempt === 2) throw error;
+      gateway.recordInvalidCandidates({
+        capabilityId: "resume.score",
+        context,
+        generationAttempt,
+        format: "json_object",
+        reasonCounts: Object.fromEntries(
+          reasonCodes.map((reasonCode) => [reasonCode, 1]),
+        ),
+        durationMs: Math.max(0, performance.now() - startedAt),
+      });
+      correctionReasonCodes = reasonCodes;
+    }
+  }
+  throw new ProviderGatewayError("INVALID_RESPONSE");
+}
 
 async function completeProviderSuggestions(
   gateway: OpenAiCompatibleGateway,
@@ -1285,7 +1417,7 @@ async function completeProviderSuggestions(
         capabilityId: "resume.suggest",
         context,
         generationAttempt,
-        format: "json_schema",
+        format: "json_object",
         reasonCounts,
         durationMs: Math.max(0, performance.now() - startedAt),
       });
@@ -1330,6 +1462,14 @@ function providerCapability<K extends ProviderGatewayCapabilityId>(
               projector,
               dto,
             )
+          : id === "resume.score"
+            ? await completeProviderScore(
+                gateway,
+                input as GatewayInputMap["resume.score"],
+                context,
+                projector,
+                dto,
+              )
           : await gateway.complete({
               capabilityId: id,
               context,
@@ -1339,7 +1479,7 @@ function providerCapability<K extends ProviderGatewayCapabilityId>(
               instruction: providerInstructions[id],
             });
       const data =
-        id === "resume.suggest"
+        id === "resume.suggest" || id === "resume.score"
           ? (completion.data as GatewayOutputMap[K])
           : validateOutput(id, input, completion.data as GatewayOutputMap[K]);
       return {

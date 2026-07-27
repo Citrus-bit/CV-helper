@@ -55,7 +55,7 @@ docker compose -f infra/docker-compose.yml up --build
 AI_PROVIDER=provider_gateway
 AI_API_BASE=https://yunwu.ai/v1
 AI_API_KEY=<rotated-server-only-key>
-AI_MODEL=gpt-5.6-terra
+AI_MODEL=gpt-5.5
 ```
 
 Docker 模式使用仓库根部被忽略的 `.env`，变量名相同。Key 只能进入服务端环境，不要添加 `NEXT_PUBLIC_` 前缀，也不要写入代码、README、`.env.example` 或日志。

@@ -149,6 +149,13 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(instruction).toContain("do not demand a metric when the source contains none");
   });
 
+  it("forbids personal information in score output", () => {
+    const instruction = providerInstructions["resume.score"];
+
+    expect(instruction).toContain("Never output or infer any person's name");
+    expect(instruction).toContain("refer only to the resume or candidate generically");
+  });
+
   it("keeps valid AI findings when a sibling is invalid and replaces provider source IDs", async () => {
     const localOriginalText = resume.ast.sections[0].entries[0].bullets[0];
     const originalText = localOriginalText.normalize("NFKC");
@@ -510,7 +517,7 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer test-secret-key");
     const requestBody = JSON.parse(String(init.body));
     expect(requestBody.response_format).toEqual({ type: "json_object" });
-    expect(requestBody.max_tokens).toBe(4_096);
+    expect(requestBody).not.toHaveProperty("max_tokens");
     const projected = requestBody.messages[1].content as string;
     expect(projected).toContain("block-result");
     expect(projected).toContain("claim-result");
@@ -530,6 +537,79 @@ describe("OpenAI-compatible provider gateway", () => {
         usage: { inputUnits: 120, outputUnits: 60 },
       }),
     ]);
+  });
+
+  it("retries a score once when an otherwise valid response contains PII", async () => {
+    const unsafeScore = scoreOutput();
+    unsafeScore.summary = "我与张三在北京市朝阳区合作。";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(completionResponse(unsafeScore))
+      .mockResolvedValueOnce(completionResponse(scoreOutput()));
+    const events: ProviderGatewayLogEvent[] = [];
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: (event) => events.push(event),
+    });
+
+    const result = await registry.invoke(
+      "resume.score",
+      { resume, claims },
+      context(),
+      { fallbackPolicy: "forbid" },
+    );
+
+    expect(result).toMatchObject({
+      usedFallback: false,
+      sourceVersion: "resume.score@2.0.0",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondRequest = JSON.parse(
+      String(fetchMock.mock.calls[1][1]?.body),
+    );
+    expect(secondRequest.messages[0].content).toContain("PII_OUTPUT");
+    expect(secondRequest).not.toHaveProperty("max_tokens");
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          attempt: 1,
+          outcome: "invalid_response",
+          invalidCandidateReasonCounts: { PII_OUTPUT: 1 },
+        }),
+        expect.objectContaining({ attempt: 2, outcome: "success" }),
+      ]),
+    );
+  });
+
+  it("sends the validated score as context in a separate suggestion request", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(completionResponse({ suggestions: [] }));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    await registry.invoke(
+      "resume.suggest",
+      { resume, claims, scoreContext: scoreOutput() },
+      context(),
+      { fallbackPolicy: "forbid" },
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const dto = JSON.parse(requestBody.messages[1].content);
+    expect(requestBody.response_format).toEqual({ type: "json_object" });
+    expect(dto.scoreContext).toMatchObject({
+      resumeId: resume.id,
+      resumeRevision: resume.revision,
+      total: 80,
+      summary: "内容基础扎实,建议继续补充可核实影响。",
+    });
+    expect(requestBody).not.toHaveProperty("max_tokens");
   });
 
   it("redacts known name variants and addresses from every projected resume string", async () => {
@@ -1016,6 +1096,50 @@ describe("OpenAI-compatible provider gateway", () => {
         dimensions: [
           expect.objectContaining({ id: "impact", score: 25, evidence: [] }),
           ...invalidScore.dimensions.slice(1).map((dimension) =>
+            expect.objectContaining({ id: dimension.id }),
+          ),
+        ],
+      },
+    });
+  });
+
+  it("normalizes provider-owned score metadata without limiting generated text", async () => {
+    const providerScore = scoreOutput();
+    providerScore.resumeId = "provider-invented-resume-id";
+    providerScore.resumeRevision = 999;
+    providerScore.dimensions[0].maxScore = 100;
+    providerScore.dimensions[0].score = 90;
+    providerScore.dimensions[0].evidence = Array.from(
+      { length: 12 },
+      () => "交付周期缩短 20%",
+    );
+    providerScore.summary = "详细评分上下文".repeat(1_000);
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse(providerScore)),
+      logger: () => undefined,
+    });
+
+    const result = await registry.invoke(
+      "resume.score",
+      { resume, claims },
+      context(),
+      { fallbackPolicy: "forbid" },
+    );
+
+    expect(result).toMatchObject({
+      usedFallback: false,
+      data: {
+        resumeId: resume.id,
+        resumeRevision: resume.revision,
+        dimensions: [
+          expect.objectContaining({
+            id: "impact",
+            score: 25,
+            maxScore: 25,
+            evidence: expect.arrayContaining(["交付周期缩短 20%"]),
+          }),
+          ...providerScore.dimensions.slice(1).map((dimension) =>
             expect.objectContaining({ id: dimension.id }),
           ),
         ],

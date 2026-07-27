@@ -619,16 +619,3 @@ export function loadInterviewQuestionCatalog(
   catalogCache.set(cacheKey, loading);
   return loading;
 }
-
-/** Convenience helper for server callers that want loading and deterministic retrieval in one call. */
-export async function retrieveInterviewQuestions(
-  selection: InterviewQuestionSelection,
-) {
-  const input = SelectionSchema.parse(selection);
-  const catalog = await loadInterviewQuestionCatalog(input.locale);
-  return selectInterviewQuestions(catalog, input);
-}
-
-export function clearInterviewKnowledgeCache() {
-  catalogCache.clear();
-}

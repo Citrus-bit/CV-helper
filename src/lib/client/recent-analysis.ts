@@ -9,6 +9,7 @@ import type {
   RenderResponse,
 } from "./contracts";
 import type { ResumeChatContext } from "@/lib/resume-chat";
+import type { ResumeTemplateId } from "@/lib/domain";
 import { hasFreshRequiredAiAnalysis } from "./ai-analysis";
 
 export const RECENT_ANALYSIS_TTL_MS = 24 * 60 * 60 * 1000;
@@ -24,7 +25,7 @@ const INVALIDATION_CHANNEL_NAME = "resume-analysis-history-v1";
 const INVALIDATION_STORAGE_KEY = "resume-analysis-history-event-v1";
 
 export type RecentWorkspaceModule = "resume" | "job" | "interview";
-export type RecentTemplateId = "professional" | "minimal" | "compact";
+export type RecentTemplateId = ResumeTemplateId;
 
 export type RecentAnalysisPayload = {
   analysis: AnalysisBundle;

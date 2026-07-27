@@ -174,6 +174,8 @@ function InterviewWorkspaceSession({
   const planMutation = useMutation({
     mutationFn: () =>
       createInterviewPlan({
+        resumeId: analysis.resume.id,
+        revision: analysis.resume.revision,
         ast: analysis.resume.ast,
         claims: analysis.claims,
         stories: analysis.stories,
@@ -198,6 +200,8 @@ function InterviewWorkspaceSession({
           : submission.transcript;
       if (isCurrentSession()) updateProgress({ transcript: answer });
       const result = await evaluateAnswer({
+        resumeId: analysis.resume.id,
+        revision: analysis.resume.revision,
         question: submission.question,
         answer,
         claims: analysis.claims,

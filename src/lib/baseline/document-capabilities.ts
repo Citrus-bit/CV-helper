@@ -77,7 +77,7 @@ async function pdfPageCount(bytes: Uint8Array): Promise<number> {
   }
 }
 
-export const documentParseCapability = defineCapability(
+const documentParseCapability = defineCapability(
   "document.parse",
   DocumentParseInputSchema,
   DocumentParseOutputSchema,
@@ -136,7 +136,7 @@ export const documentParseCapability = defineCapability(
   },
 );
 
-export const documentOcrCapability = defineCapability(
+const documentOcrCapability = defineCapability(
   "document.ocr",
   DocumentOcrInputSchema,
   DocumentOcrOutputSchema,
@@ -248,7 +248,7 @@ function inferredRole(block: SourceBlock): SourceBlock["role"] {
   return "paragraph";
 }
 
-export const documentSegmentCapability = defineCapability(
+const documentSegmentCapability = defineCapability(
   "document.segment",
   DocumentSegmentInputSchema,
   DocumentSegmentOutputSchema,
@@ -353,7 +353,7 @@ function astContentUnits(input: LayoutRecommendInput["ast"]): number {
     .reduce((total, value) => total + value.length, 0);
 }
 
-export const layoutRecommendCapability = defineCapability(
+const layoutRecommendCapability = defineCapability(
   "layout.recommend",
   LayoutRecommendInputSchema,
   LayoutRecommendOutputSchema,
@@ -417,7 +417,7 @@ export const layoutRecommendCapability = defineCapability(
   },
 );
 
-export const resumeRenderCapability = defineCapability(
+const resumeRenderCapability = defineCapability(
   "resume.render",
   ResumeRenderInputSchema,
   ResumeRenderOutputSchema,
@@ -463,7 +463,7 @@ function auditCheck(
   return { id, label, status, details };
 }
 
-export const exportAuditCapability = defineCapability(
+const exportAuditCapability = defineCapability(
   "export.audit",
   ExportAuditInputSchema,
   ExportAuditOutputSchema,

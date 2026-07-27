@@ -596,11 +596,11 @@ export function UploadScreen() {
         ) : null}
 
         <div className="mt-5 grid grid-cols-3 gap-3 text-sm text-muted">
-          <p className="flex items-center gap-2">
+          <p className="flex items-center justify-center gap-2">
             <FileSearch aria-hidden="true" size={17} className="text-brand" />
             原生解析优先
           </p>
-          <p className="flex items-center gap-2">
+          <p className="flex items-center justify-center gap-2">
             <LockKeyhole
               aria-hidden="true"
               size={17}
@@ -608,7 +608,7 @@ export function UploadScreen() {
             />
             本地处理，外部能力前脱敏
           </p>
-          <p className="flex items-center gap-2">
+          <p className="flex items-center justify-center gap-2">
             <ShieldCheck
               aria-hidden="true"
               size={17}

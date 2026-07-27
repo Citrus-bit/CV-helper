@@ -62,7 +62,11 @@ export async function analyzeResumeRevisionWithAi(input: {
   );
   const suggestionResult = await invokeRequiredAiCapability(
     "resume.suggest",
-    { resume: input.resume, claims: input.claims },
+    {
+      resume: input.resume,
+      claims: input.claims,
+      scoreContext: scoreResult.data,
+    },
     context,
   );
   return assertResumeAnalysisResponseForRequest(

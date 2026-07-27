@@ -1,6 +1,6 @@
 import type { AuditCheck } from "@/lib/domain";
 
-export const BLOCKING_EXPORT_CHECK_IDS = new Set([
+const BLOCKING_EXPORT_CHECK_IDS = new Set([
   "valid-pdf",
   "visual-content",
   "text-visibility",

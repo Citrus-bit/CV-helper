@@ -32,7 +32,7 @@ function compactText(value: string) {
     .toLowerCase();
 }
 
-export function joinResumeText(left: string, right: string) {
+function joinResumeText(left: string, right: string) {
   const normalizedLeft = normalizedText(left);
   const normalizedRight = normalizedText(right);
   if (!normalizedLeft) return normalizedRight;

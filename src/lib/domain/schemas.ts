@@ -364,6 +364,13 @@ export const AnswerEvaluationSchema = z.object({
 });
 export type AnswerEvaluation = z.infer<typeof AnswerEvaluationSchema>;
 
+export const ResumeTemplateIdSchema = z.enum([
+  "professional",
+  "minimal",
+  "compact",
+]);
+export type ResumeTemplateId = z.infer<typeof ResumeTemplateIdSchema>;
+
 export const AuditCheckSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -381,7 +388,7 @@ export type ExportHardGate = z.infer<typeof ExportHardGateSchema>;
 export const ExportQualityReportSchema = z.object({
   resumeId: z.string().min(1),
   resumeRevision: z.number().int().nonnegative(),
-  template: z.enum(["professional", "minimal", "compact"]),
+  template: ResumeTemplateIdSchema,
   artifactSha256: z.string().regex(/^[a-f0-9]{64}$/),
   sourcePageCount: z.number().int().positive().optional(),
   pageCount: z.number().int().nonnegative(),

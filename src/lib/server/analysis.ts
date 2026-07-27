@@ -423,7 +423,7 @@ export async function analyzeParsedResume(
   );
   const suggestionResult = await invokeResumeCapability(
     "resume.suggest",
-    { resume, claims },
+    { resume, claims, scoreContext: scoreResult.data },
     context,
   );
   const atsResult = await atsResultPromise;

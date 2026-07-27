@@ -277,3 +277,35 @@ _每执行2次查看/浏览器/搜索操作后更新此文件_
 - revision AI 成功后的 IndexedDB 保存失败不能反向把 `fresh` 改成 `failed`；AI 结果状态与本机归档状态需要分开处理。
 - 旧记录仅看 `summarySource` 不足以证明当前 AI 完整性；列表摘要需要从保存的 AnalysisBundle 重新计算 fresh 元数据，旧规则分数不应在首页显示成当前 AI 结论。
 - 模块级 File 缓存能跨上传页卸载保留重试文件，但 React purity 规则不允许组件直接修改外部变量；使用独立 retained-upload 封装并以组件 state 反映当前重试文件可同时满足保留语义与 lint。
+# 2026-07-27 代码清理与边界审计
+
+- 现有计划显示项目已经过多轮功能与安全验收；本轮必须以当前代码的可达性、引用关系、测试和构建证据为准，不能仅凭命名判断代码“无用”。
+- 阶段 13 仍有真实 Provider 三连成功终验未完成；该外部依赖验收不属于本次代码清理，清理不得把它误标完成。
+- 审计开始时工作树已有未跟踪 `.github/` 与 `src/app/api/privacy/`；来源不属于本轮，按用户在研改动保护，检查依赖关系但不擅自移除。
+- 根目录存在 `.next`、`node_modules`、`.pytest_cache`、`tsconfig.tsbuildinfo` 与若干 `.DS_Store`；是否属于无用代码要结合 `.gitignore` 和 Git 跟踪状态判断，不能把本地缓存等同于源码删除对象。
+- 运行时由 Next.js Web、Python document-worker、loopback proxy 和仓库内 Skill 插件组成；Next 路由、Typst 模板、面试题库与 Skill 文件存在约定式/文件系统动态发现，不能以没有静态 import 为删除依据。
+- `.gitignore` 已覆盖 `.next`、`node_modules`、`.pytest_cache`、`*.tsbuildinfo`、`.DS_Store` 和私有环境文件；当前这些本地文件均未被 Git 跟踪，不需要用源码改动处理。
+- Web 测试只匹配 `src/**/*.test.ts` 与 `tests/**/*.test.ts`，仓库现有组件测试虽包含 React 逻辑但均使用 `.test.ts`，与当前约定一致。
+- TypeScript 以 `noUnusedLocals` 与 `noUnusedParameters` 临时收紧后仍零错误，说明当前文件内部没有编译器可证明的未使用声明或参数。
+- `package.json` 的 14 个运行依赖在源码、配置、脚本或测试中均有明确引用；暂未发现可直接删除的声明依赖。`pdf-lib` 只用于测试 PDF fixture 生成，后续需要判断是否应降为 devDependency，而不是删除。
+- 产品源码没有未处理的 TODO/FIXME/HACK 或伪实现标记；`legacy` 命中主要是 IndexedDB/sessionStorage 向后兼容迁移与 PaddleOCR 新旧 API 适配，属于有业务语义的兼容路径，不能按名称删除。
+- 复杂度热点为客户端 Store（2633 行）、baseline capability 集合（1603 行）、简历编辑器（1106 行）和面试工作区（1075 行）；应优先寻找跨层职责混合与重复编排，不做无证据的大拆分。
+- 临时 `knip` 扫描未报告 unused dependencies；唯一 unused file `tests/server-only.ts` 实际由 `vitest.config.ts` 作为 `server-only` alias 目标，是工具未识别配置的假阳性。
+- `knip` 报告 88 个 unused exports 与 23 个 unused exported types。它们混合了三类对象：模块内只需私有的实现、跨模块 Capability 注册实现、以及刻意保留的公共 Schema/契约；需要逐项追踪，不能批量删除。
+- `.github/` 与 `src/app/api/privacy/` 在普通文件枚举中没有可见文件但 Git 仍报告目录未跟踪，需用完整未跟踪状态确认是否存在被忽略规则影响的深层文件或特殊条目。
+- 完整 Git 状态复查时两处目录已是空目录且不再作为未跟踪项出现；未删除任何用户文件，后续忽略空目录本身。
+- 高置信无调用实现：客户端 `generateResumeSuggestions` 旧包装、服务端 `renderAuditedResume` 组合包装、面试知识库 `retrieveInterviewQuestions` 便利包装与 `clearInterviewKnowledgeCache`。它们没有仓库内调用且不属于 Next/manifest 约定入口，可删除以减少误用面。
+- `useEstimatedProgress`、`normalizeEditedResumeAst`、`assertFreshAiAnalysis`、多项 Store 校验器及 `joinResumeText` 都被本文件使用，但没有跨模块消费者；应保留实现并移除多余 `export`。
+- `baseline/index.ts` 通过五个星号导出暴露所有裸 Capability 与内部实现；实际跨模块消费者只需要 `createDefaultCapabilityRegistry` 和 `invokeBaselineCapability`。收窄 facade 能强制调用方经过 Registry 的校验、超时和 fallback 语义。
+- `src/lib/client/resume.ts` 末尾保留了一套已无调用的 `sectionItems`/`toRenderableResume`，并因此让客户端模块依赖服务端 Typst 类型；当前真实渲染统一使用 `src/lib/server/export.ts` 中语义更完整的转换（链接、摘要去重、current 日期、location 等）。可删除客户端旧转换，消除跨层类型依赖且避免两套规则漂移。
+- `/api/resume-suggestions` 是仍受契约测试覆盖的兼容路由，保留完整功能；只删除没有 UI 调用的客户端 `generateResumeSuggestions` 包装，不删除路由或 Schema。
+- Python worker 静态结构显示入口只从 FastAPI `main.py` 到安全读取、解析/OCR、渲染；本地环境未安装 Vulture/Ruff，后续以 pytest、编译和人工引用检查验证，不为一次扫描向产品依赖中加入 Python 工具。
+- `apiSessionHeaders()` 原样返回传入对象且无任何会话信息，属于无业务行为的未来占位；直接使用标准 headers 更清楚，也避免误导调用方以为请求已绑定会话。
+- `pdf-lib` 只在 Vitest 中生成/篡改 PDF fixture，生产源码与构建配置均不引用；移动到 devDependencies 能让生产依赖语义与实际运行边界一致。
+- Madge 首次发现唯一循环依赖 `client/store.ts -> client/api.ts -> client/store.ts`。API 为补全简历版本读取 Zustand，而 Store 又通过 revision 分析服务间接调用 API；所有 UI 调用方实际都持有 ID/revision，因此改为显式参数后循环已归零。
+- `professional | minimal | compact` 曾分别定义在 domain、baseline、client Store、recent-analysis 和 Typst；现由领域 `ResumeTemplateIdSchema` 单点定义，其他模块复用类型或保留兼容别名。
+- 临时复杂度规则确认后续优化重点：`InterviewWorkspaceSession` 952 行/复杂度 58、`UploadScreen` 772 行/复杂度 31、Store 创建器 1275 行及 revision 刷新复杂度 36、`ResumeContentEditor` 517 行。它们当前测试覆盖充分，本轮不做大范围拆分；后续应按“会话控制器/语音适配器/视图”“上传状态机/历史列表”“持久化迁移/revision workflow”“编辑领域操作/表单视图”拆分。
+- `pnpm install --lockfile-only` 因多项依赖使用 `latest` 曾试图无关升级 Next/Radix/jsdom；已撤销全部无关锁文件变化，只保留 `pdf-lib` importer 分类。长期建议把生产依赖改为明确版本并由升级任务单独更新。
+- 最终 Knip 从 88 个 unused exports / 23 个 unused exported types 降至 31 / 17；余项是 Capability、领域、对话和客户端公共 Schema/类型，保留用于稳定边界。唯一 unused file 报告 `tests/server-only.ts` 是 `vitest.config.ts` 明确 alias，属于假阳性。
+- 本轮没有删除 `/api/resume-suggestions` 兼容路由、legacy 本地数据迁移、PaddleOCR 兼容分支、Next 路由、题库、模板或插件文件；生产构建确认全部现有路由仍生成。
+- 兼容性边界：HTTP API 与持久化 Schema 未变；内部 `matchJob/createInterviewPlan/evaluateAnswer` 现在要求显式版本，baseline 顶层不再导出裸实现。仓库内调用方均已迁移；若存在仓库外直接源码导入，需要同步改用 Registry 门面。

@@ -68,7 +68,7 @@ function paragraphText(value: string | undefined) {
   return normalized || undefined;
 }
 
-export function normalizeEditedResumeAst(ast: ResumeAST): ResumeAST {
+function normalizeEditedResumeAst(ast: ResumeAST): ResumeAST {
   const normalized = structuredClone(ast);
   normalized.contact.name = normalized.contact.name.trim();
   normalized.contact.headline = optionalText(normalized.contact.headline);

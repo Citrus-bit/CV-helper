@@ -2,11 +2,9 @@ import {
   ResumeASTSchema,
   type ResumeAST,
   type ResumeEntry,
-  type ResumeSection,
   type Suggestion,
 } from "@/lib/domain";
 import { stableId } from "@/lib/baseline/utils";
-import type { RenderableResume } from "@/lib/server/typst";
 
 const blockedPointerSegments = new Set([
   "__proto__",
@@ -195,42 +193,4 @@ export function applySuggestion(
     })),
   };
   return JSON.stringify(next) === JSON.stringify(ast) ? ast : next;
-}
-
-function sectionItems(
-  section: ResumeSection,
-): RenderableResume["sections"][number]["items"] {
-  if (section.entries.length > 0) {
-    return section.entries.map((entry) => ({
-      title: entry.title,
-      subtitle: entry.organization ?? entry.subtitle,
-      date: [entry.startDate, entry.endDate].filter(Boolean).join(" - "),
-      bullets:
-        entry.bullets.length > 0
-          ? entry.bullets
-          : entry.summary
-            ? [entry.summary]
-            : [],
-    }));
-  }
-  return section.text
-    ? [{ title: "", bullets: section.text.split(/\n+/).filter(Boolean) }]
-    : [];
-}
-
-export function toRenderableResume(ast: ResumeAST): RenderableResume {
-  return {
-    profile: {
-      name: ast.contact.name || "候选人",
-      headline: ast.contact.headline,
-      email: ast.contact.email,
-      phone: ast.contact.phone,
-      location: ast.contact.location,
-      summary: ast.summary,
-    },
-    sections: ast.sections.map((section) => ({
-      title: section.title,
-      items: sectionItems(section),
-    })),
-  };
 }

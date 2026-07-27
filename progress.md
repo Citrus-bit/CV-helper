@@ -308,3 +308,30 @@
 - 第二份合成 PDF 请求约五分钟后同样返回 `AI_ANALYSIS_UNAVAILABLE`，失败能力仍为 `resume.score`，无 AnalysisBundle。
 - 第三份合成 PDF 在可观测生产进程中确认 `resume.score@2.0.0` 由 Provider 以 HTTP 200 成功返回（24.6 秒），随后 `resume.suggest@2.0.0` 的首轮 `json_schema` 请求被上游以 HTTP 429 拒绝（23.5 秒）；应用整体返回 503 且未泄漏已成功评分、未执行兼容格式重试或 baseline。真实连续成功验收仍未通过。
 - 生产浏览器使用真实文件选择器上传合成 PDF：等待页未展示提前结果；Provider 再次评分 200、建议 429 后，页面返回上传区，显示“AI 分析未完成，未返回本地模板结果”，保留“重新使用 AI 分析”，最近分析仍为空，未进入工作台。
+# 2026-07-27 代码清理与边界审计
+
+- 已读取文件规划技能及现有 `task_plan.md`、`findings.md`、`progress.md`。
+- 已在计划中新增阶段 14，范围限定为：先证据审计，再删除无用代码，最后做聚焦优化与解耦并执行全量验证。
+- 已运行会话恢复检查并读取 Git 状态与根目录文件概览；恢复脚本没有报告未同步上下文。
+- 已识别并保护审计开始前存在的未跟踪 `.github/` 和隐私 API 目录。
+- 一次规划文档补丁因章节位置假设错误而失败且未产生修改；已读取实际位置并改用精确上下文。
+- 已完成依赖脚本、TypeScript/Next/Vitest 配置、Git 跟踪文件、忽略规则和全仓主要目录的第一轮盘点。
+- 已运行更严格的 TypeScript 未使用符号检查并完成运行依赖逐项引用扫描；均未发现可直接删除项。
+- 已读取 README、架构文档和前端入口，确认约定式动态入口与当前业务不变量。
+- 已临时运行 `knip`（未修改依赖清单）；获得未使用文件/导出候选，开始人工校验约定式入口与公共契约。
+- 已逐项追踪第一批候选的定义与引用，确认四个无调用包装可删除，并识别 baseline 公共 barrel 过宽问题。
+- 已复核上传、revision、兼容建议、示例路由及严格 AI service 调用链，并审阅 Python worker 的入口与模块职责。
+- 已确认客户端存在一套无调用且语义落后的渲染转换，可删除并解除 client -> server 类型依赖。
+- 客户端 API 多段补丁曾因转写接口上下文不匹配而整体失败且未产生修改；随后按当前文件逐段应用，保留 multipart/JSON 请求差异。
+- 已删除客户端旧渲染转换、旧建议请求包装、服务端渲染组合包装、面试检索便利包装与无调用缓存清理入口。
+- 已移除空转 `apiSessionHeaders`，并将仅本文件使用的组件、Store、行合并辅助实现改为私有。
+- 已将 baseline barrel 收敛为契约与 Registry 门面，裸 Capability 实现只通过聚合注册表使用。
+- 已把仅测试引用的 `pdf-lib` 从生产依赖移到开发依赖，并用 `pnpm install --lockfile-only` 同步 lockfile。
+- 已撤销 lockfile 因 `latest` 触发的全部无关依赖升级，只保留 3 行 `pdf-lib` 分类移动。
+- 已统一领域模板 ID Schema，并把岗位/面试客户端请求改为显式传递简历身份；Madge 从 1 个循环依赖降为 0。
+- 已用临时 ESLint 复杂度规则完成热点量测，并将后续拆分边界记录到 findings；本轮不冒险重写高复杂度业务状态机。
+- 聚焦验证实际运行了全量 57 个 Vitest 文件 / 334 项测试，全部通过；TypeScript 与 `git diff --check` 同步通过。
+- 最终验证通过：TypeScript、ESLint、57 个文件 / 334 项 Vitest、34 项 document-worker pytest、3 项 loopback proxy pytest、Next 生产构建、冻结/离线 lockfile 检查、零循环依赖与 `git diff --check`。
+- 生产构建自动改写的 `next-env.d.ts` 已恢复为构建前内容，没有把生成噪声纳入交付。
+- 阶段 14 已完成；阶段 13 的真实 Provider 连续成功终验仍保持未完成，不因代码清理而改变状态。
+- 规划技能通用 `check-complete.sh` 不识别现有中文“阶段”清单，返回 `0/0 phases`；以 `task_plan.md` 阶段 14 的逐项勾选和本节验证结果为完成依据。

@@ -1,11 +1,7 @@
 "use client";
 
 import { FileSearch, LoaderCircle, ScanText, Sparkles } from "lucide-react";
-import { useEffect } from "react";
-import {
-  cancelAnalysisRequest,
-  retainAnalysisRequest,
-} from "@/lib/client/analysis-request";
+import { cancelAnalysisRequest } from "@/lib/client/analysis-request";
 import { useAppStore } from "@/lib/client/store";
 import {
   EstimatedProgressBar,
@@ -32,13 +28,6 @@ const analysisContents = [
 
 export function AnalysisProgress() {
   const reset = useAppStore((state) => state.reset);
-
-  useEffect(() => {
-    const releaseRequest = retainAnalysisRequest();
-    return () => {
-      releaseRequest();
-    };
-  }, []);
 
   function cancel() {
     cancelAnalysisRequest();

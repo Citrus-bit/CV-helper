@@ -22,8 +22,8 @@ const STOP_WORDS = new Set([
   "岗位",
 ]);
 
-export const UNTRUSTED_DOCUMENT_OPEN = "[UNTRUSTED_DOCUMENT_DATA]";
-export const UNTRUSTED_DOCUMENT_CLOSE = "[/UNTRUSTED_DOCUMENT_DATA]";
+const UNTRUSTED_DOCUMENT_OPEN = "[UNTRUSTED_DOCUMENT_DATA]";
+const UNTRUSTED_DOCUMENT_CLOSE = "[/UNTRUSTED_DOCUMENT_DATA]";
 
 export function wrapUntrustedDocumentText(value: string): string {
   return `${UNTRUSTED_DOCUMENT_OPEN}\n${value}\n${UNTRUSTED_DOCUMENT_CLOSE}`;

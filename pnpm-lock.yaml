@@ -32,9 +32,6 @@ importers:
       next:
         specifier: latest
         version: 16.2.11(@babel/core@7.29.7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      pdf-lib:
-        specifier: latest
-        version: 1.17.1
       pdfjs-dist:
         specifier: latest
         version: 6.1.200
@@ -96,6 +93,9 @@ importers:
       jsdom:
         specifier: latest
         version: 29.1.1
+      pdf-lib:
+        specifier: latest
+        version: 1.17.1
       postcss:
         specifier: latest
         version: 8.5.22

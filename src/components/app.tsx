@@ -10,6 +10,7 @@ import {
   handleRecentAnalysisInvalidation,
   useAppStore,
 } from "@/lib/client/store";
+import { retainAnalysisRequest } from "@/lib/client/analysis-request";
 import { subscribeRecentAnalysisInvalidations } from "@/lib/client/recent-analysis";
 
 export function App() {
@@ -24,6 +25,11 @@ export function App() {
   useEffect(() => {
     clearLegacySession(window.localStorage);
   }, []);
+
+  useEffect(() => {
+    if (stage !== "analyzing") return;
+    return retainAnalysisRequest();
+  }, [stage]);
 
   useEffect(
     () =>

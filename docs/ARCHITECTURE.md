@@ -159,11 +159,13 @@ type CapabilityResult<T> = {
 ```
 
 - 每个输入和输出均有 Zod Schema；JSON Schema 从同一契约构建并用于跨进程验证。
+- `@/lib/baseline` 公共入口只暴露版本化契约与 Registry 创建/调用门面；裸 Capability 实现保持模块私有，业务调用方不能绕过 Registry 的输入校验、超时和 fallback 策略。
 - Registry 在服务器构建期静态注册，运行时 Map 以 capability ID 为 key，保存一个 baseline 和最多一个受控实现；每次调用显式选择 `fallbackPolicy: "allow" | "forbid"`，默认 `allow` 保持非关键能力兼容。用户输入不能注册代码；`provider_gateway` 仅允许固定生成式能力名单。
 - Descriptor 与 Skill manifest 在启用前验证；CapabilityContext 不含数据库、对象存储或模型密钥。
 - `forbid` 模式缺少 extension 或 extension 超时、异常、输出 Schema 非法时直接失败，不执行 baseline，也不返回 `usedFallback: true`。上传、示例和 revision 重分析中的 `resume.score`、`resume.suggest` 固定使用该模式；取消请求继续直接传播。
 - 写操作由业务 service 在 Capability 返回后执行。Skill 只计算结果，不能直接提交 revision 或访问任意对象键。
 - 前端只得到 `FeatureAvailability { id, available, mode, locales, fallbackAvailable }`。
+- 客户端 API 不读取 Zustand 全局状态补全请求；岗位匹配与面试请求必须由调用方显式传入 `resumeId/revision`，响应再按同一身份绑定，避免隐式状态和 API ↔ Store 循环依赖。
 
 ### 4.1 Skill manifest
 

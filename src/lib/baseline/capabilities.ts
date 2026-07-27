@@ -133,7 +133,7 @@ function allResumeLines(
   return lines.filter(({ text }) => normalizeText(text).length >= 4);
 }
 
-export const evidenceMineCapability = defineCapability(
+const evidenceMineCapability = defineCapability(
   "evidence.mine",
   EvidenceMineInputSchema,
   EvidenceMineOutputSchema,
@@ -192,7 +192,7 @@ export const evidenceMineCapability = defineCapability(
   },
 );
 
-export const claimAssessCapability = defineCapability(
+const claimAssessCapability = defineCapability(
   "claim.assess",
   ClaimAssessInputSchema,
   ClaimAssessOutputSchema,
@@ -243,7 +243,7 @@ export const claimAssessCapability = defineCapability(
   },
 );
 
-export const claimConflictCapability = defineCapability(
+const claimConflictCapability = defineCapability(
   "claim.conflict",
   ClaimConflictInputSchema,
   ClaimConflictOutputSchema,
@@ -308,7 +308,7 @@ function dimension(
   };
 }
 
-export const resumeScoreCapability = defineCapability(
+const resumeScoreCapability = defineCapability(
   "resume.score",
   ResumeScoreInputSchema,
   ResumeScoreOutputSchema,
@@ -421,7 +421,7 @@ export const resumeScoreCapability = defineCapability(
   },
 );
 
-export const resumeChatCapability = defineCapability(
+const resumeChatCapability = defineCapability(
   "resume.chat",
   ResumeChatInputSchema,
   ResumeChatOutputSchema,
@@ -481,7 +481,7 @@ function conservativeRewrite(
   return { text: normalizeText(rewritten), changes };
 }
 
-export const resumeSuggestCapability = defineCapability(
+const resumeSuggestCapability = defineCapability(
   "resume.suggest",
   ResumeSuggestInputSchema,
   ResumeSuggestOutputSchema,
@@ -605,7 +605,7 @@ export const resumeSuggestCapability = defineCapability(
   },
 );
 
-export const resumeAtsAuditCapability = defineCapability(
+const resumeAtsAuditCapability = defineCapability(
   "resume.atsAudit",
   ResumeAtsAuditInputSchema,
   ResumeAtsAuditOutputSchema,
@@ -696,7 +696,7 @@ function classifyRequirement(line: string): {
   return { category: "skill", importance: 0.65 };
 }
 
-export const jdParseCapability = defineCapability(
+const jdParseCapability = defineCapability(
   "jd.parse",
   JdParseInputSchema,
   JdParseOutputSchema,
@@ -751,7 +751,7 @@ export const jdParseCapability = defineCapability(
   },
 );
 
-export const jobMatchCapability = defineCapability(
+const jobMatchCapability = defineCapability(
   "job.match",
   JobMatchInputSchema,
   JobMatchOutputSchema,
@@ -846,7 +846,7 @@ export const jobMatchCapability = defineCapability(
   },
 );
 
-export const jobRiskDetectCapability = defineCapability(
+const jobRiskDetectCapability = defineCapability(
   "job.riskDetect",
   JobRiskDetectInputSchema,
   JobRiskDetectOutputSchema,
@@ -942,16 +942,16 @@ function rewriteCapability(
   );
 }
 
-export const copyRewriteZhCapability = rewriteCapability(
+const copyRewriteZhCapability = rewriteCapability(
   "copy.rewrite.zh",
   "zh",
 );
-export const copyRewriteEnCapability = rewriteCapability(
+const copyRewriteEnCapability = rewriteCapability(
   "copy.rewrite.en",
   "en",
 );
 
-export const copyConsistencyCapability = defineCapability(
+const copyConsistencyCapability = defineCapability(
   "copy.consistency",
   CopyConsistencyInputSchema,
   CopyConsistencyOutputSchema,
@@ -1169,7 +1169,7 @@ const BUILTIN_QUESTIONS: InterviewQuestion[] = [
   },
 ];
 
-export const questionRetrieveCapability = defineCapability(
+const questionRetrieveCapability = defineCapability(
   "question.retrieve",
   QuestionRetrieveInputSchema,
   QuestionRetrieveOutputSchema,
@@ -1198,7 +1198,7 @@ export const questionRetrieveCapability = defineCapability(
   },
 );
 
-export const interviewPlanCapability = defineCapability(
+const interviewPlanCapability = defineCapability(
   "interview.plan",
   InterviewPlanInputSchema,
   InterviewPlanOutputSchema,
@@ -1232,7 +1232,7 @@ export const interviewPlanCapability = defineCapability(
   },
 );
 
-export const storyBuildCapability = defineCapability(
+const storyBuildCapability = defineCapability(
   "story.build",
   StoryBuildInputSchema,
   StoryBuildOutputSchema,
@@ -1273,7 +1273,7 @@ function answerLength(answer: string): number {
   return latinWords + Math.ceil(hanChars / 2);
 }
 
-export const answerEvaluateCapability = defineCapability(
+const answerEvaluateCapability = defineCapability(
   "answer.evaluate",
   AnswerEvaluateInputSchema,
   AnswerEvaluateOutputSchema,
@@ -1386,7 +1386,7 @@ export const answerEvaluateCapability = defineCapability(
   },
 );
 
-export const answerCoachCapability = defineCapability(
+const answerCoachCapability = defineCapability(
   "answer.coach",
   AnswerCoachInputSchema,
   AnswerCoachOutputSchema,
@@ -1426,7 +1426,7 @@ export const answerCoachCapability = defineCapability(
   },
 );
 
-export const resumeInterviewCheckCapability = defineCapability(
+const resumeInterviewCheckCapability = defineCapability(
   "resumeInterview.check",
   ResumeInterviewCheckInputSchema,
   ResumeInterviewCheckOutputSchema,
@@ -1471,7 +1471,7 @@ export const resumeInterviewCheckCapability = defineCapability(
   },
 );
 
-export const piiRedactCapability = defineCapability(
+const piiRedactCapability = defineCapability(
   "pii.redact",
   PiiRedactInputSchema,
   PiiRedactOutputSchema,
@@ -1533,7 +1533,7 @@ export const piiRedactCapability = defineCapability(
   },
 );
 
-export const promptGuardCapability = defineCapability(
+const promptGuardCapability = defineCapability(
   "prompt.guard",
   PromptGuardInputSchema,
   PromptGuardOutputSchema,
