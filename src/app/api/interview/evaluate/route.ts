@@ -82,6 +82,9 @@ export async function POST(request: Request) {
     const redactedQuestionText = QuestionTextSchema.parse(
       JSON.parse(questionRedaction.data.redactedText),
     );
+    // Questions can contain model-generated or catalog-derived text, so their
+    // metadata is guarded along with the answer instead of being trusted as
+    // server-authored instructions.
     const [answerGuard, promptGuard, metadataGuard] = await Promise.all([
       invokeBaselineCapability(
         "prompt.guard",
@@ -132,6 +135,9 @@ export async function POST(request: Request) {
         context,
       ),
     ]);
+    // Coaching depends on the exact accepted evaluation. The route publishes
+    // neither result until evaluation, consistency checks, and coaching all
+    // succeed, avoiding mismatched or partially generated feedback.
     const coaching = await invokeRequiredAiCapability(
       "answer.coach",
       {

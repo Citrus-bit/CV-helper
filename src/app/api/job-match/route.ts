@@ -93,6 +93,8 @@ export async function POST(request: Request) {
       { text: redactionResult.data.redactedText },
       securityContext,
     );
+    // Optional metadata is untrusted for the same reason as the JD body. It is
+    // secured independently so a short override cannot bypass the main guard.
     const metadataEntries = await Promise.all(
       (["jobTitle", "seniority", "location"] as const).map(async (key) => [
         key,
@@ -126,6 +128,8 @@ export async function POST(request: Request) {
         metadata.seniority?.value ?? parsedJob.data.jobPosting.seniority,
       location: metadata.location?.value ?? parsedJob.data.jobPosting.location,
       locale: capabilityLocale,
+      // Keep the original text for local audit and display only. Provider
+      // capabilities above receive the redacted and guarded representation.
       rawText: input.jdText,
     });
     const [matchResult, riskResult] = await Promise.all([
@@ -151,6 +155,8 @@ export async function POST(request: Request) {
       mappings: matchResult.data.maps,
       claims: input.claims,
     });
+    // The variant builder may reorder or retarget existing facts, but cannot
+    // add claims from an unmet requirement. No meaningful diff means no branch.
     const variant = variantResult
       ? ResumeVariantSchema.parse({
           id: `variant-${randomUUID()}`,

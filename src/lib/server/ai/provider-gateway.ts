@@ -140,6 +140,8 @@ const ProviderErrorBodySchema = z.object({
 });
 
 function providerErrorMetadata(body: string): ProviderGatewayLogEvent["providerError"] {
+  // Provider bodies may echo resume text or prompts. Classify them in memory,
+  // but expose only bounded codes, category, and byte count to application logs.
   let code: string | undefined;
   let type: string | undefined;
   let detail = body.toLowerCase();
@@ -165,7 +167,10 @@ function providerErrorMetadata(body: string): ProviderGatewayLogEvent["providerE
       type = error.type?.slice(0, 120);
       detail = [detail, error.message, code, type].filter(Boolean).join(" ").toLowerCase();
     }
-  } catch {}
+  } catch {
+    // Non-JSON provider errors are expected; the bounded raw text still feeds
+    // the category classifier below and is never copied into the log event.
+  }
   const category = /quota|balance|credit|insufficient|余额|额度不足/.test(detail)
     ? "quota"
     : /capacity|overloaded|saturated|负载|饱和|上游/.test(detail)

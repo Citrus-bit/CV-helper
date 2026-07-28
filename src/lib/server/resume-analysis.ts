@@ -16,6 +16,9 @@ export function assertResumeAnalysisResponseForRequest(
   resume: ResumeDocument,
 ) {
   const result = ResumeAnalysisResponseSchema.parse(value);
+  // A late response for another revision is valid data but invalid for this
+  // request. Reject it here as well as on the client to prevent stale scores
+  // or suggestions from being attached to edited resume content.
   const scoreInvalid =
     result.resumeId !== resume.id ||
     result.resumeRevision !== resume.revision ||
@@ -60,6 +63,9 @@ export async function analyzeResumeRevisionWithAi(input: {
     { resume: input.resume, claims: input.claims },
     context,
   );
+  // Suggestions are intentionally generated after scoring: their priorities
+  // must explain the same scorecard that the user sees. Returning only after
+  // both calls succeed also prevents a partially analyzed revision.
   const suggestionResult = await invokeRequiredAiCapability(
     "resume.suggest",
     {

@@ -121,6 +121,9 @@ export async function POST(request: Request) {
       },
       planningContext,
     );
+    // The model selects and adapts only from traceable resume stories and the
+    // curated catalog. Keeping references in the request preserves provenance
+    // for generated questions without treating catalog text as instructions.
     const references = [...storyReferences, ...retrieved.data.questions];
     const plan = await invokeRequiredAiCapability(
       "interview.plan",

@@ -66,12 +66,16 @@ function signalsFor(input: JobVariantInput): RankingSignal[] {
   const claims = new Map(input.claims.map((claim) => [claim.id, claim]));
 
   return input.mappings.flatMap((mapping) => {
+    // Gaps and conflicts can drive coaching, but never resume content. Ranking
+    // uses only requirements already supported at least partially by evidence.
     if (mapping.status !== "met" && mapping.status !== "partial") return [];
     const requirement = requirements.get(mapping.requirementId);
     if (!requirement) return [];
     const mappedClaims = mapping.claimIds
       .map((id) => claims.get(id))
       .filter((claim): claim is Claim => Boolean(claim))
+      // Conflicting claims must be resolved by the user before they can affect
+      // which experience is promoted in a job-specific version.
       .filter((claim) => claim.status !== "conflicting");
     const terms = [
       ...requirement.keywords,

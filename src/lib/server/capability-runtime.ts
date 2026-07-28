@@ -59,6 +59,9 @@ function createDefaultServerRegistry() {
     console.error("ai_provider_gateway_configuration_error", {
       code: error instanceof ProviderGatewayConfigurationError ? error.code : "UNKNOWN",
     });
+    // Keep deterministic document and safety capabilities available when AI
+    // configuration is broken. Strict AI routes still fail closed because
+    // invokeRequiredAiCapability forbids this registry's baseline fallback.
     return createDefaultCapabilityRegistry();
   }
 }
@@ -122,6 +125,8 @@ export async function invokeRequiredAiCapability<
   context: CapabilityContext,
 ): Promise<CapabilityResult<BaselineCapabilityOutputMap[K]>> {
   try {
+    // Product conclusions must come from a declared v2+ provider capability;
+    // a structurally valid baseline result must never masquerade as AI output.
     const result = await serverCapabilityRegistry.invoke<
       BaselineCapabilityInputMap[K],
       BaselineCapabilityOutputMap[K]
