@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   ArrowRight,
   BriefcaseBusiness,
+  ChevronDown,
   Check,
   CircleDashed,
   Database,
@@ -107,7 +108,7 @@ export function JobWorkspace() {
     onSuccess: setJobMatch,
   });
 
-  function openResumeVersion(variantId: string | null) {
+  function openJobResumeVersion(variantId: string) {
     setResumeVariant(variantId);
     setResumePanel("templates");
     setPreviewMode("current");
@@ -129,93 +130,13 @@ export function JobWorkspace() {
                 tabIndex={-1}
                 className="text-xl font-semibold outline-none"
               >
-                目标岗位
+                匹配目标岗位
               </h1>
-              <p className="text-sm text-muted">当前 MVP 支持分析一份 JD</p>
+              <p className="text-sm text-muted">粘贴 JD，找出该加强的内容</p>
             </div>
           </div>
 
-          <fieldset disabled={mutation.isPending} className="mt-7">
-            <legend className="text-sm font-medium">岗位信息（可选）</legend>
-            <p className="mt-1 text-xs leading-5 text-muted">
-              填写后会校正 JD 自动解析结果，并用于岗位版命名。
-            </p>
-            <label
-              htmlFor="job-title"
-              className="mt-4 block text-xs font-medium text-ink"
-            >
-              职位名称
-            </label>
-            <input
-              id="job-title"
-              value={jobDraft.jobTitle}
-              maxLength={120}
-              readOnly={mutation.isPending}
-              onChange={(event) =>
-                updateJobDraft({ jobTitle: event.target.value })
-              }
-              placeholder="例如：高级产品经理"
-              className="mt-1.5 min-h-11 w-full rounded-[8px] border border-line bg-white px-3 text-sm shadow-sm outline-none transition-colors placeholder:text-muted focus:border-brand read-only:cursor-wait read-only:bg-[#f7f7f8]"
-            />
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <label className="block text-xs font-medium text-ink">
-                职级
-                <select
-                  value={jobDraft.seniority}
-                  onChange={(event) =>
-                    updateJobDraft({
-                      seniority: event.target
-                        .value as typeof jobDraft.seniority,
-                    })
-                  }
-                  className="mt-1.5 min-h-11 w-full rounded-[8px] border border-line bg-white px-3 text-sm font-normal shadow-sm outline-none transition-colors focus:border-brand disabled:cursor-wait disabled:bg-[#f7f7f8]"
-                >
-                  {seniorityOptions.map((option) => (
-                    <option
-                      key={option.value || "unspecified"}
-                      value={option.value}
-                    >
-                      {option.zh}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-xs font-medium text-ink">
-                求职语言
-                <select
-                  value={jobDraft.language}
-                  onChange={(event) =>
-                    updateJobDraft({
-                      language: event.target.value as "zh-CN" | "en-US",
-                    })
-                  }
-                  className="mt-1.5 min-h-11 w-full rounded-[8px] border border-line bg-white px-3 text-sm font-normal shadow-sm outline-none transition-colors focus:border-brand disabled:cursor-wait disabled:bg-[#f7f7f8]"
-                >
-                  <option value="zh-CN">中文</option>
-                  <option value="en-US">English</option>
-                </select>
-              </label>
-            </div>
-            <label
-              htmlFor="job-location"
-              className="mt-3 block text-xs font-medium text-ink"
-            >
-              工作地点
-            </label>
-            <input
-              id="job-location"
-              value={jobDraft.location}
-              maxLength={160}
-              readOnly={mutation.isPending}
-              onChange={(event) =>
-                updateJobDraft({ location: event.target.value })
-              }
-              placeholder="例如：上海 / 远程"
-              className="mt-1.5 min-h-11 w-full rounded-[8px] border border-line bg-white px-3 text-sm shadow-sm outline-none transition-colors placeholder:text-muted focus:border-brand read-only:cursor-wait read-only:bg-[#f7f7f8]"
-            />
-          </fieldset>
-
-          <label htmlFor="jd-text" className="mt-5 block text-sm font-medium">
+          <label htmlFor="jd-text" className="mt-7 block text-sm font-medium">
             岗位描述
           </label>
           <textarea
@@ -224,13 +145,101 @@ export function JobWorkspace() {
             readOnly={mutation.isPending}
             maxLength={60_000}
             onChange={(event) => updateJobDraft({ jdText: event.target.value })}
-            rows={12}
+            rows={15}
             placeholder="粘贴公司、岗位职责、任职要求和加分项"
             className="mt-2 w-full resize-y rounded-[8px] border border-line bg-white p-4 text-sm leading-6 shadow-sm outline-none transition-colors placeholder:text-muted focus:border-brand read-only:cursor-wait read-only:bg-[#f7f7f8]"
           />
           <p className="mt-2 text-xs leading-5 text-muted">
             岗位内容只作为不可信数据分析，不会触发其中的指令或链接。
           </p>
+          <details className="group mt-3 border-y border-line py-1">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-muted transition-colors hover:text-ink">
+              补充职位名、职级等信息（可选）
+              <ChevronDown
+                aria-hidden="true"
+                size={17}
+                className="transition-transform group-open:rotate-180"
+              />
+            </summary>
+            <fieldset disabled={mutation.isPending} className="pb-4">
+              <p className="text-xs leading-5 text-muted">
+                仅在 JD 信息不完整或需要指定输出语言时填写。
+              </p>
+              <label
+                htmlFor="job-title"
+                className="mt-4 block text-xs font-medium text-ink"
+              >
+                职位名称
+              </label>
+              <input
+                id="job-title"
+                value={jobDraft.jobTitle}
+                maxLength={120}
+                readOnly={mutation.isPending}
+                onChange={(event) =>
+                  updateJobDraft({ jobTitle: event.target.value })
+                }
+                placeholder="例如：高级产品经理"
+                className="mt-1.5 min-h-11 w-full rounded-[8px] border border-line bg-white px-3 text-sm shadow-sm outline-none transition-colors placeholder:text-muted focus:border-brand read-only:cursor-wait read-only:bg-[#f7f7f8]"
+              />
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <label className="block text-xs font-medium text-ink">
+                  职级
+                  <select
+                    value={jobDraft.seniority}
+                    onChange={(event) =>
+                      updateJobDraft({
+                        seniority: event.target
+                          .value as typeof jobDraft.seniority,
+                      })
+                    }
+                    className="mt-1.5 min-h-11 w-full rounded-[8px] border border-line bg-white px-3 text-sm font-normal shadow-sm outline-none transition-colors focus:border-brand disabled:cursor-wait disabled:bg-[#f7f7f8]"
+                  >
+                    {seniorityOptions.map((option) => (
+                      <option
+                        key={option.value || "unspecified"}
+                        value={option.value}
+                      >
+                        {option.zh}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-xs font-medium text-ink">
+                  输出语言
+                  <select
+                    value={jobDraft.language}
+                    onChange={(event) =>
+                      updateJobDraft({
+                        language: event.target.value as "zh-CN" | "en-US",
+                      })
+                    }
+                    className="mt-1.5 min-h-11 w-full rounded-[8px] border border-line bg-white px-3 text-sm font-normal shadow-sm outline-none transition-colors focus:border-brand disabled:cursor-wait disabled:bg-[#f7f7f8]"
+                  >
+                    <option value="zh-CN">中文</option>
+                    <option value="en-US">English</option>
+                  </select>
+                </label>
+              </div>
+              <label
+                htmlFor="job-location"
+                className="mt-3 block text-xs font-medium text-ink"
+              >
+                工作地点
+              </label>
+              <input
+                id="job-location"
+                value={jobDraft.location}
+                maxLength={160}
+                readOnly={mutation.isPending}
+                onChange={(event) =>
+                  updateJobDraft({ location: event.target.value })
+                }
+                placeholder="例如：上海 / 远程"
+                className="mt-1.5 min-h-11 w-full rounded-[8px] border border-line bg-white px-3 text-sm shadow-sm outline-none transition-colors placeholder:text-muted focus:border-brand read-only:cursor-wait read-only:bg-[#f7f7f8]"
+              />
+            </fieldset>
+          </details>
           <button
             type="button"
             disabled={jobDraft.jdText.trim().length < 30 || mutation.isPending}
@@ -248,7 +257,7 @@ export function JobWorkspace() {
             )}
             {mutation.isPending ? (
               <>
-                <span>正在建立证据矩阵</span>
+                <span>正在分析岗位</span>
                 <EstimatedProgressText
                   expectedDurationMs={estimatedDurations.jobMatch}
                   label="岗位匹配预估进度"
@@ -256,7 +265,7 @@ export function JobWorkspace() {
                 />
               </>
             ) : (
-              "分析岗位匹配"
+              "分析并生成岗位版"
             )}
           </button>
           {mutation.isError ? (
@@ -290,11 +299,11 @@ export function JobWorkspace() {
                   </p>
                   <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-success">
                     <ShieldCheck aria-hidden="true" size={15} />
-                    真实 AI 已验证：JD 解析与岗位匹配
+                    AI 已完成岗位分析
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs font-medium text-muted">证据覆盖率</p>
+                  <p className="text-xs font-medium text-muted">简历覆盖度</p>
                   <p className="mt-1 text-[34px] font-semibold tabular-nums leading-none">
                     {Math.round(jobMatch.coverage)}%
                   </p>
@@ -366,47 +375,59 @@ export function JobWorkspace() {
                           <p className="text-sm leading-6 text-muted">
                             {mapping.explanation}
                           </p>
-                          {mappedClaims.length > 0 ? (
-                            <div className="mt-3 border-l-2 border-[#b9d8fb] pl-3">
-                              <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
-                                <Quote aria-hidden="true" size={14} />
-                                对应简历声明
-                              </p>
-                              <ul className="mt-1.5 space-y-2">
-                                {mappedClaims.map((claim) => (
-                                  <li
-                                    key={claim.id}
-                                    className="text-xs leading-5 text-muted"
-                                  >
-                                    <q>{claim.text}</q>
-                                    <span className="ml-1.5 whitespace-nowrap text-[11px] font-medium text-ink">
-                                      {claimStatusLabel[claim.status]}
-                                    </span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          ) : null}
-                          {mappedEvidence.length > 0 ? (
-                            <div className="mt-3 border-l-2 border-[#b9dfc8] pl-3">
-                              <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
-                                <Database aria-hidden="true" size={14} />
-                                可核对证据
-                              </p>
-                              <ul className="mt-1.5 space-y-2">
-                                {mappedEvidence.map((evidence) => (
-                                  <li
-                                    key={evidence.id}
-                                    className="text-xs leading-5 text-muted"
-                                  >
-                                    <strong className="font-medium text-ink">
-                                      {evidence.label}：
-                                    </strong>
-                                    {evidence.content}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
+                          {mappedClaims.length > 0 || mappedEvidence.length > 0 ? (
+                            <details className="group mt-2">
+                              <summary className="inline-flex min-h-8 cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted hover:text-ink">
+                                查看匹配依据
+                                <ChevronDown
+                                  aria-hidden="true"
+                                  size={14}
+                                  className="transition-transform group-open:rotate-180"
+                                />
+                              </summary>
+                              {mappedClaims.length > 0 ? (
+                                <div className="mt-1 border-l-2 border-[#b9d8fb] pl-3">
+                                  <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
+                                    <Quote aria-hidden="true" size={14} />
+                                    对应简历声明
+                                  </p>
+                                  <ul className="mt-1.5 space-y-2">
+                                    {mappedClaims.map((claim) => (
+                                      <li
+                                        key={claim.id}
+                                        className="text-xs leading-5 text-muted"
+                                      >
+                                        <q>{claim.text}</q>
+                                        <span className="ml-1.5 whitespace-nowrap text-[11px] font-medium text-ink">
+                                          {claimStatusLabel[claim.status]}
+                                        </span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+                              {mappedEvidence.length > 0 ? (
+                                <div className="mt-3 border-l-2 border-[#b9dfc8] pl-3">
+                                  <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
+                                    <Database aria-hidden="true" size={14} />
+                                    可核对证据
+                                  </p>
+                                  <ul className="mt-1.5 space-y-2">
+                                    {mappedEvidence.map((evidence) => (
+                                      <li
+                                        key={evidence.id}
+                                        className="text-xs leading-5 text-muted"
+                                      >
+                                        <strong className="font-medium text-ink">
+                                          {evidence.label}：
+                                        </strong>
+                                        {evidence.content}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+                            </details>
                           ) : null}
                           {mapping.suggestedAction ? (
                             <p className="mt-1 text-xs font-medium leading-5 text-brand">
@@ -430,40 +451,40 @@ export function JobWorkspace() {
                         {jobMatch.variant.baseRevision + 1} · 更新目标岗位并优先展示匹配内容
                       </p>
                     </div>
-                    <span className="rounded-[6px] bg-white px-2.5 py-1 text-xs font-medium text-brand">
-                      {jobMatch.variant.changes.length} 项可审计变更
-                    </span>
                   </div>
-                  <ul className="mt-3 space-y-1.5 text-xs leading-5 text-muted">
-                    {jobMatch.variant.changes.map((change) => (
-                      <li key={change.id} className="flex gap-2">
-                        <Check
-                          aria-hidden="true"
-                          size={14}
-                          className="mt-0.5 shrink-0 text-success"
-                        />
-                        <span>{change.explanation}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  <details className="group mt-2">
+                    <summary className="inline-flex min-h-8 cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted hover:text-ink">
+                      查看 {jobMatch.variant.changes.length} 项调整
+                      <ChevronDown
+                        aria-hidden="true"
+                        size={14}
+                        className="transition-transform group-open:rotate-180"
+                      />
+                    </summary>
+                    <ul className="mt-1 space-y-1.5 text-xs leading-5 text-muted">
+                      {jobMatch.variant.changes.map((change) => (
+                        <li key={change.id} className="flex gap-2">
+                          <Check
+                            aria-hidden="true"
+                            size={14}
+                            className="mt-0.5 shrink-0 text-success"
+                          />
+                          <span>{change.explanation}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => openResumeVersion(jobMatch.variant!.id)}
+                      onClick={() => openJobResumeVersion(jobMatch.variant!.id)}
                       className="inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-[#075bbf]"
                     >
                       <FileOutput aria-hidden="true" size={17} />
                       {activeResumeVariantId === jobMatch.variant.id
-                        ? "继续查看岗位版"
-                        : "打开岗位版预览"}
+                        ? "继续预览岗位版"
+                        : "预览并下载岗位版"}
                       <ArrowUpRight aria-hidden="true" size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openResumeVersion(null)}
-                      className="inline-flex min-h-11 items-center gap-2 rounded-[8px] border border-line bg-white px-4 text-sm font-medium text-ink transition-colors hover:bg-[#f7f7f8]"
-                    >
-                      打开通用版
                     </button>
                   </div>
                 </div>

@@ -33,7 +33,7 @@ Next.js Node runtime
 
 未配置 `DOCUMENT_WORKER_URL` 时，PDF.js 与 Tesseract.js 运行在 Next.js Node runtime，不在浏览器执行。本地开发不要求 Docker或数据库；没有外部 AI 密钥时应用仍可启动，但上传与体验示例被禁用，不会生成本地模板分析。活动状态使用标签页级 `sessionStorage`，最近分析与可选原 PDF 使用 IndexedDB，两者在 24 小时后到期，并在应用运行期间或下次打开时清理。`TYPST_BIN` 默认指向项目内 CLI；`pnpm dev` 读取被 Git 忽略的 `.env.local`。
 
-App 顶层桌面边界在 hydration 后检查 `min-width: 1024px`。客户端 hydration 通过首帧占位和下一动画帧切换，避免服务端访问浏览器持久化状态，也避免页面长期停留在空白占位。窄屏只挂载设备提示，不挂载 Upload、AnalysisProgress、Workspace 或语音组件。1024px 以上使用单一顶栏三步导航和桌面文档/建议布局，不存在重复侧栏、底部导航或手机单列工作台。
+App 顶层桌面边界在 hydration 后检查 `min-width: 1024px`。客户端 hydration 通过首帧占位和下一事件循环切换，避免服务端访问浏览器持久化状态，也避免后台标签页因动画帧不调度而长期空白。窄屏只挂载设备提示，不挂载 Upload、AnalysisProgress、Workspace 或语音组件。1024px 以上使用单一顶栏三步导航和桌面文档/建议布局，不存在重复侧栏、底部导航或手机单列工作台。
 
 ### 2.2 已接通的隔离文档路径
 
@@ -112,7 +112,7 @@ worker 在调用 OCR 前按 85% 较小区域覆盖率去重，每页最多 4 个
 - 逻辑 EvidenceGraph：当前不是单独持久化对象，而由 Claim 的 `sourceBlockIds/evidenceAssetIds` 与 EvidenceAsset 的 `sourceBlockIds` 共同表达；生产 adapter 可据此物化为图或关系表。
 - `Suggestion`：`resumeRevision/sourceBlockIds/claimIds/kind/status/originalText/proposedText/rationale/beforeHash/patches/factRisk/interviewRisk`。
 - `ResumeChatContext`：版本化的长期摘要、已确认事实、最近修改和最多 100 条本地消息；每次请求只发送最近 10 条消息，并与当前简历 ID/revision 绑定。会话随活动状态进入 `sessionStorage`，随最近分析快照进入 IndexedDB；刷新恢复后仍按当前 revision 过滤可应用建议。
-- `JobDraft/JobPosting/JDRequirement`：可恢复的职位名、职级、地点、语言和原始 JD 草稿，以及结构化岗位要求。
+- `JobDraft/JobPosting/JDRequirement`：可恢复的原始 JD 草稿、按需展开的职位名/职级/地点/输出语言校正项，以及结构化岗位要求。
 - `RequirementEvidenceMap`：要求、证据、覆盖状态、解释和追问。
 - `ResumeVariant`：基线 revision 的岗位分支，不复制或覆盖原稿。
 - `InterviewStory`：已确认声明映射成的 STAR 训练材料。
@@ -291,7 +291,7 @@ baseline 检索先按语言、领域、岗位族、级别、题型和技能过�
 
 ## 10. 测试策略
 
-阶段 9 自动化验证通过 `typecheck`、lint、44 个文件 / 259 项 Vitest、34 项 document-worker pytest、3 项 loopback proxy pytest、生产构建和 `git diff --check`。浏览器回归覆盖：1024/1280/1440/1920px 首页与工作区无横向滚动或底部空洞；375/768/1023px 只显示设备提示且不挂载工作台；两个返回入口、历史恢复、流程门、JD 草稿/证据矩阵、面试设备检查/回答/追问恢复和 Professional 100/100、18/18 质量门均通过。拖拽状态以窗口级文件 `dragover` 的目标归属与真实坐标边界为真值，页面离开、`Escape`、drop、dragend 与 blur 负责收尾；激活重渲染、多次跨子元素、窗口目标、框外移动、真实 PDF 单次提交和监听器卸载由组件事件序列验证。Mac 锁定时 Finder 物理拖拽保留为人工验收项。Gitleaks 对历史、差异、未跟踪源码和提交消息均无发现。该结论仅覆盖固定 fixture、构建与 smoke，不等同生产 OCR 准确率、第三方安全认证或外部 AI 质量。
+阶段 9 自动化验证通过 `typecheck`、lint、44 个文件 / 259 项 Vitest、34 项 document-worker pytest、3 项 loopback proxy pytest、生产构建和 `git diff --check`。浏览器回归覆盖：1024/1280/1440/1920px 首页与工作区无横向滚动或底部空洞；375/768/1023px 只显示设备提示且不挂载工作台；顶栏返回、历史恢复、流程门、JD 草稿/证据矩阵、面试开始/回答/追问恢复和 Professional 100/100、18/18 质量门均通过。拖拽状态以窗口级文件 `dragover` 的目标归属与真实坐标边界为真值，页面离开、`Escape`、drop、dragend 与 blur 负责收尾；激活重渲染、多次跨子元素、窗口目标、框外移动、真实 PDF 单次提交和监听器卸载由组件事件序列验证。Mac 锁定时 Finder 物理拖拽保留为人工验收项。Gitleaks 对历史、差异、未跟踪源码和提交消息均无发现。该结论仅覆盖固定 fixture、构建与 smoke，不等同生产 OCR 准确率、第三方安全认证或外部 AI 质量。
 
 - 安全健康端点：4 项 Vitest 覆盖自包含 baseline 不发起 worker 探测、可用 isolated/enhanced 仅返回抽象字段、显式配置失效时 fail closed，以及 HTTP 响应为 `no-store` 且通过 Schema。当前本地 Docker 路径可用；Vercel 验证仍延期。
 - 契约：31 个 Capability 的 Zod/JSON Schema、权限、超时、取消、非法输出和 fallback/显式失败测试。

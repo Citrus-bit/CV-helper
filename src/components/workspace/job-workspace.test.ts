@@ -225,32 +225,24 @@ describe("JobWorkspace job variant workflow", () => {
     expect(
       screen.getByText("熟练使用 SQL 完成产品数据分析"),
     ).toBeInTheDocument();
+    await user.click(screen.getByText("查看匹配依据"));
     expect(screen.getByText("对应简历声明")).toBeInTheDocument();
     expect(
       screen.getByText("使用 SQL 完成漏斗分析", { selector: "q" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/第 1 页原文：/)).toBeInTheDocument();
-    expect(
-      screen.getByText("真实 AI 已验证：JD 解析与岗位匹配"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("1 项可审计变更")).toBeInTheDocument();
+    ).toBeVisible();
+    expect(screen.getByText(/第 1 页原文：/)).toBeVisible();
+    expect(screen.getByText("AI 已完成岗位分析")).toBeInTheDocument();
+    await user.click(screen.getByText("查看 1 项调整"));
     expect(
       screen.getByText(/更新目标岗位并优先展示匹配内容/),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /打开岗位版预览/ }));
+    await user.click(screen.getByRole("button", { name: /预览并下载岗位版/ }));
     expect(useAppStore.getState()).toMatchObject({
       module: "resume",
       activeResumeVariantId: "variant-sql",
       resumePanel: "templates",
       previewMode: "current",
-    });
-
-    await user.click(screen.getByRole("button", { name: "打开通用版" }));
-    expect(useAppStore.getState()).toMatchObject({
-      module: "resume",
-      activeResumeVariantId: null,
-      resumePanel: "templates",
     });
   });
 
@@ -281,6 +273,9 @@ describe("JobWorkspace job variant workflow", () => {
     );
 
     const input = screen.getByRole("textbox", { name: "岗位描述" });
+    await user.click(
+      screen.getByText("补充职位名、职级等信息（可选）"),
+    );
     await user.type(
       screen.getByRole("textbox", { name: "职位名称" }),
       "高级数据产品经理",
@@ -290,7 +285,7 @@ describe("JobWorkspace job variant workflow", () => {
       "senior",
     );
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "求职语言" }),
+      screen.getByRole("combobox", { name: "输出语言" }),
       "zh-CN",
     );
     await user.type(screen.getByRole("textbox", { name: "工作地点" }), "上海");
@@ -298,7 +293,9 @@ describe("JobWorkspace job variant workflow", () => {
       input,
       "数据产品经理岗位，要求熟练使用 SQL 完成产品数据分析与跨团队交付。",
     );
-    await user.click(screen.getByRole("button", { name: "分析岗位匹配" }));
+    await user.click(
+      screen.getByRole("button", { name: "分析并生成岗位版" }),
+    );
 
     await waitFor(() => expect(api.matchJob).toHaveBeenCalledOnce());
     expect(api.matchJob).toHaveBeenCalledWith(
@@ -311,7 +308,7 @@ describe("JobWorkspace job variant workflow", () => {
     );
     expect(input).toHaveAttribute("readonly");
     expect(
-      screen.getByRole("button", { name: /正在建立证据矩阵/ }),
+      screen.getByRole("button", { name: /正在分析岗位/ }),
     ).toBeDisabled();
     expect(
       screen.getByRole("progressbar", { name: "岗位匹配预估进度" }),

@@ -466,13 +466,8 @@ describe("InterviewWorkspace session identity", () => {
     useAppStore.getState().setAnalysis(analysisFixture());
     renderWorkspace();
 
-    fireEvent.click(screen.getByRole("button", { name: "进入设备检查" }));
-    expect(apiMocks.createInterviewPlan).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("heading", { name: "设备与隐私检查" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("文字回答")).toBeInTheDocument();
-    expect(screen.getByText("隐私边界")).toBeInTheDocument();
+    expect(screen.getByText(/可以直接输入回答/)).toBeInTheDocument();
+    expect(screen.getByText(/本应用只接收转写文字/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "开始面试" }));
     await waitFor(() =>
       expect(apiMocks.createInterviewPlan).toHaveBeenCalledOnce(),
@@ -499,7 +494,6 @@ describe("InterviewWorkspace session identity", () => {
     useAppStore.getState().setAnalysis(analysisFixture());
     const mounted = renderWorkspace();
 
-    fireEvent.click(screen.getByRole("button", { name: "进入设备检查" }));
     fireEvent.click(screen.getByRole("button", { name: "开始面试" }));
     await waitFor(() => expect(apiMocks.createInterviewPlan).toHaveBeenCalledOnce());
 

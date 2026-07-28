@@ -3,7 +3,6 @@
 import { useMutation } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  ArrowLeft,
   Check,
   ChevronRight,
   Keyboard,
@@ -11,7 +10,6 @@ import {
   LockKeyhole,
   Mic,
   MicOff,
-  MonitorCheck,
   Quote,
   RotateCcw,
   Send,
@@ -134,10 +132,6 @@ function InterviewWorkspaceSession({
   const setPlan = useAppStore((state) => state.setInterviewPlan);
   const evaluations = useAppStore((state) => state.evaluations);
   const addEvaluation = useAppStore((state) => state.addEvaluation);
-  const setupStage = useAppStore((state) => state.interviewSetupStage);
-  const setSetupStage = useAppStore(
-    (state) => state.setInterviewSetupStage,
-  );
   const progress = useAppStore((state) => state.interviewProgress);
   const updateProgress = useAppStore(
     (state) => state.updateInterviewProgress,
@@ -349,138 +343,10 @@ function InterviewWorkspaceSession({
   }, [sessionIdentity]);
 
   if (!plan) {
-    const speechRecognitionAvailable = Boolean(
-      typeof window !== "undefined" &&
-        (window.SpeechRecognition ?? window.webkitSpeechRecognition),
-    );
-    if (setupStage === "device_check") {
-      return (
-        <div className="mx-auto grid min-h-[calc(100dvh-64px)] max-w-5xl place-items-center px-6 py-10">
-          <section
-            aria-labelledby="device-check-heading"
-            className="w-full max-w-3xl border-y border-line py-10"
-          >
-            <button
-              type="button"
-              onClick={() => {
-                planMutation.reset();
-                setSetupStage("intro");
-              }}
-              className="inline-flex min-h-11 items-center gap-2 rounded-[8px] px-2 text-sm font-medium text-muted transition-colors hover:bg-white hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
-            >
-              <ArrowLeft aria-hidden="true" size={17} />
-              返回面试说明
-            </button>
-            <div className="mt-5 grid grid-cols-[minmax(0,1fr)_300px] items-start gap-10">
-              <div>
-                <span className="grid size-12 place-items-center rounded-[8px] bg-ink text-white">
-                  <MonitorCheck aria-hidden="true" size={23} />
-                </span>
-                <h1
-                  id="device-check-heading"
-                  data-module-heading
-                  tabIndex={-1}
-                  className="mt-6 text-2xl font-semibold outline-none"
-                >
-                  设备与隐私检查
-                </h1>
-                <p className="mt-3 text-sm leading-7 text-muted">
-                  现在不会请求麦克风权限。开始面试后，仍可随时选择语音或直接输入文字。
-                </p>
-                <button
-                  type="button"
-                  disabled={planMutation.isPending}
-                  onClick={() => planMutation.mutate()}
-                  className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-5 text-sm font-medium text-white transition-colors hover:bg-[#075bbf] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-wait disabled:opacity-50"
-                >
-                  {planMutation.isPending ? (
-                    <LoaderCircle
-                      aria-hidden="true"
-                      size={18}
-                      className="animate-spin"
-                    />
-                  ) : (
-                    <ChevronRight aria-hidden="true" size={18} />
-                  )}
-                  {planMutation.isPending ? (
-                    <>
-                      <span>正在准备题目</span>
-                      <EstimatedProgressText
-                        expectedDurationMs={estimatedDurations.interviewPlan}
-                        label="面试题生成预估进度"
-                        className="text-white/85"
-                      />
-                    </>
-                  ) : (
-                    "开始面试"
-                  )}
-                </button>
-                {planMutation.isError ? (
-                  <p role="alert" className="mt-3 text-sm text-danger">
-                    无法生成面试计划，请重试。
-                  </p>
-                ) : null}
-              </div>
-              <dl className="divide-y divide-line rounded-[8px] border border-line bg-white px-4 shadow-sm">
-                <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 py-4">
-                  {speechRecognitionAvailable ? (
-                    <Check
-                      aria-hidden="true"
-                      size={19}
-                      className="mt-0.5 text-success"
-                    />
-                  ) : (
-                    <MicOff
-                      aria-hidden="true"
-                      size={19}
-                      className="mt-0.5 text-warning"
-                    />
-                  )}
-                  <div>
-                    <dt className="text-sm font-semibold">浏览器语音识别</dt>
-                    <dd className="mt-1 text-xs leading-5 text-muted">
-                      {speechRecognitionAvailable
-                        ? "当前浏览器可用；录音时再请求权限。"
-                        : "当前浏览器不可用，不影响文字回答。"}
-                    </dd>
-                  </div>
-                </div>
-                <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 py-4">
-                  <Keyboard
-                    aria-hidden="true"
-                    size={19}
-                    className="mt-0.5 text-brand"
-                  />
-                  <div>
-                    <dt className="text-sm font-semibold">文字回答</dt>
-                    <dd className="mt-1 text-xs leading-5 text-muted">
-                      始终可用，可直接输入或修正转写内容。
-                    </dd>
-                  </div>
-                </div>
-                <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 py-4">
-                  <LockKeyhole
-                    aria-hidden="true"
-                    size={19}
-                    className="mt-0.5 text-brand"
-                  />
-                  <div>
-                    <dt className="text-sm font-semibold">隐私边界</dt>
-                    <dd className="mt-1 text-xs leading-5 text-muted">
-                      本应用只接收转写文字，不保存音频；浏览器供应商可能处理语音。
-                    </dd>
-                  </div>
-                </div>
-              </dl>
-            </div>
-          </section>
-        </div>
-      );
-    }
     return (
       <div className="mx-auto grid min-h-[calc(100dvh-64px)] max-w-5xl place-items-center px-6 py-10">
-        <section className="grid w-full max-w-3xl grid-cols-[1fr_280px] items-center gap-10 border-y border-line py-10">
-          <div>
+        <section className="w-full max-w-2xl border-y border-line py-10">
+          <div className="max-w-xl">
             <span className="grid size-12 place-items-center rounded-[8px] bg-ink text-white">
               <Mic aria-hidden="true" size={23} />
             </span>
@@ -489,35 +355,64 @@ function InterviewWorkspaceSession({
               tabIndex={-1}
               className="mt-6 text-2xl font-semibold outline-none"
             >
-              开始证据驱动的模拟面试
+              开始模拟面试
             </h1>
             <p className="mt-3 text-sm leading-7 text-muted">
-              题目会结合最终简历{jobMatch ? "、目标 JD" : ""}
-              和证据薄弱点生成。默认 20 分钟，共 6 道主问题。
+              题目会结合你的简历{jobMatch ? "和目标岗位" : ""}
+              生成，共 6 道主问题，并在每次回答后给出具体建议。
             </p>
+            <div className="mt-5 space-y-3 border-y border-line py-4 text-sm leading-6 text-muted">
+              <p className="flex items-start gap-2">
+                <Keyboard
+                  aria-hidden="true"
+                  size={18}
+                  className="mt-1 shrink-0 text-brand"
+                />
+                可以直接输入回答；麦克风只是可选的转写方式。
+              </p>
+              <p className="flex items-start gap-2">
+                <LockKeyhole
+                  aria-hidden="true"
+                  size={18}
+                  className="mt-1 shrink-0 text-success"
+                />
+                本应用只接收转写文字，不保存音频；使用麦克风时，浏览器供应商可能处理语音。
+              </p>
+            </div>
             <button
               type="button"
-              onClick={() => setSetupStage("device_check")}
-              className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-5 text-sm font-medium text-white transition-colors hover:bg-[#075bbf] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+              disabled={planMutation.isPending}
+              onClick={() => planMutation.mutate()}
+              className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-5 text-sm font-medium text-white transition-colors hover:bg-[#075bbf] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-wait disabled:opacity-50"
             >
-              <ChevronRight aria-hidden="true" size={18} />
-              进入设备检查
+              {planMutation.isPending ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  size={18}
+                  className="animate-spin"
+                />
+              ) : (
+                <ChevronRight aria-hidden="true" size={18} />
+              )}
+              {planMutation.isPending ? (
+                <>
+                  <span>正在准备题目</span>
+                  <EstimatedProgressText
+                    expectedDurationMs={estimatedDurations.interviewPlan}
+                    label="面试题生成预估进度"
+                    className="text-white/85"
+                  />
+                </>
+              ) : (
+                "开始面试"
+              )}
             </button>
+            {planMutation.isError ? (
+              <p role="alert" className="mt-3 text-sm text-danger">
+                无法生成面试计划，请重试。
+              </p>
+            ) : null}
           </div>
-          <dl className="divide-y divide-line rounded-[8px] border border-line bg-white px-4">
-            <div className="flex items-center justify-between py-4">
-              <dt className="text-sm text-muted">主问题</dt>
-              <dd className="font-semibold">6 道</dd>
-            </div>
-            <div className="flex items-center justify-between py-4">
-              <dt className="text-sm text-muted">追问上限</dt>
-              <dd className="font-semibold">每题 2 次</dd>
-            </div>
-            <div className="flex items-center justify-between py-4">
-              <dt className="text-sm text-muted">反馈模式</dt>
-              <dd className="font-semibold">逐题教练</dd>
-            </div>
-          </dl>
         </section>
       </div>
     );
