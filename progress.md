@@ -335,3 +335,75 @@
 - 生产构建自动改写的 `next-env.d.ts` 已恢复为构建前内容，没有把生成噪声纳入交付。
 - 阶段 14 已完成；阶段 13 的真实 Provider 连续成功终验仍保持未完成，不因代码清理而改变状态。
 - 规划技能通用 `check-complete.sh` 不识别现有中文“阶段”清单，返回 `0/0 phases`；以 `task_plan.md` 阶段 14 的逐项勾选和本节验证结果为完成依据。
+## 2026-07-28 阶段 15：岗位定制版与原版一致问题
+
+- 用户报告完成岗位匹配后，“算法工程师定制版”的并排预览与原始 PDF 内容相同，无法看出任何定制结果。
+- 已开始沿 `job-match -> jobVariant -> template export -> PDF preview/download` 链路排查；保护当前工作区已有未提交修改，不回退或覆盖无关内容。
+- 下一步：核对岗位版 AST 的生成差异、Store 绑定 revision、模板导出输入和预览缓存键，并先建立失败回归样本。
+- 已确认 `TemplateExport` 在岗位版激活时将 `jobVariant.ast` 传给 `/api/render`，并按岗位版 ID/revision 隔离渲染结果。
+- 已定位主要根因：岗位版生成器只重排 section/entry，不处理 entry bullets，也不更新目标岗位 headline；对单 entry、多 bullet 的简历几乎不产生用户可见定制。
+- 首次实现补丁因 `document-preview.tsx` 已被现有工作区修改且旧文案不存在而校验失败，补丁未应用；已确认该文件的并排模式删除属于既有改动，本轮不回退，后续拆分修改。
+- 首次测试补丁因末尾误含空 hunk 被校验拒绝且未应用；已改为分别更新生成器测试与路由测试。
+- 首轮定向验证：`job-variant`、领域 Schema、`template-export`、`resume-workspace` 测试通过；`git diff --check` 通过。`job-workspace` 和 TypeScript 暴露当前工作区已有 `capabilityVersions` 必填但旧 fixture 未补齐的问题；路由整文件仍有岗位用例 500/400，正在隔离诊断。
+- 隔离运行岗位元信息路由用例已 1/1 通过，确认新 headline 变更可通过完整 API Schema；此前整文件失败来自当前 AI mock/fixture 状态串扰。
+- 当前已通过：岗位版生成器/领域 Schema/模板导出/简历工作区 4 文件 13 项测试，修改文件 ESLint，`git diff --check`。
+- 浏览器回归前的首次端口探测因 zsh `status` 为只读变量而退出；已记录并改用非保留变量名。
+- 浏览器已在 `http://localhost:3000/` 恢复本机示例简历，填写“算法工程师”岗位并发起分析；真实 Provider 本次失败关闭，页面明确提示未返回本地模板结果。下一步用不依赖 Provider 的渲染集成测试验证岗位 AST 进入 PDF。
+- 新增并通过 `job-variant-render.test.ts`：真实渲染通用版与算法岗位版 PDF，岗位版内容完整且 SHA 与通用版不同。仓库无 Prettier 可执行文件，该检查未运行；ESLint 与 `git diff --check` 通过。
+- 阶段 15 完成：岗位版会更新求职意向，并按岗位证据相关度重排 section、entry 和 bullet；每项变化可审计，经历事实原文不被改写。
+- 最终验证通过：`pnpm typecheck`、`pnpm lint`、62 个测试文件 / 365 项测试、`pnpm build`、真实双 PDF 差异/内容覆盖集成测试和 `git diff --check`。浏览器真实 Provider 本次失败关闭且 console 无 error/warn，外部 AI 成功态由隔离路由集成测试覆盖。
+## 2026-07-28 阶段 16：岗位与面试强制真实 AI
+
+- 已确认最近一次岗位请求为混合结果：JD 解析真实 AI 成功，岗位匹配 Provider 返回 429 后静默回退 baseline。
+- 已开始盘点岗位、面试计划、回答评估和教练反馈的服务端调用、响应契约、客户端校验及持久化路径。
+- 已确认五项需要失败关闭的 Provider 能力：`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate`、`answer.coach`；客户端当前没有任何岗位/面试来源版本校验。
+- 已确定采用与简历分析一致的 `capabilityVersions + @2.x+` 双边校验，并让缺少真实 AI 证明的旧岗位/面试缓存在恢复时失效。
+- 已定位本次真实 Provider 失败的格式差异：成功能力使用 `json_object`，失败的 `job.match` 使用 `json_schema`；将同步调整岗位/面试格式首选并保留本地严格 Schema 校验。
+- 已完成核心实现：岗位解析/匹配与面试计划/评估/教练全部改为 `invokeRequiredAiCapability`；JobMatch、InterviewPlan、Evaluation 响应新增必填 `@2.x+` 来源证明，客户端同时校验简历 revision、问题 ID 和 JD 解析来源；三项原本使用 `json_schema` 的岗位/面试能力改为优先 `json_object`。
+- 首次 TypeScript 检查仅失败于预期的旧测试夹具缺少新增来源字段；生产代码没有类型错误，正在更新合法夹具并补负向覆盖。
+- 已更新岗位工作区、模板导出、面试工作区、Store、revision、历史和最近记录测试夹具，使合法样本显式携带对应的 `@2.0.0` AI 来源。
+- 更新夹具后 TypeScript 已通过；仓库无 Prettier 可执行文件，后续按现有 ESLint 与差异检查验证格式。
+- 首轮定向测试为 9 文件通过、`routes.test.ts` 8 项失败；失败均来自旧测试基础设施尚未提供岗位/面试 Provider 输出或新必填 `resumeId/revision`，未发现生产实现回归。
+- 路由测试基础设施已升级为覆盖全部严格 Provider 能力的成功夹具，并补齐面试请求版本绑定；`routes.test.ts` 当前 19/19 通过。
+- 首次批量插入失败关闭测试因既有测试标题上下文不匹配而未应用；已改为按当前文件精确位置拆分补丁。
+- 已加入五项严格能力的路由失败关闭覆盖：`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate`、`answer.coach` 任一失败都必须返回 AI 专用错误且不产生部分成功响应。
+- TypeScript、`git diff --check` 通过，路由测试增至 24/24 通过，覆盖正常来源证明与五项严格能力失败关闭。
+- 客户端岗位、面试计划和面试评审解析已改为失败关闭并返回可读错误；缺少来源、baseline 来源或非法结构不会以内部 Schema 错误冒充成功。
+- 已增加客户端负向测试：拒绝 baseline 岗位匹配、拒绝目标 JD 缺少 AI 解析来源的面试计划、拒绝任一评审/教练来源为 baseline 的面试反馈。
+- `sessionStorage` 合并现与 IndexedDB 恢复一样先用正式 Schema 校验岗位结果；新增恢复测试会清除旧 `@1.x` 岗位结果、面试计划、评审和相关进度。
+- 岗位右侧解释与下一步现保留经过本地证据安全校验的 AI 针对性文案，不再统一覆盖为四种固定句式；新增 Provider 测试验证 AI 文案保留、覆盖率服务端重算及 `json_object` 请求格式。
+- 首次新增 Provider 测试仅因期望值误写失败：单项 `partial` 的覆盖率应为 50 而非 40，已按既有公式修正。
+- 已为岗位结果、面试题计划和每次回答评审增加“真实 AI 已验证”来源状态；该状态只在客户端正式 Schema 已验证全部必需 `@2.x+` 来源后渲染，并补组件断言。
+- 已补 `interview.plan` 与 `answer.coach` 的网关成功测试，明确锁定两项请求使用 `json_object` 且返回 `@2.0.0`、不使用 fallback。
+- README、PRD 与架构文档已改为八项严格用户 AI 能力失败关闭，删除岗位和面试仍可兼容回退的过期说明。
+- 聚焦验证通过：Provider 网关、岗位工作区、面试工作区共 3 个文件 / 49 项测试，TypeScript、定向 ESLint 与 `git diff --check` 均通过。
+- 全量验证当前通过：ESLint、62 个文件 / 365 项 Vitest、Next.js 生产构建；构建自动改写的 `next-env.d.ts` 已恢复为构建前内容。
+- 首次生产启动使用 `pnpm start -- -p 3005` 时，额外的 `--` 使 Next 将 `-p` 误判为项目目录并立即退出；未启动服务或发送 AI 请求，后续改用直接 Next CLI 命令。
+- 真实 `/api/demo` 已成功：`resume.score@2.0.0` HTTP 200；`resume.suggest@2.0.0` 首次输出被事实/PII 校验拒绝后按设计单次纠错成功，最终 HTTP 200、状态 `fresh`，没有 baseline。
+- 首次真实岗位请求在 Provider 调用前以 `failedCapability: jd.parse` 失败；定位为目标岗位地点元信息触发通用地址 PII 复检。已从 JD Provider 最小 DTO 删除独立地点字段，服务端仍在成功后写回用户填写值，并补回归测试。
+- 地点 DTO 修复后的首次聚焦测试 63/64 通过；剩余失败定位为“产品经理岗位”被宽松上下文姓名规则误判。已把“岗位/职位”加入非人名上下文词表，再次验证前不标记完成。
+- PII 误判修复后聚焦验证通过：Provider 网关与 API 路由共 2 个文件 / 64 项测试，TypeScript、定向 ESLint 和修复后生产构建均通过；`next-env.d.ts` 生成噪声已恢复。
+- 修复后第二次真实岗位请求已到达 `jd.parse@2.0.0` 并获得 HTTP 200，但 Provider 输出被本地事实/结构校验拒绝，接口仍正确返回 503。已为 JD 校验增加不含正文的原因代码日志，并强化逐字摘录、关键词、职位元数据和 ID 一致性提示。
+- 强化 JD 输出协议后的聚焦测试、TypeScript、ESLint 和第三版生产构建通过；构建生成的 `next-env.d.ts` 引用已恢复。
+- 第三次真实岗位请求中 `jd.parse@2.0.0` 与 `job.match@2.0.0` 均获得 HTTP 200；JD 已通过，岗位映射仍被本地证据安全校验拒绝，接口保持原子 503。已为岗位匹配增加不含正文的结构、引用、状态和数字原因代码。
+- 岗位原因日志的首次两次多文件补丁分别因代码格式化上下文、尚未存在的进度行而整体拒绝；已拆成独立小补丁，失败补丁均未改动文件。
+- 岗位匹配原因日志聚焦测试、TypeScript、ESLint 与第四版生产构建通过；构建生成的 `next-env.d.ts` 引用已恢复。
+- 第四次真实岗位请求仍为 `jd.parse`/`job.match` 双 HTTP 200 后在 `job.match` 本地失败，且没有命中新增映射原因日志，定位到更早的统一输出 PII 复检。已将 PII 失败拆成四类纯原因代码并增加能力级安全日志，拒绝策略不变。
+- PII 原因分类后的聚焦测试、TypeScript、ESLint 与第五版生产构建通过；构建生成的 `next-env.d.ts` 引用已恢复。
+- 第五次真实岗位请求确认失败原因为 `AMBIGUOUS_CONTEXT_NAME_PATTERN`。已仅对 `job.match` 输出关闭该宽松上下文兜底，并增加“输出含张三仍回退/严格调用失败”的测试；输入与所有直接 PII 规则保持不变。
+- 岗位输出 PII 边界修复后 2 个文件 / 65 项测试、TypeScript、ESLint 与第六版生产构建通过；构建生成的 `next-env.d.ts` 引用已恢复。
+- 第六次真实岗位请求通过输出 PII 复检，随后以 `CITED_CLAIM_NOT_RELEVANT` 失败关闭。已在每条 Provider JD 要求中加入服务端预计算的 `eligibleClaimIds`，并要求模型只引用该集合；证据相关性门槛未放宽。
+- `eligibleClaimIds` 聚焦测试、TypeScript、ESLint 与第七版生产构建通过；构建生成的 `next-env.d.ts` 引用已恢复。
+- 第七版真实岗位分析已成功：HTTP 200，来源为 `jd.parse@2.0.0` 与 `job.match@2.0.0`，7 条要求对应 7 条不同解释，覆盖率 37.2%，岗位版含 2 项变化。
+- 真实面试计划已成功：HTTP 200，来源为 `jd.parse@2.0.0` 与 `interview.plan@2.0.0`，返回 6 道唯一题目、20 分钟、每题最多 2 次追问。
+- 首次真实回答评审中 `answer.evaluate@2.0.0` 与 `answer.coach@2.0.0` 均 HTTP 200，但教练输出被本地校验拒绝，接口原子 503。已增加教练分项原因代码并强化数量、数字和事实提醒提示。
+- 教练输出协议聚焦测试、TypeScript、ESLint 与第八版生产构建通过；构建生成的 `next-env.d.ts` 引用已恢复。
+- 第二次真实回答评审中 `answer.evaluate@2.0.0` HTTP 200 后被本地校验拒绝。已将派生 `overallScore` 改为服务端按五维分数重算，并为其余身份、引用、数量和长度约束增加纯原因日志；安全约束未放宽。
+- 回答总分归一化后 2 个文件 / 65 项测试、TypeScript、ESLint 与第九版生产构建通过；构建生成的 `next-env.d.ts` 引用已恢复。
+- 第三次真实回答评审确认 `answer.evaluate` 失败原因为 `AMBIGUOUS_CONTEXT_NAME_PATTERN`。已只在评估/教练输出侧关闭该宽松兜底，并补“直接姓名张三仍失败关闭”测试；输入与直接 PII 规则保持不变。
+- 面试输出 PII 边界修复后 2 个文件 / 65 项测试、TypeScript、ESLint 与第十版生产构建通过；构建生成的 `next-env.d.ts` 引用已恢复。
+- 第四次真实回答评审已成功：HTTP 200，来源为 `answer.evaluate@2.0.0` 与 `answer.coach@2.0.0`，返回 5 个维度、3 项优势、5 项改进和 4 条教练动作，简历 ID/revision/问题 ID 均一致。
+- 阶段 16 最终全量验证通过：TypeScript、ESLint、62 个文件 / 367 项 Vitest、生产构建与 `git diff --check`。真实 Provider 回归完整覆盖简历分析、JD 解析、岗位匹配、面试计划、回答评估和教练反馈，所有严格能力均为 `@2.0.0`，无 baseline。
+- 已同步 README、PRD、架构与 `.codex/PROJECT.md`，并将阶段 16 标记完成；阶段 13 的“三次连续上传”独立验收仍保持未完成。
+- 最终生产健康为 `document: baseline/ready`、`ai: enhanced/ready`、`storage: client_local/ready`；`http://localhost:3005` 保持运行。
+- 文件规划技能声明的 `scripts/check-complete.sh` 在当前技能目录不存在，辅助检查返回 127；没有重复尝试，改以阶段清单、全量验证和真实 Provider 证据收口。

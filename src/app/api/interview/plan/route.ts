@@ -12,13 +12,15 @@ import {
 } from "@/lib/domain";
 import { createCapabilityContext } from "@/lib/server/analysis";
 import { enforceAiRateLimit } from "@/lib/server/ai-rate-limit";
-import { invokeCapability } from "@/lib/server/capability-runtime";
+import { invokeRequiredAiCapability } from "@/lib/server/capability-runtime";
 import { jsonResponse, parseJsonBody, routeErrorResponse } from "@/lib/server/http";
 import { loadInterviewQuestionCatalog } from "@/lib/server/interview-knowledge";
 
 export const runtime = "nodejs";
 
 const RequestSchema = z.object({
+  resumeId: z.string().min(1).max(160),
+  revision: z.number().int().nonnegative(),
   ast: ResumeASTSchema,
   claims: z.array(ClaimSchema).max(500),
   stories: z.array(InterviewStorySchema).max(100),
@@ -68,7 +70,7 @@ export async function POST(request: Request) {
       AI_CAPABILITY_TIMEOUT_MS,
     );
     const job = redaction
-      ? await invokeCapability("jd.parse", { text: guard!.data.safeText, locale: input.ast.locale }, jobContext)
+      ? await invokeRequiredAiCapability("jd.parse", { text: guard!.data.safeText, locale: input.ast.locale }, jobContext)
       : undefined;
     const storyQuestion = resumeQuestion(input);
     const skills = [
@@ -95,7 +97,7 @@ export async function POST(request: Request) {
       planningContext,
     );
     const candidates = storyQuestion ? [storyQuestion, ...retrieved.data.questions] : retrieved.data.questions;
-    const plan = await invokeCapability(
+    const plan = await invokeRequiredAiCapability(
       "interview.plan",
       { questions: candidates, durationMinutes: 20, questionCount: 6, maxFollowUpsPerQuestion: 2 },
       planningContext,
@@ -109,10 +111,16 @@ export async function POST(request: Request) {
       : plannedQuestions;
     return jsonResponse(
       InterviewPlanSchema.parse({
+        sourceResumeId: input.resumeId,
+        sourceResumeRevision: input.revision,
         questions,
         stories: input.stories,
         durationMinutes: plan.data.durationMinutes,
         maxFollowUps: plan.data.maxFollowUpsPerQuestion,
+        capabilityVersions: {
+          ...(job ? { "jd.parse": job.sourceVersion } : {}),
+          "interview.plan": plan.sourceVersion,
+        },
       }),
       {
         headers: {

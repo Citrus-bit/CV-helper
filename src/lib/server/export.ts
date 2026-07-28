@@ -289,6 +289,10 @@ function compact(text: string) {
     .replace(/[\s|｜·•●▪■,，.。:：;；()（）[\]{}<>《》/_\\\-]+/g, "");
 }
 
+function characterCount(text: string, character: string) {
+  return Array.from(text).filter((value) => value === character).length;
+}
+
 function entryDate(startDate?: string, endDate?: string, current?: boolean) {
   if (!startDate && !endDate) return "";
   return [startDate, endDate ?? (current ? "至今" : undefined)]
@@ -763,7 +767,15 @@ export async function auditRenderedPdf(
         rectangle.x < 24 ||
         rectangle.x + rectangle.width > rectangle.pageWidth - 24,
     );
-    const missingGlyphs = (extractedText.match(/[\uFFFD\u25A1]/g) ?? []).length;
+    const expectedText = sourceFragments.join("\n");
+    const replacementCharacters = characterCount(extractedText, "\uFFFD");
+    const unexpectedPlaceholderSquares = Math.max(
+      0,
+      characterCount(extractedText, "\u25A1") -
+        characterCount(expectedText, "\u25A1"),
+    );
+    const missingGlyphs =
+      replacementCharacters + unexpectedPlaceholderSquares;
     const artifactSha256 = createHash("sha256").update(pdf).digest("hex");
     const undersizedText = rectangles.filter(
       (rectangle) => rectangle.height < 7,
@@ -917,8 +929,8 @@ export async function auditRenderedPdf(
         "字形完整性",
         missingGlyphs ? "fail" : "pass",
         missingGlyphs
-          ? `文字层中发现 ${missingGlyphs} 个缺失字形标记。`
-          : "未发现替代字符或空方框。",
+          ? `文字层中发现 ${missingGlyphs} 个非原文的缺失字形标记。`
+          : "未发现导出过程新增的替代字符或空方框。",
       ),
       check(
         "font-embedding",

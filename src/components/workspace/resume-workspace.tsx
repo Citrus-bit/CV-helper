@@ -105,7 +105,7 @@ export function ResumeWorkspace() {
             </div>
             {viewingJobVariant ? (
               <p className="mt-1.5 text-center text-[11px] leading-4 text-muted">
-                仅重排已有内容 · 修改建议仍作用于通用版
+                更新求职意向并重排已有内容 · 不改写经历事实
               </p>
             ) : null}
           </div>

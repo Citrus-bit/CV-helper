@@ -6,7 +6,7 @@ Capability contract：`1.0`；builtin implementation：`1.0.0`
 
 ## 1. 架构目标
 
-系统围绕四条不变量设计：原始材料不可变、事实变更可追溯、专业能力可替换、用户可见的简历评分与建议必须来自真实 AI。业务层只依赖版本化 Capability 契约；baseline 继续服务确定性评测和非严格兼容能力，但不能进入上传、体验示例或 revision 重分析响应。供应商、模型和执行环境不能泄漏到前端或领域模型。
+系统围绕四条不变量设计：原始材料不可变、事实变更可追溯、专业能力可替换、用户可见的简历分析、岗位分析和面试推理必须来自真实 AI。业务层只依赖版本化 Capability 契约；baseline 继续服务确定性评测和非用户兼容能力，但不能进入这些严格用户流程的成功响应。供应商、模型和执行环境不能泄漏到前端或领域模型。
 
 架构思路参考 [GresonKwan/JobOK](https://github.com/GresonKwan/JobOK) 固定提交 `c5da0c6a6c9936b640a202c78cdd6e64b2981ba6`（MIT）的证据链/JD/面试一致性原则；实现代码、模板、提示策略和题库均独立编写。若未来实际复制或改编 MIT 内容，必须单独保留许可与版权声明。
 
@@ -26,7 +26,7 @@ Next.js Node runtime
   ├─ PDF.js native extraction + page PNG rendering
   ├─ offline Tesseract.js for scan/mixed pages
   ├─ static Capability Registry + deterministic baselines
-  ├─ optional provider gateway for ten allowlisted capabilities
+  ├─ server provider gateway for ten allowlisted capabilities
   └─ local Typst compilation
        └─ .tools/typst/typst (0.15.1)
 ```
@@ -67,9 +67,9 @@ Compose 默认只启动 Web、隔离 worker 和仅发布到宿主 `127.0.0.1` �
 | Document parse | PDF.js + offline Tesseract.js | **已接通**：`services/document-worker` Python API |
 | Render         | 项目内 Typst                  | **已接通**：优先 worker Typst，失败回退本地 Typst |
 | Speech         | Web Speech or editable text   | approved ASR adapter                              |
-| AI generation  | 上传评分/建议要求 server gateway | reviewed provider；严格 `@2.x+`，上传禁止 fallback |
+| AI generation  | 用户分析流程要求 server gateway | reviewed provider；八项严格能力要求 `@2.x+`，禁止 fallback |
 
-所有切换均通过环境配置和 adapter 注入完成，Resume AST 以及 Claim/EvidenceAsset/SourceBlock 的关联语义不变化。文档 parse/OCR/render 与 AI gateway 已接通；上传分析要求 gateway 处于 `enhanced/ready`。数据库、队列、对象存储和服务端 ASR 仍是未来目标。
+所有切换均通过环境配置和 adapter 注入完成，Resume AST 以及 Claim/EvidenceAsset/SourceBlock 的关联语义不变化。文档 parse/OCR/render 与 AI gateway 已接通；上传、岗位和面试分析要求 gateway 处于 `enhanced/ready`，并在每次响应中再次验证能力来源。数据库、队列、对象存储和服务端 ASR 仍是未来目标。
 
 ## 3. 核心数据流水线
 
@@ -162,7 +162,7 @@ type CapabilityResult<T> = {
 - `@/lib/baseline` 公共入口只暴露版本化契约与 Registry 创建/调用门面；裸 Capability 实现保持模块私有，业务调用方不能绕过 Registry 的输入校验、超时和 fallback 策略。
 - Registry 在服务器构建期静态注册，运行时 Map 以 capability ID 为 key，保存一个 baseline 和最多一个受控实现；每次调用显式选择 `fallbackPolicy: "allow" | "forbid"`，默认 `allow` 保持非关键能力兼容。用户输入不能注册代码；`provider_gateway` 仅允许固定生成式能力名单。
 - Descriptor 与 Skill manifest 在启用前验证；CapabilityContext 不含数据库、对象存储或模型密钥。
-- `forbid` 模式缺少 extension 或 extension 超时、异常、输出 Schema 非法时直接失败，不执行 baseline，也不返回 `usedFallback: true`。上传、示例和 revision 重分析中的 `resume.score`、`resume.suggest` 固定使用该模式；取消请求继续直接传播。
+- `forbid` 模式缺少 extension 或 extension 超时、异常、输出 Schema 非法时直接失败，不执行 baseline，也不返回 `usedFallback: true`。`resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate`、`answer.coach` 的用户请求固定使用该模式；取消请求继续直接传播。
 - 写操作由业务 service 在 Capability 返回后执行。Skill 只计算结果，不能直接提交 revision 或访问任意对象键。
 - 前端只得到 `FeatureAvailability { id, available, mode, locales, fallbackAvailable }`。
 - 客户端 API 不读取 Zustand 全局状态补全请求；岗位匹配与面试请求必须由调用方显式传入 `resumeId/revision`，响应再按同一身份绑定，避免隐式状态和 API ↔ Store 循环依赖。
@@ -178,11 +178,11 @@ type CapabilityResult<T> = {
 ### 4.2 调用与回退
 
 1. 未配置 AI 时 Registry 仍保留内置 baseline 供评测和兼容能力使用，但上传页禁用上传与体验示例；严格调用器不会选择 baseline。
-2. `provider_gateway` 只增强十项能力：`resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate` 和 `answer.coach`。`invokeRequiredAiCapability()` 统一验证 `usedFallback === false`、Capability ID/来源一致、来源主版本不低于 2 及业务 Schema。两项 copy 能力仍按原兼容策略校验原文、术语、数字与事实；`resume.chat` 也禁止固定 baseline 冒充回复。
+2. `provider_gateway` 只增强十项能力：`resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate` 和 `answer.coach`。除两项 copy 能力外，八项用户可见推理能力都通过 `invokeRequiredAiCapability()` 统一验证 `usedFallback === false`、Capability ID/来源一致、来源主版本不低于 2 及业务 Schema；copy 仍按兼容策略校验原文、术语、数字与事实。
 3. Gateway 在 Next.js 服务端完成字段投影与 PII 清理，只从环境变量注入 URL、Key 和模型。前端 bundle、FeatureAvailability、日志与响应不包含供应商细节。
    Base URL 还必须命中代码内静态批准列表；系统不读取可配置的 `AI_API_ALLOWLIST`，避免部署者通过环境变量无审查扩权。
-4. 首次请求使用 JSON Schema；供应商明确不支持时只重试一次 `json_object`。返回值随后通过 canonical Zod Schema、引用、JSON Pointer、数字新增和事实证据检查。
-5. 严格评分/建议的超时、429/5xx、网络错误、非法输出或事实安全失败统一转为 `AI_ANALYSIS_UNAVAILABLE`，响应不包含部分结果；其他 `allow` 能力仍可回退 `builtin.<capabilityId>@1.0.0`。用户取消直接传播。
+4. Gateway 按能力选择响应格式：当前八项严格用户流程优先使用供应商已验证可用的 `json_object`，两项 copy 默认使用 JSON Schema；仅在供应商明确报告格式不支持时执行一次兼容格式重试。所有返回值仍通过 canonical Zod Schema、引用、JSON Pointer、数字新增和事实证据检查。
+5. 任一严格能力遇到未配置、超时、429/5xx、网络错误、非法输出或事实安全失败时统一转为 `AI_ANALYSIS_UNAVAILABLE`，原子接口不包含部分结果；只有显式 `allow` 的非严格能力可回退 `builtin.<capabilityId>@1.0.0`。用户取消直接传播。
 6. Provider 建议只返回精简候选；服务端根据 `editableTargets` 生成 ID、revision、状态、hash、来源块和 patch。部分无效候选丢弃，显式空数组成功；全部无效时携带安全原因代码纠错一次，第二次仍无效则严格失败。
 7. 每个新 revision 取消旧 AI 请求；响应只有在 ID/revision 仍匹配时才能替换分数与建议。旧分数在 `stale/refreshing/failed` 时不展示，JD 和面试入口保持禁用。
 8. 结构日志只记录 capability、版本、trace、generation attempt、response format、HTTP 状态、结果码、无效原因计数、耗时和用量，不记录业务正文、完整 prompt、模型名或密钥。
@@ -211,15 +211,15 @@ type CapabilityResult<T> = {
 - `POST /api/analyze`：接收 multipart PDF；完成解析、必要 OCR、分块、证据与 ATS 后，原子调用严格 AI 评分和建议。两项都成功才返回 `AnalysisBundle`。
 - `POST /api/resume-analysis`：最多 512 KB，接收当前 `ResumeDocument + Claim[]`，为同一 ID/revision 原子返回新的 AI `Scorecard + Suggestion[]`。
 - `POST /api/resume-suggestions`：兼容接口，内部复用同一严格评分/建议服务；当前前端 revision 流程不依赖它恢复本地建议。
-- `POST /api/job-match`：接收 Resume/Evidence/JD DTO，返回要求到证据矩阵。
+- `POST /api/job-match`：接收 Resume/Evidence/JD DTO；`jd.parse` 与 `job.match` 原子成功后返回要求到证据矩阵及两项 `@2.x+` 来源。服务端以最终岗位标题更新分支求职意向，并基于已映射证据稳定重排 section、entry 和 bullet；`headline_update` 与各级 reorder 都进入 `ResumeVariantChange`，不改写经历事实。
 - `POST /api/layout-recommend`：按 AST 内容量、目标页数和可选偏好返回三模板排序与推荐理由。
 - `POST /api/render`：接收 Resume AST、revision 与模板，返回 PDF base64、SHA-256 和质量报告。
 - `POST /api/export/download`：接收已预览产物及期望 SHA，服务器重跑 `export.audit` 后直接返回 PDF 字节。
-- `POST /api/interview/plan`：从本地题库、简历和 JD 生成训练计划。
+- `POST /api/interview/plan`：从本地题库、简历和可选 JD 生成训练计划；有 JD 时同时要求 `jd.parse@2.x+`，计划要求 `interview.plan@2.x+`。
 - `POST /api/interview/transcribe`：只标准化浏览器已识别的文字，不接收或保存音频。
-- `POST /api/interview/evaluate`：评审回答并执行简历口径检查。
+- `POST /api/interview/evaluate`：以 `answer.evaluate@2.x+` 和 `answer.coach@2.x+` 原子评审回答，再执行确定性的简历口径检查。
 
-当前 API 通过 Zod 校验输入并把 `request.signal` 传入 CapabilityContext；隔离文档响应另经 Zod 校验。上传和 revision 分析的评分/建议必须由 provider gateway 返回 `@2.x+`；没有有效配置时返回 503 而不是 baseline。真实供应商连续上传验收、持久化幂等键、资源所有权和队列 worker 恢复仍需按部署环境验证。
+当前 API 通过 Zod 校验输入并把 `request.signal` 传入 CapabilityContext；隔离文档响应另经 Zod 校验。简历、岗位和面试的严格 AI 响应必须由 provider gateway 返回各自 `@2.x+` 来源；服务端写入来源，客户端再次按能力、简历 ID/revision 和问题 ID 校验。没有有效配置或任一严格能力失败时返回 503 而不是 baseline。真实供应商连续验收、持久化幂等键、资源所有权和队列 worker 恢复仍需按部署环境验证。
 
 健康端点采用 `no-store` 响应。`ai: baseline/ready` 只表示应用与非严格兼容能力可运行，不是上传分析成功证明；上传页仅在 `enhanced/ready` 时开放提交，最终仍验证响应中的两个 `@2.x+` 来源。该端点不执行真实 AI 内容请求。
 

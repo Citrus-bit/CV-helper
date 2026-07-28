@@ -308,6 +308,61 @@ describe("OpenAI-compatible provider gateway", () => {
     );
   });
 
+  it("rejects AI resume text that contains export-unsafe placeholder characters", async () => {
+    const originalText =
+      resume.ast.sections[0].entries[0].bullets[0].normalize("NFKC");
+    const unsafe = {
+      suggestions: [
+        {
+          claimIds: ["claim-result"],
+          kind: "rewrite",
+          targetPath: "/sections/0/entries/0/bullets/0",
+          originalText,
+          proposedText: "□ 上线流程负责，交付周期缩短 20%.",
+          rationale: "调整语序并增加一个占位符号。",
+          affectedDimensions: ["clarity"],
+          factRisk: "none",
+          interviewRisk: "none",
+        },
+      ],
+    };
+    const corrected = {
+      suggestions: [
+        {
+          ...unsafe.suggestions[0],
+          proposedText: "上线流程负责，交付周期缩短 20%.",
+          rationale: "调整语序，让动作与结果更直接。",
+        },
+      ],
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(completionResponse(unsafe))
+      .mockResolvedValueOnce(completionResponse(corrected));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    const result = await registry.invoke<unknown, { suggestions: Suggestion[] }>(
+      "resume.suggest",
+      { resume, claims },
+      context(),
+      { fallbackPolicy: "forbid" },
+    );
+
+    expect(result.data.suggestions[0]?.proposedText).toBe(
+      "上线流程负责，交付周期缩短 20%.",
+    );
+    const secondRequest = JSON.parse(
+      String(fetchMock.mock.calls[1][1]?.body),
+    );
+    expect(secondRequest.messages[0].content).toContain(
+      "UNSUPPORTED_EXPORT_CHARACTER",
+    );
+  });
+
   it("fails strict AI analysis after exactly two fully invalid generations", async () => {
     const originalText =
       resume.ast.sections[0].entries[0].bullets[0].normalize("NFKC");
@@ -1199,6 +1254,62 @@ describe("OpenAI-compatible provider gateway", () => {
     ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "jd.parse@1.0.0" });
   });
 
+  it("keeps target job location out of the provider DTO", async () => {
+    const jdText = "产品经理岗位，负责产品交付流程，要求熟悉 SQL 和数据分析。";
+    const providerOutput = {
+      jobPosting: {
+        id: "job-provider-location",
+        title: "高级产品经理",
+        locale: "zh-CN" as const,
+        rawText: jdText,
+      },
+      requirements: [
+        {
+          id: "requirement-provider-location",
+          jobPostingId: "job-provider-location",
+          category: "must_have" as const,
+          text: "要求熟悉 SQL 和数据分析",
+          keywords: ["SQL", "数据分析"],
+          importance: 1,
+        },
+      ],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(completionResponse(providerOutput));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    await expect(
+      registry.invoke(
+        "jd.parse",
+        {
+          text: jdText,
+          locale: "zh-CN",
+          title: "高级产品经理",
+          location: "上海",
+        },
+        {
+          ...context(),
+          grantedDataScopes: ["job_description"],
+        },
+        { fallbackPolicy: "forbid" },
+      ),
+    ).resolves.toMatchObject({
+      usedFallback: false,
+      sourceVersion: "jd.parse@2.0.0",
+    });
+
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const dto = JSON.parse(requestBody.messages[1].content);
+    expect(dto).toMatchObject({ title: "高级产品经理" });
+    expect(dto).not.toHaveProperty("location");
+    expect(requestBody.messages[0].content).toContain(
+      "verbatim contiguous excerpt",
+    );
+  });
+
   it("recomputes job mappings only from cited claims that are valid and relevant", async () => {
     const requirements = [{
       id: "requirement-kubernetes",
@@ -1234,7 +1345,209 @@ describe("OpenAI-compatible provider gateway", () => {
     ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "job.match@1.0.0" });
   });
 
-  it("hard-rejects inconsistent answer scores and unsafe coaching output", async () => {
+  it("preserves grounded requirement-specific AI mapping explanations", async () => {
+    const requirements = [{
+      id: "requirement-delivery",
+      jobPostingId: "job-delivery",
+      category: "responsibility" as const,
+      text: "负责优化产品上线交付流程",
+      keywords: ["交付", "流程"],
+      importance: 0.8,
+    }];
+    const explanation =
+      "简历提到上线流程和交付周期，但没有说明覆盖完整产品交付流程的职责范围。";
+    const suggestedAction =
+      "如有真实经历，补充本人负责的具体流程环节和可核实结果。";
+    const fetchMock = vi.fn().mockResolvedValue(completionResponse({
+      evidenceCoverageRate: 100,
+      maps: [{
+        requirementId: requirements[0].id,
+        status: "partial",
+        claimIds: [claims[0].id],
+        evidenceAssetIds: [],
+        explanation,
+        confidence: 0.84,
+        suggestedAction,
+      }],
+      disclaimer: "provider disclaimer",
+    }));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    await expect(
+      registry.invoke(
+        "job.match",
+        { requirements, claims, evidenceAssets: [] },
+        {
+          ...context(),
+          grantedDataScopes: ["job_description", "evidence_graph"],
+        },
+      ),
+    ).resolves.toMatchObject({
+      usedFallback: false,
+      sourceVersion: "job.match@2.0.0",
+      data: {
+        evidenceCoverageRate: 50,
+        maps: [{
+          status: "partial",
+          explanation,
+          suggestedAction,
+        }],
+      },
+    });
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).response_format.type,
+    ).toBe("json_object");
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const dto = JSON.parse(requestBody.messages[1].content);
+    expect(dto.requirements[0].eligibleClaimIds).toEqual([claims[0].id]);
+    expect(requestBody.messages[0].content).toContain("eligibleClaimIds");
+  });
+
+  it("still rejects direct contextual names in job-match output", async () => {
+    const requirements = [{
+      id: "requirement-private-output",
+      jobPostingId: "job-private-output",
+      category: "responsibility" as const,
+      text: "负责优化产品上线交付流程",
+      keywords: ["交付", "流程"],
+      importance: 1,
+    }];
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse({
+        evidenceCoverageRate: 50,
+        maps: [{
+          requirementId: requirements[0].id,
+          status: "partial",
+          claimIds: [claims[0].id],
+          evidenceAssetIds: [],
+          explanation: "我与张三合作核对了这项经历。",
+          confidence: 0.8,
+        }],
+        disclaimer: "仅表示证据覆盖程度。",
+      })),
+      logger: () => undefined,
+    });
+
+    await expect(
+      registry.invoke(
+        "job.match",
+        { requirements, claims, evidenceAssets: [] },
+        {
+          ...context(),
+          grantedDataScopes: ["job_description", "evidence_graph"],
+        },
+      ),
+    ).resolves.toMatchObject({
+      usedFallback: true,
+      sourceVersion: "job.match@1.0.0",
+    });
+  });
+
+  it("uses json_object for required interview planning and coaching", async () => {
+    const question = {
+      id: "question-json-object",
+      locale: "zh-CN" as const,
+      prompt: "请说明一次你改善交付流程的经历。",
+      category: "behavioral" as const,
+      difficulty: "intermediate" as const,
+      roleFamilies: ["product"],
+      skills: ["交付"],
+      followUps: ["你如何核实结果？"],
+      scoringAnchors: ["说明个人行动"],
+      source: "test",
+      generated: false,
+      referenceQuestionIds: [],
+    };
+    const answer = "我梳理了交付流程，并通过复盘减少等待，最终按期上线。";
+    const evaluation = {
+      questionId: question.id,
+      overallScore: 50,
+      dimensions: {
+        relevance: 10,
+        structure: 10,
+        evidence: 10,
+        roleCompetency: 10,
+        clarity: 10,
+      },
+      strengths: ["回答直接"],
+      improvements: ["补充核实方式"],
+      citedAnswerFragments: ["按期上线"],
+      followUpQuestion: "你如何核实结果？",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        completionResponse({
+          durationMinutes: 20,
+          maxFollowUpsPerQuestion: 2,
+          items: [{ order: 1, question, targetMinutes: 20 }],
+        }),
+      )
+      .mockResolvedValueOnce(
+        completionResponse({
+          headline: "先说明个人行动，再补充结果的核实方式。",
+          actions: ["说明如何识别等待节点。"],
+          improvedOutline: ["交代流程问题", "说明个人行动", "给出可核实结果"],
+          factSafetyReminder: "只使用真实且可核实的信息。",
+        }),
+      );
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    await expect(
+      registry.invoke(
+        "interview.plan",
+        {
+          questions: [question],
+          durationMinutes: 20,
+          questionCount: 1,
+          maxFollowUpsPerQuestion: 2,
+        },
+        {
+          ...context(),
+          grantedDataScopes: ["anonymous_metadata"],
+        },
+        { fallbackPolicy: "forbid" },
+      ),
+    ).resolves.toMatchObject({
+      usedFallback: false,
+      sourceVersion: "interview.plan@2.0.0",
+    });
+    await expect(
+      registry.invoke(
+        "answer.coach",
+        { question, answer, evaluation },
+        {
+          ...context(),
+          grantedDataScopes: ["interview_content", "evidence_graph"],
+        },
+        { fallbackPolicy: "forbid" },
+      ),
+    ).resolves.toMatchObject({
+      usedFallback: false,
+      sourceVersion: "answer.coach@2.0.0",
+    });
+
+    const requests = fetchMock.mock.calls.map(([, init]) =>
+      JSON.parse(String((init as RequestInit).body)),
+    );
+    expect(requests).toHaveLength(2);
+    expect(
+      requests.every(
+        (request) => request.response_format.type === "json_object",
+      ),
+    ).toBe(true);
+  });
+
+  it("normalizes derived answer scores and rejects unsafe evaluation or coaching output", async () => {
     const question = {
       id: "question-provider",
       locale: "zh-CN" as const,
@@ -1269,7 +1582,11 @@ describe("OpenAI-compatible provider gateway", () => {
         ...context(),
         grantedDataScopes: ["interview_content", "evidence_graph"],
       }),
-    ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "answer.evaluate@1.0.0" });
+    ).resolves.toMatchObject({
+      usedFallback: false,
+      sourceVersion: "answer.evaluate@2.0.0",
+      data: { overallScore: 50 },
+    });
 
     const emptyCitationRegistry = createServerCapabilityRegistry({
       environment: providerEnvironment,
@@ -1286,6 +1603,25 @@ describe("OpenAI-compatible provider gateway", () => {
         grantedDataScopes: ["interview_content", "evidence_graph"],
       }),
     ).resolves.toMatchObject({ usedFallback: true, sourceVersion: "answer.evaluate@1.0.0" });
+
+    const directNameRegistry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(completionResponse({
+        ...inconsistentEvaluation,
+        overallScore: 50,
+        strengths: ["我与张三合作核对了回答。"],
+      })),
+      logger: () => undefined,
+    });
+    await expect(
+      directNameRegistry.invoke("answer.evaluate", { question, answer, expectedKeywords: [] }, {
+        ...context(),
+        grantedDataScopes: ["interview_content", "evidence_graph"],
+      }),
+    ).resolves.toMatchObject({
+      usedFallback: true,
+      sourceVersion: "answer.evaluate@1.0.0",
+    });
 
     const dynamicFollowUp = {
       ...inconsistentEvaluation,
@@ -1450,6 +1786,30 @@ describe("OpenAI-compatible provider gateway", () => {
       usedFallback: true,
       sourceVersion: "copy.rewrite.zh@1.0.0",
       data: { original: privateText, rewritten: privateText },
+    });
+
+    const unsafeCharacterRegistry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: vi.fn().mockResolvedValue(
+        completionResponse({
+          original: "负责平台交付",
+          rewritten: "负责平台□交付",
+          changes: ["加入占位符号"],
+          addedFacts: false,
+        }),
+      ),
+      logger: () => undefined,
+    });
+    await expect(
+      unsafeCharacterRegistry.invoke(
+        "copy.rewrite.zh",
+        { text: "负责平台交付", preserveTerms: [] },
+        context(),
+      ),
+    ).resolves.toMatchObject({
+      usedFallback: true,
+      sourceVersion: "copy.rewrite.zh@1.0.0",
+      data: { rewritten: "负责平台交付" },
     });
   });
 

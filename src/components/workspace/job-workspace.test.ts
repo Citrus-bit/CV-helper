@@ -161,6 +161,10 @@ function jobMatchFixture(analysis: AnalysisBundle) {
     coverage: 100,
     summary: "证据覆盖率不代表录取概率。",
     riskFlags: [],
+    capabilityVersions: {
+      "jd.parse": "jd.parse@2.0.0",
+      "job.match": "job.match@2.0.0",
+    },
     variant: {
       id: "variant-sql",
       baseResumeId: analysis.resume.id,
@@ -226,7 +230,13 @@ describe("JobWorkspace job variant workflow", () => {
       screen.getByText("使用 SQL 完成漏斗分析", { selector: "q" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/第 1 页原文：/)).toBeInTheDocument();
+    expect(
+      screen.getByText("真实 AI 已验证：JD 解析与岗位匹配"),
+    ).toBeInTheDocument();
     expect(screen.getByText("1 项可审计变更")).toBeInTheDocument();
+    expect(
+      screen.getByText(/更新目标岗位并优先展示匹配内容/),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /打开岗位版预览/ }));
     expect(useAppStore.getState()).toMatchObject({

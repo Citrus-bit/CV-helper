@@ -137,7 +137,7 @@ function DraftPreview({ ast }: { ast: ResumeAST }) {
             {ast.contact.name || "姓名"}
           </p>
           {ast.contact.headline ? (
-            <p className="mt-1 text-[11px] font-medium text-[#14635b]">
+            <p className="mt-1 whitespace-pre-wrap break-words text-[11px] font-medium text-[#14635b]">
               {ast.contact.headline}
             </p>
           ) : null}

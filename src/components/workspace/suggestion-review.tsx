@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleHelp,
   FilePenLine,
+  LoaderCircle,
   Pencil,
   ShieldAlert,
   Sparkles,
@@ -21,7 +22,9 @@ import {
   type SuggestionKind,
 } from "@/lib/domain";
 import { useAppStore } from "@/lib/client/store";
+import { generateEvidenceRewrite } from "@/lib/client/api";
 import { safeAiRewriteSuggestions } from "@/lib/client/suggestions";
+import { resumeTextSafetyError } from "@/lib/resume-text-safety";
 import {
   EstimatedProgressText,
   estimatedDurations,
@@ -124,16 +127,64 @@ export function suggestionStatusMessage(suggestion: Suggestion) {
 
 function EvidenceDialog({ suggestion }: { suggestion: Suggestion }) {
   const claims = useAppStore((state) => state.analysis?.claims ?? []);
-  const confirmClaim = useAppStore((state) => state.confirmClaim);
+  const resume = useAppStore((state) => state.analysis?.resume);
+  const stageEvidenceRewrite = useAppStore(
+    (state) => state.stageEvidenceRewrite,
+  );
   const claim = claims.find((item) => suggestion.claimIds.includes(item.id));
+  const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState("");
   const validAnswer = evidenceAnswerIsValid(
     value,
     claim?.text ?? suggestion.originalText,
   );
 
+  async function generateRewrite() {
+    if (!resume || !validAnswer || generating) return;
+    setGenerating(true);
+    setGenerationError("");
+    try {
+      const result = await generateEvidenceRewrite({
+        resumeId: resume.id,
+        resumeRevision: resume.revision,
+        suggestionId: suggestion.id,
+        locale: resume.locale,
+        originalText: suggestion.originalText,
+        supplementalFacts: value.trim(),
+      });
+      const staged = stageEvidenceRewrite(
+        suggestion.id,
+        value,
+        result.rewrittenText,
+        result.sourceVersion,
+      );
+      if (!staged) {
+        throw new Error("当前建议已发生变化，请重新进行 AI 分析后再生成。");
+      }
+      setValue("");
+      setOpen(false);
+    } catch (error) {
+      setGenerationError(
+        error instanceof Error
+          ? error.message
+          : "AI 暂时无法生成改写，请稍后重试。",
+      );
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   return (
-    <Dialog.Root>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (generating) return;
+        setOpen(nextOpen);
+        if (nextOpen) setGenerationError("");
+      }}
+    >
       <Dialog.Trigger asChild>
         <button
           type="button"
@@ -147,10 +198,10 @@ function EvidenceDialog({ suggestion }: { suggestion: Suggestion }) {
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/45" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[85dvh] w-[calc(100%-32px)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-[8px] bg-white p-6 shadow-panel">
           <Dialog.Title className="text-lg font-semibold">
-            补充可核对的事实
+            补充事实，生成改写
           </Dialog.Title>
           <Dialog.Description className="mt-2 text-sm leading-6 text-muted">
-            只填写你真实完成的动作、方法或结果。没有准确数字时，可以保留非量化表述。
+            填写你真实完成的动作、方法、场景或结果，AI 会结合原文生成一段待审阅内容。
           </Dialog.Description>
           {suggestion.question ? (
             <div className="mt-5 rounded-[8px] border-l-2 border-brand bg-[#f3f8ff] px-3 py-2.5">
@@ -168,14 +219,14 @@ function EvidenceDialog({ suggestion }: { suggestion: Suggestion }) {
             className="mt-5 block text-sm font-medium"
             htmlFor={`evidence-${suggestion.id}`}
           >
-            你的核对结果
+            补充事实或背景
           </label>
           <textarea
             id={`evidence-${suggestion.id}`}
             value={value}
             onChange={(event) => setValue(event.target.value)}
             rows={6}
-            placeholder="填写真实、可在面试中说明的事实；不要直接重复原文。"
+            placeholder="例如：压测工具、并发量、样本接口、测试环境、统计周期，以及你实际负责的部分。"
             className="mt-2 w-full resize-y rounded-[8px] border border-line bg-white p-3 text-sm leading-6 outline-none focus:border-brand"
           />
           {!validAnswer && value.trim() ? (
@@ -183,20 +234,35 @@ function EvidenceDialog({ suggestion }: { suggestion: Suggestion }) {
               请回答上方问题并补充可核对信息，不能直接重复原文。
             </p>
           ) : null}
+          {generationError ? (
+            <p className="mt-2 text-xs leading-5 text-danger" role="alert">
+              {generationError}
+            </p>
+          ) : null}
           <div className="mt-6 flex justify-end gap-2">
-            <Dialog.Close className="min-h-11 rounded-[8px] px-4 text-sm font-medium text-muted hover:bg-[#f0f1f3]">
+            <Dialog.Close
+              disabled={generating}
+              className="min-h-11 rounded-[8px] px-4 text-sm font-medium text-muted hover:bg-[#f0f1f3] disabled:opacity-40"
+            >
               取消
             </Dialog.Close>
-            <Dialog.Close asChild>
-              <button
-                type="button"
-                disabled={!claim || !validAnswer}
-                onClick={() => claim && confirmClaim(claim.id, value)}
-                className="min-h-11 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf] disabled:opacity-40"
-              >
-                生成待审阅改写
-              </button>
-            </Dialog.Close>
+            <button
+              type="button"
+              disabled={!resume || !validAnswer || generating}
+              onClick={() => void generateRewrite()}
+              className="inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf] disabled:opacity-40"
+            >
+              {generating ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="animate-spin"
+                  size={17}
+                />
+              ) : (
+                <Sparkles aria-hidden="true" size={17} />
+              )}
+              {generating ? "AI 生成中" : "AI 生成待审阅改写"}
+            </button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
@@ -231,6 +297,7 @@ export function SuggestionReview() {
     () => safeAiRewriteSuggestions(analysis),
     [analysis],
   );
+  const manualTextError = editing ? resumeTextSafetyError(manualText) : null;
 
   const evidenceLabels = useMemo(() => {
     const claimIds = new Set(suggestion?.claimIds ?? []);
@@ -524,25 +591,32 @@ export function SuggestionReview() {
 
       <div className="border-t border-line bg-white px-5 py-4">
         {editing ? (
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                decideSuggestion(suggestion.id, "manual", manualText.trim());
-                setEditing(false);
-              }}
-              disabled={!manualText.trim()}
-              className="min-h-11 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf] disabled:opacity-40"
-            >
-              保存修改
-            </button>
-            <button
-              type="button"
-              onClick={() => setEditing(false)}
-              className="min-h-11 rounded-[8px] px-4 text-sm font-medium text-muted hover:bg-[#f0f1f3]"
-            >
-              取消
-            </button>
+          <div>
+            {manualTextError ? (
+              <p className="mb-2 text-xs leading-5 text-danger" role="alert">
+                {manualTextError}
+              </p>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  decideSuggestion(suggestion.id, "manual", manualText.trim());
+                  setEditing(false);
+                }}
+                disabled={!manualText.trim() || Boolean(manualTextError)}
+                className="min-h-11 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf] disabled:opacity-40"
+              >
+                保存修改
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditing(false)}
+                className="min-h-11 rounded-[8px] px-4 text-sm font-medium text-muted hover:bg-[#f0f1f3]"
+              >
+                取消
+              </button>
+            </div>
           </div>
         ) : suggestion.status !== "pending" ? (
           <p

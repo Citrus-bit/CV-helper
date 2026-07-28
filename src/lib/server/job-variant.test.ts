@@ -159,6 +159,90 @@ describe("buildJobVariant", () => {
     expect(result!.ast).not.toEqual(ast);
   });
 
+  it("visibly tailors a single-entry resume by updating the target role and bullet priority", () => {
+    const singleEntryAst = ResumeASTSchema.parse({
+      ...ast,
+      contact: {
+        ...ast.contact,
+        headline: "求职意向：后端开发实习生",
+      },
+      sections: [
+        {
+          id: "projects",
+          type: "projects",
+          title: "项目经历",
+          entries: [
+            {
+              id: "project-entry",
+              title: "业务分析平台",
+              current: false,
+              bullets: [
+                "负责跨团队需求沟通与项目排期",
+                "使用 SQL 完成漏斗分析",
+              ],
+              keywords: ["SQL", "漏斗分析"],
+              sourceBlockIds: ["sql-block"],
+            },
+          ],
+          sourceBlockIds: ["sql-block"],
+        },
+      ],
+    });
+
+    const result = buildJobVariant({
+      ast: singleEntryAst,
+      targetTitle: "数据产品经理",
+      requirements: [requirement],
+      mappings: [mapping],
+      claims: [claim],
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.ast.contact.headline).toBe("求职意向：数据产品经理");
+    expect(result!.ast.sections[0].entries[0].bullets).toEqual([
+      "使用 SQL 完成漏斗分析",
+      "负责跨团队需求沟通与项目排期",
+    ]);
+    expect(result!.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "headline_update",
+          path: "/contact/headline",
+          beforeText: "求职意向：后端开发实习生",
+          afterText: "求职意向：数据产品经理",
+        }),
+        expect.objectContaining({
+          kind: "bullet_reorder",
+          path: "/sections/by-id/projects/entries/by-id/project-entry/bullets",
+          requirementIds: [requirement.id],
+          claimIds: [claim.id],
+        }),
+      ]),
+    );
+    expect([...result!.ast.sections[0].entries[0].bullets].sort()).toEqual(
+      [...singleEntryAst.sections[0].entries[0].bullets].sort(),
+    );
+  });
+
+  it("creates a target-role variant even when existing content is already ordered", () => {
+    const result = buildJobVariant({
+      ast,
+      targetTitle: "资深产品负责人",
+      requirements: [],
+      mappings: [],
+      claims: [],
+    });
+
+    expect(result?.ast.contact.headline).toBe("资深产品负责人");
+    expect(result?.changes).toEqual([
+      expect.objectContaining({
+        kind: "headline_update",
+        requirementIds: [],
+        claimIds: [],
+      }),
+    ]);
+  });
+
   it("does not claim a variant when no safe order change exists", () => {
     const singleSection = ResumeASTSchema.parse({
       ...ast,

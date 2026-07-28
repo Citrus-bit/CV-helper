@@ -56,13 +56,15 @@ afterEach(() => {
 });
 
 describe("DocumentPreview parsing notices", () => {
-  it("keeps three preview modes and opens low-confidence OCR pages in the original PDF", async () => {
+  it("keeps the original and current preview modes and opens low-confidence OCR pages in the original PDF", async () => {
     const user = userEvent.setup();
     render(createElement(DocumentPreview));
 
     expect(screen.getByRole("button", { name: "原版 PDF" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "新版 PDF" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "并排对照" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "并排对照" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "原文定位" }),
     ).not.toBeInTheDocument();

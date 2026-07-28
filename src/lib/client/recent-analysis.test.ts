@@ -246,6 +246,9 @@ describe("recent analysis IndexedDB repository", () => {
       stories: [],
       durationMinutes: 20,
       maxFollowUps: 2,
+      capabilityVersions: {
+        "interview.plan": "interview.plan@2.0.0",
+      },
     };
     archived.module = "interview";
     archived.interviewPlan = plan;
@@ -269,6 +272,10 @@ describe("recent analysis IndexedDB repository", () => {
           followUpQuestion: "请说明个人行动。",
         },
         consistencyWarnings: [],
+        capabilityVersions: {
+          "answer.evaluate": "answer.evaluate@2.0.0",
+          "answer.coach": "answer.coach@2.0.0",
+        },
       },
     ];
     archived.interviewSetupStage = "intro";

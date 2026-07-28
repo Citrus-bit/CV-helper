@@ -32,28 +32,28 @@ Capability 契约：`1.0`；内置实现版本：`1.0.0`
 ### 无 Docker 的 TypeScript baseline
 
 - Web 与 API：Next.js/TypeScript，入口为 `src/app`。
-- Capability：服务器端静态白名单，内置确定性规则、模板和浏览器能力；无密钥时必须可降级。
+- Capability：服务器端静态白名单，内置确定性规则、模板和浏览器能力；无密钥时确定性能力可运行，八项严格 AI 用户流程必须明确不可用。
 - PDF 输入：未配置 `DOCUMENT_WORKER_URL` 时，Next.js Node runtime 使用 `pdfjs-dist` 原生读取文字层与归一化坐标；`scan` 和 `mixed` 页才调用服务器端 Tesseract.js 本地中英文模型。OCR 以整页 PNG 为输入，混合页在识别后按空间覆盖率和邻近文本去重；运行时不访问 CDN。
 - PDF 输出：项目内 Typst CLI `.tools/typst/typst`（`0.15.1`）编译三套真实、可搜索 PDF；预览与下载复用同一二进制产物。路径可由 `TYPST_BIN` 覆盖。
 - 状态：当前活动会话保存在标签页级 `sessionStorage`；最近分析以 IndexedDB 保存结构快照和可选本地 PDF Blob。两者都执行 24 小时 TTL，并在应用运行期间或下次打开时清理；不要求 PostgreSQL、Redis、MinIO、Python 或 Docker 才能启动。
 
-本地直接运行使用 `pnpm dev`，Next.js 自动读取被 Git 忽略的 `.env.local`。上传和体验示例的评分/建议要求在该私有文件中配置轮换后的 `AI_API_KEY`，并把 `AI_PROVIDER` 设为 `provider_gateway`；没有 Key 时应用可以启动，但上传与示例不可分析。不得把密钥写入 `.env.example`、代码或文档。
+本地直接运行使用 `pnpm dev`，Next.js 自动读取被 Git 忽略的 `.env.local`。简历分析、持续编辑、岗位分析和面试推理要求在该私有文件中配置轮换后的 `AI_API_KEY`，并把 `AI_PROVIDER` 设为 `provider_gateway`；没有 Key 时应用可以启动，但这些流程不能返回分析结果。不得把密钥写入 `.env.example`、代码或文档。
 
 ### 已接通的隔离文档路径与本地容器
 
 - 文档解析：配置 `DOCUMENT_WORKER_URL` 后，`/api/analyze` 把 PDF 发送到 `services/document-worker`，由 PDFium/pdfplumber 完成原生提取、页面分类、必要 OCR 和页面预览；返回值经 Zod 转换为同一 `DocumentParseOutput`。未配置时使用上一节的 TypeScript baseline；配置后若 worker 网络不可用、超时、解析失败或响应结构非法，会降级到同机 TypeScript baseline，并把降级 warning 展示给用户。文件摘要不一致、413 资源硬门和用户取消必须失败关闭，不能通过 fallback 绕过。
 - OCR：worker、镜像和 Compose 均默认使用本地 Tesseract CLI，语言为 `chi_sim+eng`；PaddleOCR 仅是通过构建参数、显式 `OCR_PROVIDER=paddleocr` 和预置本地模型启用的可选增强，禁止运行时下载模型。
 - OCR 资源门：worker 每页最多处理 4 个去重区域、每份文档最多 8 个区域，并限制并发、字符、单词、图片框、像素、TSV/文本输出和 block 展开；文档预算默认 45 秒（最大 60 秒），单次 Tesseract 默认 12 秒（最大 20 秒）。超限返回稳定 warning，不丢弃已取得的原生结果。
-- AI：允许的十项生成式能力已接入服务端 OpenAI-compatible provider gateway。上传、示例和 revision 重分析中的 `resume.score`、`resume.suggest` 使用 `fallbackPolicy: "forbid"`，必须同时返回 `@2.x+`；未配置、超时、限流、5xx、非法结构或事实安全失败时整体失败，不返回本地评分、模板建议或部分 AI 结果。`resume.chat` 同样不展示固定 baseline；本轮未要求改造的其他生成式能力保留 `allow` 兼容策略。建议 Provider 只返回精简候选，系统字段和 patch 由服务端生成，全部无效时只纠错重试一次。
+- AI：允许的十项生成式能力已接入服务端 OpenAI-compatible provider gateway。`resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate`、`answer.coach` 八项用户能力使用 `fallbackPolicy: "forbid"`，必须返回各自 `@2.x+`；未配置、超时、限流、5xx、非法结构或事实安全失败时对应操作整体失败，不返回 baseline 或部分 AI 结果。两项 copy 能力保留受事实校验约束的兼容策略。建议 Provider 只返回精简候选，系统字段和 patch 由服务端生成，全部无效时只纠错重试一次。
 - 渲染：配置 worker 时，Web 优先调用 `/render-preview`；失败时可回退 Web 本地 Typst。Web 运行镜像固定携带校验过的 Typst `0.15.1`、`font-noto-cjk` 和 `templates/typst` 下三套模板；worker 内 `/usr/local/bin/typst` 读取只读 `/app/templates/typst` 与同类 CJK 字体。两条路径使用同一三模板和质量硬门。
 - 容器边界：Compose 中 Web/worker 均为非 root、只读根文件系统、移除 Linux capabilities 并使用独立临时目录；worker 位于 internal backend 网络且无外网出口，并设置 CPU、内存、进程、文件大小和执行时限。
 - 取消边界：Node 的请求取消会停止等待并阻止陈旧结果提交，但 Python 已进入 `run_in_threadpool` 的同步 OCR/渲染任务不能被该 `AbortSignal` 立即终止；遗留计算仍由 worker deadline、子进程 timeout、并发和资源限额约束。
 - 本地启动：`docker-compose -f infra/docker-compose.yml up --build` 默认只启动 Web、worker 和只绑定 `127.0.0.1` 的受限 loopback proxy。proxy 默认限制 5 秒上游连接、240 秒整体空闲和 32 个并发连接。Compose 自动读取被 Git 忽略的 `.env`；AI Secret 只能放在该文件或进程环境中。
-- 本地健康检查：`GET /api/health` 只返回抽象状态，不含 URL、供应商、模型、密钥或错误正文。`ai: baseline/ready` 不代表上传分析可用；上传页只在 `enhanced/ready` 时开放提交，最终仍验证响应的评分与建议来源均为 `@2.x+`。
+- 本地健康检查：`GET /api/health` 只返回抽象状态，不含 URL、供应商、模型、密钥或错误正文。`ai: baseline/ready` 不代表严格 AI 流程可用；上传页只在 `enhanced/ready` 时开放提交，每次简历、岗位和面试响应仍独立验证所需来源均为 `@2.x+`。
 - 未来基础设施：PostgreSQL、Redis 和 MinIO 仅保留在 `future-infra` Compose profile，当前业务不依赖也不连接这些服务。
 - 切换方式：文档服务和 AI 通过 adapter + 环境配置切换，不改变领域模型或客户端协议。
 
-隔离文档解析、OCR、渲染 adapter 与十项 AI provider gateway 均已接入服务端 Capability 路径。没有有效 Provider 时上传、体验示例和编辑对话都会明确不可用；不能把 baseline 描述为已完成真实 AI 分析。PostgreSQL、Redis/BullMQ、MinIO/S3、服务端 ASR、Vercel/Private Blob/Hosted 模式与任何其他云部署仍是后续目标。
+隔离文档解析、OCR、渲染 adapter 与十项 AI provider gateway 均已接入服务端 Capability 路径。没有有效 Provider 时简历、岗位和面试的严格 AI 流程都会明确不可用；不能把 baseline 描述为已完成真实 AI 分析。PostgreSQL、Redis/BullMQ、MinIO/S3、服务端 ASR、Vercel/Private Blob/Hosted 模式与任何其他云部署仍是后续目标。
 
 ## Skill Extension Registry
 

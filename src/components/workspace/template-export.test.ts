@@ -134,6 +134,22 @@ describe("exportConfirmationBlocker", () => {
     expect(
       exportConfirmationBlocker({ ...valid, hardGatePassed: false }),
     ).toMatch(/致命导出错误/);
+    expect(
+      exportConfirmationBlocker({
+        ...valid,
+        hardGatePassed: false,
+        blockingChecks: [
+          {
+            id: "missing-glyphs",
+            label: "字形完整性",
+            status: "fail",
+            details: "发现非原文的缺失字形标记。",
+          },
+        ],
+      }),
+    ).toBe(
+      "当前 PDF 未通过“字形完整性”：发现非原文的缺失字形标记。",
+    );
   });
 });
 
@@ -218,6 +234,10 @@ describe("TemplateExport resume target", () => {
       coverage: 80,
       summary: "仅表示材料适配。",
       riskFlags: [],
+      capabilityVersions: {
+        "jd.parse": "jd.parse@2.0.0",
+        "job.match": "job.match@2.0.0",
+      },
       variant: {
         id: "variant-export",
         baseResumeId: "resume-export",

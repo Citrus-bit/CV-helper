@@ -31,7 +31,15 @@ import {
   JobMatchBundleSchema,
   RenderResponseSchema,
 } from "@/lib/client/contracts";
-import { FeatureAvailabilitySchema } from "@/lib/capabilities";
+import {
+  invokeBaselineCapability,
+  type BaselineCapabilityId,
+} from "@/lib/baseline";
+import {
+  FeatureAvailabilitySchema,
+  type CapabilityContext,
+  type CapabilityResult,
+} from "@/lib/capabilities";
 import type { InterviewQuestion } from "@/lib/domain";
 import { DEMO_RESUME_AST } from "@/lib/server/analysis";
 import { MAX_PDF_BYTES } from "@/lib/server/pdf";
@@ -47,38 +55,56 @@ const aiDimensionIds = [
   "language",
 ] as const;
 
+const invokeBaselineForProviderFixture = invokeBaselineCapability as unknown as (
+  id: BaselineCapabilityId,
+  input: unknown,
+  context: CapabilityContext,
+) => Promise<CapabilityResult<unknown>>;
+
+async function successfulAiFixture(
+  id: BaselineCapabilityId,
+  input: unknown,
+  context: CapabilityContext,
+) {
+  if (id !== "resume.score" && id !== "resume.suggest") {
+    const baseline = await invokeBaselineForProviderFixture(id, input, context);
+    return {
+      ...baseline,
+      sourceVersion: `${id}@2.0.0`,
+      usedFallback: false,
+    };
+  }
+  const resume = (input as { resume: { id: string; revision: number } }).resume;
+  return {
+    data:
+      id === "resume.score"
+        ? {
+            resumeId: resume.id,
+            resumeRevision: resume.revision,
+            total: 80,
+            summary: "测试 Provider 已完成 AI 分析。",
+            dimensions: aiDimensionIds.map((dimensionId) => ({
+              id: dimensionId,
+              label: dimensionId,
+              score: 10,
+              maxScore: 20,
+              evidence: [],
+              deductions: [],
+            })),
+          }
+        : { suggestions: [] },
+    confidence: 0.9,
+    evidenceReferences: [],
+    warnings: [],
+    sourceVersion: `${id}@2.0.0`,
+    durationMs: 1,
+    usedFallback: false,
+  };
+}
+
 function installSuccessfulAiFixture() {
   requiredAiMocks.invokeRequiredAiCapability.mockImplementation(
-    async (id: string, input: unknown) => {
-      const resume = (
-        input as { resume: { id: string; revision: number } }
-      ).resume;
-      return {
-        data:
-          id === "resume.score"
-            ? {
-                resumeId: resume.id,
-                resumeRevision: resume.revision,
-                total: 80,
-                summary: "测试 Provider 已完成 AI 分析。",
-                dimensions: aiDimensionIds.map((dimensionId) => ({
-                  id: dimensionId,
-                  label: dimensionId,
-                  score: 10,
-                  maxScore: 20,
-                  evidence: [],
-                  deductions: [],
-                })),
-              }
-            : { suggestions: [] },
-        confidence: 0.9,
-        evidenceReferences: [],
-        warnings: [],
-        sourceVersion: `${id}@2.0.0`,
-        durationMs: 1,
-        usedFallback: false,
-      };
-    },
+    successfulAiFixture,
   );
 }
 
@@ -319,6 +345,10 @@ describe.sequential("API routes", () => {
       "prompt.guard@1.0.0",
     );
     const result = JobMatchBundleSchema.parse(await response.json());
+    expect(result.capabilityVersions).toEqual({
+      "jd.parse": "jd.parse@2.0.0",
+      "job.match": "job.match@2.0.0",
+    });
     expect(result.requirements.length).toBeGreaterThan(0);
     expect(result.mappings).toHaveLength(result.requirements.length);
     expect(result.summary).toContain("不代表录取");
@@ -375,6 +405,16 @@ describe.sequential("API routes", () => {
       rawText: jdText,
     });
     expect(result.variant?.name).toBe("资深产品负责人定制版");
+    expect(result.variant?.ast.contact.headline).toBe("资深产品负责人");
+    expect(result.variant?.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "headline_update",
+          path: "/contact/headline",
+          afterText: "资深产品负责人",
+        }),
+      ]),
+    );
   });
 
   it("normalizes blank job metadata without overriding parsed defaults", async () => {
@@ -482,12 +522,59 @@ describe.sequential("API routes", () => {
     });
   });
 
+  it.each(["jd.parse", "job.match"] as const)(
+    "fails the whole job analysis when required AI capability %s fails",
+    async (failedCapability) => {
+      const analysis = await analyzedFixture();
+      requiredAiMocks.invokeRequiredAiCapability.mockImplementation(
+        async (id, input, context) => {
+          if (id === failedCapability) {
+            throw new AiAnalysisUnavailableError(
+              failedCapability,
+              "provider_error",
+              true,
+            );
+          }
+          return successfulAiFixture(id, input, context);
+        },
+      );
+
+      const response = await matchJob(
+        new Request("http://localhost/api/job-match", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jdText:
+              "算法工程师岗位，负责模型训练、评估与部署，要求熟悉 Python 和机器学习。",
+            resumeId: analysis.resume.id,
+            revision: analysis.resume.revision,
+            ast: analysis.resume.ast,
+            claims: analysis.claims,
+            evidence: analysis.evidence,
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: "AI_ANALYSIS_UNAVAILABLE",
+        failedCapability,
+      });
+    },
+  );
+
   it("retrieves six questions from the bilingual knowledge pack", async () => {
     const response = await planInterview(
       new Request("http://localhost/api/interview/plan", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ast: DEMO_RESUME_AST, claims: [], stories: [] }),
+        body: JSON.stringify({
+          resumeId: "resume-interview-plan",
+          revision: 0,
+          ast: DEMO_RESUME_AST,
+          claims: [],
+          stories: [],
+        }),
       }),
     );
     expect(response.status).toBe(200);
@@ -499,6 +586,44 @@ describe.sequential("API routes", () => {
       ),
     ).toBe(true);
     expect(result.maxFollowUps).toBe(2);
+    expect(result.capabilityVersions).toEqual({
+      "interview.plan": "interview.plan@2.0.0",
+    });
+  });
+
+  it("fails interview planning instead of returning a baseline plan", async () => {
+    requiredAiMocks.invokeRequiredAiCapability.mockImplementation(
+      async (id, input, context) => {
+        if (id === "interview.plan") {
+          throw new AiAnalysisUnavailableError(
+            "interview.plan",
+            "provider_error",
+            true,
+          );
+        }
+        return successfulAiFixture(id, input, context);
+      },
+    );
+
+    const response = await planInterview(
+      new Request("http://localhost/api/interview/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          resumeId: "resume-interview-plan-failure",
+          revision: 0,
+          ast: DEMO_RESUME_AST,
+          claims: [],
+          stories: [],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      code: "AI_ANALYSIS_UNAVAILABLE",
+      failedCapability: "interview.plan",
+    });
   });
 
   it("pins a resume-grounded story question first in the interview plan", async () => {
@@ -507,6 +632,8 @@ describe.sequential("API routes", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          resumeId: "resume-interview-plan",
+          revision: 0,
           ast: DEMO_RESUME_AST,
           claims: [],
           stories: [{
@@ -542,6 +669,8 @@ describe.sequential("API routes", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          resumeId: "resume-interview-evaluation",
+          revision: 0,
           question: interviewQuestion(
             "q-test",
             "Tell me about a measurable workflow improvement.",
@@ -567,6 +696,10 @@ describe.sequential("API routes", () => {
       actions: expect.any(Array),
       improvedOutline: expect.any(Array),
       factSafetyReminder: expect.any(String),
+    });
+    expect(result.capabilityVersions).toEqual({
+      "answer.evaluate": "answer.evaluate@2.0.0",
+      "answer.coach": "answer.coach@2.0.0",
     });
     expect(JSON.stringify(result)).not.toContain("UNTRUSTED_DOCUMENT_DATA");
   });
@@ -600,6 +733,8 @@ describe.sequential("API routes", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          resumeId: "resume-interview-evaluation",
+          revision: 0,
           question: interviewQuestion(
             "q-dedup",
             "Tell me about a measurable platform improvement.",
@@ -618,6 +753,48 @@ describe.sequential("API routes", () => {
       "关联简历声明本身仍待核对，请勿在回答中进一步扩大。",
     ]);
   });
+
+  it.each(["answer.evaluate", "answer.coach"] as const)(
+    "fails the whole interview review when required AI capability %s fails",
+    async (failedCapability) => {
+      requiredAiMocks.invokeRequiredAiCapability.mockImplementation(
+        async (id, input, context) => {
+          if (id === failedCapability) {
+            throw new AiAnalysisUnavailableError(
+              failedCapability,
+              "provider_error",
+              true,
+            );
+          }
+          return successfulAiFixture(id, input, context);
+        },
+      );
+
+      const response = await evaluateInterview(
+        new Request("http://localhost/api/interview/evaluate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            resumeId: "resume-interview-evaluation-failure",
+            revision: 0,
+            question: interviewQuestion(
+              "q-required-ai-failure",
+              "Tell me about a measurable workflow improvement.",
+            ),
+            answer:
+              "I mapped the workflow, coordinated the team, and documented the measurable result.",
+            claims: [],
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: "AI_ANALYSIS_UNAVAILABLE",
+        failedCapability,
+      });
+    },
+  );
 
   it("normalizes browser speech text through the transcription capability", async () => {
     const response = await transcribeInterview(

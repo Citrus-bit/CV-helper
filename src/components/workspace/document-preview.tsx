@@ -225,24 +225,17 @@ export function DocumentPreview() {
           className="flex rounded-[8px] bg-[#f0f1f3] p-1"
           aria-label="预览版本"
         >
-          {(["original", "current", "compare"] as const).map(
+          {(["original", "current"] as const).map(
             (value) => (
               <button
                 key={value}
                 type="button"
-                disabled={
-                  (value === "original" && !originalPdf) ||
-                  (value === "compare" && (!originalPdf || !currentPdf))
-                }
+                disabled={value === "original" && !originalPdf}
                 aria-pressed={mode === value}
                 onClick={() => setMode(value)}
                 className={`min-h-11 rounded-[6px] px-3 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${mode === value ? "bg-white text-ink shadow-sm" : "text-muted"}`}
               >
-                {value === "original"
-                  ? "原版 PDF"
-                  : value === "current"
-                      ? "新版 PDF"
-                      : "并排对照"}
+                {value === "original" ? "原版 PDF" : "新版 PDF"}
               </button>
             ),
           )}
@@ -317,56 +310,7 @@ export function DocumentPreview() {
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-auto p-6">
-        {mode === "compare" ? (
-          originalPdf && currentPdf && render ? (
-            <div
-              className="mx-auto grid max-w-[1440px] grid-cols-[repeat(auto-fit,minmax(min(360px,100%),1fr))] gap-4"
-              style={{ width: `${zoom * 100}%` }}
-            >
-              <div className="min-w-0">
-                <p className="mb-2 text-xs font-semibold text-muted">
-                  原始 PDF
-                </p>
-                <div className="aspect-[210/297] min-h-[520px] overflow-hidden bg-white shadow-panel">
-                  <iframe
-                    title="原始简历 PDF 预览"
-                    src={originalPdf}
-                    className="size-full border-0"
-                  />
-                </div>
-              </div>
-              <div className="min-w-0">
-                <p className="mb-2 text-xs font-semibold text-muted">
-                  {selectedTemplate} 新版 PDF
-                </p>
-                <div className="aspect-[210/297] min-h-[520px] overflow-hidden bg-white shadow-panel">
-                  <ClientPdfPreview
-                    key={render.sha256}
-                    artifactSha256={render.sha256}
-                    title={`当前简历 ${selectedTemplate} 模板预览`}
-                    iframeSrc={currentPdf}
-                    pdfBase64={render.pdfBase64}
-                    onVerified={handleVerifiedPreview}
-                  />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="mx-auto grid aspect-[210/297] max-w-[620px] place-items-center bg-white p-8 text-center shadow-panel">
-              <div>
-                <FileText
-                  aria-hidden="true"
-                  size={32}
-                  className="mx-auto text-muted"
-                />
-                <p className="mt-3 text-sm font-medium">需要重新生成并排预览</p>
-                <p className="mt-1 text-xs text-muted">
-                  内容变化后，新版 PDF 和旧确认都会失效。
-                </p>
-              </div>
-            </div>
-          )
-        ) : mode === "current" && render ? (
+        {mode === "current" && render ? (
           <div
             className="mx-auto h-[calc(100dvh-190px)] min-h-[560px] max-w-[900px] overflow-hidden bg-white shadow-panel"
             style={{ width: `${zoom * 100}%` }}

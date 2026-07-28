@@ -15,7 +15,7 @@ import {
 } from "@/lib/domain";
 import { createCapabilityContext } from "@/lib/server/analysis";
 import { enforceAiRateLimit } from "@/lib/server/ai-rate-limit";
-import { invokeCapability } from "@/lib/server/capability-runtime";
+import { invokeRequiredAiCapability } from "@/lib/server/capability-runtime";
 import { jsonResponse, parseJsonBody, routeErrorResponse } from "@/lib/server/http";
 import { buildJobVariant } from "@/lib/server/job-variant";
 
@@ -109,7 +109,7 @@ export async function POST(request: Request) {
       request.signal,
       AI_CAPABILITY_TIMEOUT_MS,
     );
-    const parsedJob = await invokeCapability(
+    const parsedJob = await invokeRequiredAiCapability(
       "jd.parse",
       {
         text: guardResult.data.safeText,
@@ -129,7 +129,7 @@ export async function POST(request: Request) {
       rawText: input.jdText,
     });
     const [matchResult, riskResult] = await Promise.all([
-      invokeCapability(
+      invokeRequiredAiCapability(
         "job.match",
         {
           requirements: parsedJob.data.requirements,
@@ -146,6 +146,7 @@ export async function POST(request: Request) {
     ]);
     const variantResult = buildJobVariant({
       ast: input.ast,
+      targetTitle: finalPosting.title,
       requirements: parsedJob.data.requirements,
       mappings: matchResult.data.maps,
       claims: input.claims,
@@ -178,10 +179,14 @@ export async function POST(request: Request) {
         coverage: matchResult.data.evidenceCoverageRate,
         summary: matchResult.data.disclaimer,
         riskFlags: risks,
+        capabilityVersions: {
+          "jd.parse": parsedJob.sourceVersion,
+          "job.match": matchResult.sourceVersion,
+        },
         variant,
         variantUnavailableReason: variant
           ? undefined
-          : "现有章节与经历顺序已经是当前证据下的最相关顺序，因此未生成无差异的岗位版。",
+          : "当前求职意向与内容顺序已经是现有证据下最相关的版本，因此未生成无差异的岗位版。",
       }),
       {
         headers: {

@@ -13,7 +13,7 @@ import {
 } from "@/lib/baseline/utils";
 import { createCapabilityContext } from "@/lib/server/analysis";
 import { enforceAiRateLimit } from "@/lib/server/ai-rate-limit";
-import { invokeCapability } from "@/lib/server/capability-runtime";
+import { invokeRequiredAiCapability } from "@/lib/server/capability-runtime";
 import {
   jsonResponse,
   parseJsonBody,
@@ -42,6 +42,8 @@ const QuestionTextSchema = QuestionRequestSchema.pick({
 });
 
 const RequestSchema = z.object({
+  resumeId: z.string().min(1).max(160),
+  revision: z.number().int().nonnegative(),
   question: QuestionRequestSchema,
   answer: z.string().trim().min(10).max(20_000),
   claims: z.array(ClaimSchema).max(500),
@@ -115,7 +117,7 @@ export async function POST(request: Request) {
       AI_CAPABILITY_TIMEOUT_MS,
     );
     const [evaluationResult, consistencyResult] = await Promise.all([
-      invokeCapability(
+      invokeRequiredAiCapability(
         "answer.evaluate",
         {
           question,
@@ -130,7 +132,7 @@ export async function POST(request: Request) {
         context,
       ),
     ]);
-    const coaching = await invokeCapability(
+    const coaching = await invokeRequiredAiCapability(
       "answer.coach",
       {
         question,
@@ -141,6 +143,8 @@ export async function POST(request: Request) {
     );
     return jsonResponse(
       EvaluationResponseSchema.parse({
+        sourceResumeId: input.resumeId,
+        sourceResumeRevision: input.revision,
         evaluation: {
           ...evaluationResult.data,
           followUpQuestion:
@@ -154,6 +158,10 @@ export async function POST(request: Request) {
         consistencyWarnings: dedupeConsistencyWarnings(
           consistencyResult.data.findings.map((finding) => finding.explanation),
         ),
+        capabilityVersions: {
+          "answer.evaluate": evaluationResult.sourceVersion,
+          "answer.coach": coaching.sourceVersion,
+        },
       }),
       {
         headers: {

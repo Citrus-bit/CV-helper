@@ -229,6 +229,10 @@ function evaluation(
       citedAnswerFragments: [],
     },
     consistencyWarnings: [],
+    capabilityVersions: {
+      "answer.evaluate": "answer.evaluate@2.0.0",
+      "answer.coach": "answer.coach@2.0.0",
+    },
   };
 }
 
@@ -255,6 +259,9 @@ function interviewPlanFixture(questionId = "question-1"): InterviewPlan {
     stories: [],
     durationMinutes: 20,
     maxFollowUps: 2,
+    capabilityVersions: {
+      "interview.plan": "interview.plan@2.0.0",
+    },
   };
 }
 
@@ -392,6 +399,9 @@ describe("interview evaluations", () => {
       stories: [],
       durationMinutes: 20,
       maxFollowUps: 2,
+      capabilityVersions: {
+        "interview.plan": "interview.plan@2.0.0",
+      },
     });
     useAppStore.getState().addEvaluation(first);
     useAppStore.getState().addEvaluation(duplicate);
@@ -431,6 +441,9 @@ describe("interview evaluations", () => {
       stories: [],
       durationMinutes: 20,
       maxFollowUps: 2,
+      capabilityVersions: {
+        "interview.plan": "interview.plan@2.0.0",
+      },
     });
 
     useAppStore.getState().addEvaluation(result);
@@ -443,6 +456,76 @@ describe("interview evaluations", () => {
 });
 
 describe("evidence confirmation", () => {
+  it("stages an AI rewrite from supplemental facts even when the suggestion has no linked claim", () => {
+    const analysis = analysisFixture();
+    analysis.claims = [];
+    analysis.evidence = [];
+    analysis.stories = [];
+    analysis.suggestions[0].claimIds = [];
+    const supplementalFacts =
+      "使用 JMeter 在 QPS 1000 的测试场景下完成压测。";
+    const rewrittenText =
+      "使用 JMeter 完成 QPS 1000 场景压测，验证发布流程的交付表现。";
+    useAppStore.getState().setAnalysis(analysis);
+
+    expect(
+      useAppStore.getState().stageEvidenceRewrite(
+        "suggestion-1",
+        supplementalFacts,
+        rewrittenText,
+        "copy.rewrite.zh@2.0.0",
+      ),
+    ).toBe(true);
+
+    const staged = useAppStore.getState().analysis!;
+    expect(staged.resume.revision).toBe(0);
+    expect(staged.suggestions[0]).toMatchObject({
+      kind: "rewrite",
+      status: "pending",
+      proposedText: rewrittenText,
+      claimIds: [expect.stringMatching(/^claim-user_/)],
+      patches: [
+        {
+          operation: "replace",
+          path: "/sections/0/entries/0/bullets/0",
+          value: rewrittenText,
+        },
+      ],
+    });
+    expect(staged.claims).toEqual([
+      expect.objectContaining({
+        id: staged.suggestions[0].claimIds[0],
+        text: "建设发布流程并支持团队交付",
+        status: "user_confirmed",
+      }),
+    ]);
+    expect(staged.evidence).toEqual([
+      expect.objectContaining({
+        kind: "user_statement",
+        content: supplementalFacts,
+        verifiedByUser: true,
+      }),
+    ]);
+    expect(staged.processing.capabilityVersions["copy.rewrite.zh"]).toBe(
+      "copy.rewrite.zh@2.0.0",
+    );
+
+    useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
+
+    const accepted = useAppStore.getState().analysis!;
+    expect(accepted.resume.ast.sections[0].entries[0].bullets[0]).toBe(
+      rewrittenText,
+    );
+    expect(accepted.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "user_statement",
+          content: supplementalFacts,
+        }),
+      ]),
+    );
+  });
+
   it("keeps the source claim, stages a precise rewrite, and applies it only after acceptance", () => {
     const original = analysisFixture();
     const confirmedText = "建设发布流程，将平均发布时间缩短 30%";

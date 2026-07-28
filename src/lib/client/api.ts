@@ -1,5 +1,6 @@
 import {
   AnalysisBundleSchema,
+  EvidenceRewriteResponseSchema,
   EvaluationResponseSchema,
   InterviewPlanSchema,
   JobMatchBundleSchema,
@@ -8,6 +9,8 @@ import {
   ResumeAnalysisResponseSchema,
   TranscriptionResponseSchema,
   type AnalysisBundle,
+  type EvidenceRewriteRequest,
+  type EvidenceRewriteResponse,
   type EvaluationResponse,
   type InterviewPlan,
   type JobMatchBundle,
@@ -149,6 +152,36 @@ export async function analyzeResumeRevision(
   return result;
 }
 
+export async function generateEvidenceRewrite(
+  input: EvidenceRewriteRequest,
+  signal?: AbortSignal,
+): Promise<EvidenceRewriteResponse> {
+  const response = await trackedFetch("/api/evidence-rewrite", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+    signal,
+  });
+  if (!response.ok) throw await apiError(response);
+  const result = EvidenceRewriteResponseSchema.parse(await response.json());
+  if (
+    result.resumeId !== input.resumeId ||
+    result.resumeRevision !== input.resumeRevision ||
+    result.suggestionId !== input.suggestionId ||
+    !/^copy\.rewrite\.(?:zh|en)@(?:[2-9]|\d{2,})\./.test(
+      result.sourceVersion,
+    )
+  ) {
+    throw new ApiError(
+      "AI 改写结果与当前建议不一致，请重新生成。",
+      502,
+      "INVALID_EVIDENCE_REWRITE",
+      true,
+    );
+  }
+  return result;
+}
+
 export async function sendResumeChatMessage(
   input: ResumeChatInput,
   signal?: AbortSignal,
@@ -193,7 +226,28 @@ export async function matchJob(input: {
     body: JSON.stringify(input),
   });
   if (!response.ok) throw await apiError(response);
-  return JobMatchBundleSchema.parse(await response.json());
+  const parsed = JobMatchBundleSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new ApiError(
+      "岗位 AI 分析未返回可验证的真实 AI 结果，请重试。",
+      502,
+      "INVALID_JOB_MATCH",
+      true,
+    );
+  }
+  const result = parsed.data;
+  if (
+    result.sourceResumeId !== input.resumeId ||
+    result.sourceResumeRevision !== input.revision
+  ) {
+    throw new ApiError(
+      "岗位分析结果与当前简历版本不一致，请重新分析。",
+      502,
+      "INVALID_JOB_MATCH",
+      true,
+    );
+  }
+  return result;
 }
 
 export async function createInterviewPlan(input: {
@@ -210,11 +264,29 @@ export async function createInterviewPlan(input: {
     body: JSON.stringify(input),
   });
   if (!response.ok) throw await apiError(response);
-  return InterviewPlanSchema.parse({
-    ...(await response.json()),
-    sourceResumeId: input.resumeId,
-    sourceResumeRevision: input.revision,
-  });
+  const parsed = InterviewPlanSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new ApiError(
+      "AI 面试计划缺少可验证的真实 AI 结果，请重试。",
+      502,
+      "INVALID_INTERVIEW_PLAN",
+      true,
+    );
+  }
+  const result = parsed.data;
+  if (
+    result.sourceResumeId !== input.resumeId ||
+    result.sourceResumeRevision !== input.revision ||
+    (input.jdText && !result.capabilityVersions["jd.parse"])
+  ) {
+    throw new ApiError(
+      "AI 面试计划与当前简历或岗位不一致，请重新生成。",
+      502,
+      "INVALID_INTERVIEW_PLAN",
+      true,
+    );
+  }
+  return result;
 }
 
 export async function evaluateAnswer(input: {
@@ -230,11 +302,29 @@ export async function evaluateAnswer(input: {
     body: JSON.stringify(input),
   });
   if (!response.ok) throw await apiError(response);
-  return EvaluationResponseSchema.parse({
-    ...(await response.json()),
-    sourceResumeId: input.resumeId,
-    sourceResumeRevision: input.revision,
-  });
+  const parsed = EvaluationResponseSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new ApiError(
+      "AI 面试评审缺少可验证的真实 AI 结果，请重试。",
+      502,
+      "INVALID_INTERVIEW_EVALUATION",
+      true,
+    );
+  }
+  const result = parsed.data;
+  if (
+    result.sourceResumeId !== input.resumeId ||
+    result.sourceResumeRevision !== input.revision ||
+    result.evaluation.questionId !== input.question.id
+  ) {
+    throw new ApiError(
+      "AI 面试评审与当前问题或简历版本不一致，请重新评审。",
+      502,
+      "INVALID_INTERVIEW_EVALUATION",
+      true,
+    );
+  }
+  return result;
 }
 
 export async function transcribeBrowserSpeech(input: {

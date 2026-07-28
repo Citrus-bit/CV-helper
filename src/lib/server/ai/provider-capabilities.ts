@@ -40,6 +40,7 @@ import {
   type Claim,
   type Suggestion,
 } from "@/lib/domain";
+import { resumeTextSafetyError } from "@/lib/resume-text-safety";
 
 import { OpenAiCompatibleGateway, ProviderGatewayError } from "./provider-gateway";
 import { PiiProjector } from "./pii-projection";
@@ -102,9 +103,13 @@ function projectorForInput<K extends ProviderGatewayCapabilityId>(id: K, input: 
   });
 }
 
-function assertNoProjectedPii(value: unknown, projector: PiiProjector): void {
+function assertNoProjectedPii(
+  value: unknown,
+  projector: PiiProjector,
+  options: { checkAmbiguousContextNames?: boolean } = {},
+): void {
   try {
-    projector.assertSafe(value);
+    projector.assertSafe(value, options);
   } catch (cause) {
     throw new ProviderGatewayError("INVALID_RESPONSE", undefined, { cause });
   }
@@ -377,7 +382,6 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
         locale: jobInput.locale,
         title: jobInput.title ? sanitize(jobInput.title) : undefined,
         company: jobInput.company ? sanitize(jobInput.company) : undefined,
-        location: jobInput.location ? sanitize(jobInput.location) : undefined,
       };
     }
     case "job.match": {
@@ -390,6 +394,13 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
           text: sanitize(requirement.text),
           keywords: requirement.keywords.map(sanitize),
           importance: requirement.importance,
+          eligibleClaimIds: matchInput.claims
+            .filter(
+              (claim) =>
+                claim.status !== "needs_evidence" &&
+                claimRelevance(requirement, claim).length > 0,
+            )
+            .map((claim) => claim.id),
         })),
         claims: matchInput.claims.map((claim) => minimalClaim(claim, sanitize)),
       };
@@ -540,6 +551,7 @@ function validateCopyRewriteOutput(
     (normalizedOriginal.length > 0 && normalizedRewrite.length === 0) ||
     output.rewritten.length > Math.max(80, projectedOriginal.length * 2 + 40) ||
     output.rewritten.length > 4_000 ||
+    resumeTextSafetyError(output.rewritten) !== null ||
     // Reversible PII tokens are intentionally not exposed to the provider. Preserve
     // the exact local text through the baseline instead of returning placeholders.
     redactionChangedInput
@@ -600,6 +612,12 @@ function validateSuggestionCandidate(
     typeof patch.value === "string"
       ? patch.value
       : reject("PATCH_VALUE_NOT_TEXT");
+  if (
+    replacement !== target.text &&
+    resumeTextSafetyError(replacement) !== null
+  ) {
+    reject("UNSUPPORTED_EXPORT_CHARACTER");
+  }
   const reconciledValue = replacement;
   const targetClaims = suggestion.claimIds
     .map((id) => claims.get(id))
@@ -781,6 +799,9 @@ function validateProviderSuggestionCandidate(
   const replacement = isRewrite
     ? candidate.proposedText?.trim() || reject("INVALID_REWRITE")
     : target.localOriginalText;
+  if (isRewrite && resumeTextSafetyError(replacement) !== null) {
+    reject("UNSUPPORTED_EXPORT_CHARACTER");
+  }
   if (
     isRewrite &&
     (replacement === target.originalText || candidate.question !== undefined)
@@ -943,7 +964,13 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
           })()
         : output;
   try {
-    assertNoProjectedPii(naturalLanguageOutput, projector);
+    assertNoProjectedPii(naturalLanguageOutput, projector, {
+      checkAmbiguousContextNames: ![
+        "job.match",
+        "answer.evaluate",
+        "answer.coach",
+      ].includes(id),
+    });
   } catch (error) {
     if (id === "resume.score") {
       console.warn("ai_resume_score_rejected", {
@@ -951,6 +978,14 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
       });
       throw new ProviderScoreOutputValidationError(["PII_OUTPUT"], error);
     }
+    console.warn("ai_provider_output_rejected", {
+      capabilityId: id,
+      reasonCodes: [
+        error instanceof ProviderGatewayError && error.cause instanceof Error
+          ? error.cause.message
+          : "PII_OUTPUT",
+      ],
+    });
     throw error;
   }
   switch (id) {
@@ -1079,23 +1114,56 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
       const expectedLocation = jobInput.location ? projector.redact(jobInput.location) : undefined;
       const groundedJobField = (value: string | undefined, expected: string | undefined) =>
         value === undefined || (expected ? normalizedGroundingText(value) === normalizedGroundingText(expected) : isGroundedFragment(value, sourceText));
+      const rejectionReasons = new Set<string>();
+      if (jobOutput.requirements.length > 30) {
+        rejectionReasons.add("TOO_MANY_REQUIREMENTS");
+      }
       if (
-        jobOutput.requirements.length > 30 ||
-        new Set(jobOutput.requirements.map((requirement) => requirement.id)).size !== jobOutput.requirements.length ||
-        jobOutput.jobPosting.locale !== jobInput.locale ||
-        !groundedJobField(jobOutput.jobPosting.title, expectedTitle) ||
-        !groundedJobField(jobOutput.jobPosting.company, expectedCompany) ||
-        !groundedJobField(jobOutput.jobPosting.location, expectedLocation) ||
-        !groundedJobField(jobOutput.jobPosting.employmentType, undefined) ||
-        !groundedJobField(jobOutput.jobPosting.seniority, undefined) ||
-        jobOutput.requirements.some(
-          (requirement) =>
-            requirement.jobPostingId !== jobOutput.jobPosting.id ||
-            !isGroundedFragment(requirement.text, sourceText) ||
-            requirement.keywords.length > 12 ||
-            requirement.keywords.some((keyword) => !isGroundedFragment(keyword, requirement.text)),
-        )
+        new Set(jobOutput.requirements.map((requirement) => requirement.id))
+          .size !== jobOutput.requirements.length
       ) {
+        rejectionReasons.add("DUPLICATE_REQUIREMENT_ID");
+      }
+      if (jobOutput.jobPosting.locale !== jobInput.locale) {
+        rejectionReasons.add("LOCALE_MISMATCH");
+      }
+      if (!groundedJobField(jobOutput.jobPosting.title, expectedTitle)) {
+        rejectionReasons.add("TITLE_NOT_GROUNDED");
+      }
+      if (!groundedJobField(jobOutput.jobPosting.company, expectedCompany)) {
+        rejectionReasons.add("COMPANY_NOT_GROUNDED");
+      }
+      if (!groundedJobField(jobOutput.jobPosting.location, expectedLocation)) {
+        rejectionReasons.add("LOCATION_NOT_GROUNDED");
+      }
+      if (!groundedJobField(jobOutput.jobPosting.employmentType, undefined)) {
+        rejectionReasons.add("EMPLOYMENT_TYPE_NOT_GROUNDED");
+      }
+      if (!groundedJobField(jobOutput.jobPosting.seniority, undefined)) {
+        rejectionReasons.add("SENIORITY_NOT_GROUNDED");
+      }
+      for (const requirement of jobOutput.requirements) {
+        if (requirement.jobPostingId !== jobOutput.jobPosting.id) {
+          rejectionReasons.add("REQUIREMENT_JOB_ID_MISMATCH");
+        }
+        if (!isGroundedFragment(requirement.text, sourceText)) {
+          rejectionReasons.add("REQUIREMENT_NOT_GROUNDED");
+        }
+        if (requirement.keywords.length > 12) {
+          rejectionReasons.add("TOO_MANY_KEYWORDS");
+        }
+        if (
+          requirement.keywords.some(
+            (keyword) => !isGroundedFragment(keyword, requirement.text),
+          )
+        ) {
+          rejectionReasons.add("KEYWORD_NOT_GROUNDED");
+        }
+      }
+      if (rejectionReasons.size > 0) {
+        console.warn("ai_jd_parse_rejected", {
+          reasonCodes: [...rejectionReasons],
+        });
         throw new ProviderGatewayError("INVALID_RESPONSE");
       }
       return {
@@ -1108,17 +1176,47 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
       const matchOutput = output as GatewayOutputMap["job.match"];
       const requirementIds = new Set(matchInput.requirements.map((requirement) => requirement.id));
       const claims = new Map(matchInput.claims.map((claim) => [claim.id, claim]));
+      const structuralReasons = new Set<string>();
+      if (matchOutput.maps.length !== requirementIds.size) {
+        structuralReasons.add("MAPPING_COUNT_MISMATCH");
+      }
       if (
-        matchOutput.maps.length !== requirementIds.size ||
-        new Set(matchOutput.maps.map((mapping) => mapping.requirementId)).size !== matchOutput.maps.length ||
-        matchOutput.maps.some(
-          (mapping) =>
-            !requirementIds.has(mapping.requirementId) ||
-            mapping.claimIds.some((claimId) => !claims.has(claimId)) ||
-            mapping.claimIds.length > 5 ||
-            mapping.evidenceAssetIds.length > 0,
-        )
+        new Set(matchOutput.maps.map((mapping) => mapping.requirementId))
+          .size !== matchOutput.maps.length
       ) {
+        structuralReasons.add("DUPLICATE_REQUIREMENT_MAPPING");
+      }
+      for (const mapping of matchOutput.maps) {
+        if (!requirementIds.has(mapping.requirementId)) {
+          structuralReasons.add("UNKNOWN_REQUIREMENT_ID");
+        }
+        if (mapping.claimIds.some((claimId) => !claims.has(claimId))) {
+          structuralReasons.add("UNKNOWN_CLAIM_ID");
+        }
+        if (mapping.claimIds.length > 3) {
+          structuralReasons.add("TOO_MANY_CLAIMS");
+        }
+        if (mapping.evidenceAssetIds.length > 0) {
+          structuralReasons.add("EVIDENCE_ASSET_ID_NOT_ALLOWED");
+        }
+        if (
+          mapping.explanation.trim().length === 0 ||
+          mapping.explanation.length > 800
+        ) {
+          structuralReasons.add("INVALID_EXPLANATION_LENGTH");
+        }
+        if (
+          mapping.suggestedAction !== undefined &&
+          (mapping.suggestedAction.trim().length === 0 ||
+            mapping.suggestedAction.length > 500)
+        ) {
+          structuralReasons.add("INVALID_ACTION_LENGTH");
+        }
+      }
+      if (structuralReasons.size > 0) {
+        console.warn("ai_job_match_rejected", {
+          reasonCodes: [...structuralReasons],
+        });
         throw new ProviderGatewayError("INVALID_RESPONSE");
       }
       const providerMaps = new Map(matchOutput.maps.map((mapping) => [mapping.requirementId, mapping]));
@@ -1127,41 +1225,83 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
         const ranked = providerMap.claimIds
           .map((claimId) => ({ claim: claims.get(claimId)!, overlap: claimRelevance(requirement, claims.get(claimId)!) }))
           .sort((left, right) => right.overlap.length - left.overlap.length);
-        if (ranked.some(({ claim, overlap }) => overlap.length === 0 || claim.status === "needs_evidence")) {
+        if (ranked.some(({ overlap }) => overlap.length === 0)) {
+          console.warn("ai_job_match_rejected", {
+            reasonCodes: ["CITED_CLAIM_NOT_RELEVANT"],
+          });
+          throw new ProviderGatewayError("INVALID_RESPONSE");
+        }
+        if (ranked.some(({ claim }) => claim.status === "needs_evidence")) {
+          console.warn("ai_job_match_rejected", {
+            reasonCodes: ["CITED_CLAIM_NEEDS_EVIDENCE"],
+          });
           throw new ProviderGatewayError("INVALID_RESPONSE");
         }
         const conflicts = ranked.filter(({ claim }) => claim.status === "conflicting");
         const usable = ranked.filter(({ claim }) => validFactClaim(claim));
-        const threshold = Math.min(2, Math.max(1, requirement.keywords.length || extractKeywords(requirement.text).length));
-        const status = conflicts.length
-          ? "conflict"
-          : usable[0]?.overlap.length >= threshold
-            ? "met"
-            : usable.length
-              ? "partial"
-              : "gap";
-        const selected = (status === "conflict" ? conflicts : usable).slice(0, 3);
-        const overlap = selected[0]?.overlap ?? [];
+        const status = providerMap.status;
+        const selected =
+          status === "conflict"
+            ? conflicts
+            : status === "gap"
+              ? []
+              : usable;
+        const selectedIds = new Set(selected.map(({ claim }) => claim.id));
+        const sourceNumbers = numericTokens(
+          [requirement.text, ...selected.map(({ claim }) => claim.text)].join(
+            " ",
+          ),
+        );
+        const providerNarrative = [
+          providerMap.explanation,
+          providerMap.suggestedAction ?? "",
+        ].join(" ");
+        const rejectionReasons = new Set<string>();
+        if (
+          selected.length !== providerMap.claimIds.length ||
+          providerMap.claimIds.some((claimId) => !selectedIds.has(claimId))
+        ) {
+          rejectionReasons.add("CITED_CLAIM_STATUS_MISMATCH");
+        }
+        if (status === "gap" && ranked.length > 0) {
+          rejectionReasons.add("GAP_CITES_CLAIM");
+        }
+        if (status === "conflict" && conflicts.length === 0) {
+          rejectionReasons.add("CONFLICT_WITHOUT_CONFLICTING_CLAIM");
+        }
+        if (
+          (status === "met" || status === "partial") &&
+          usable.length === 0
+        ) {
+          rejectionReasons.add("COVERAGE_WITHOUT_USABLE_CLAIM");
+        }
+        if (
+          (status === "met" || status === "partial") &&
+          conflicts.length > 0
+        ) {
+          rejectionReasons.add("COVERAGE_CITES_CONFLICTING_CLAIM");
+        }
+        if (
+          numericTokens(providerNarrative).some(
+            (number) => !sourceNumbers.includes(number),
+          )
+        ) {
+          rejectionReasons.add("NARRATIVE_ADDS_NUMBER");
+        }
+        if (rejectionReasons.size > 0) {
+          console.warn("ai_job_match_rejected", {
+            reasonCodes: [...rejectionReasons],
+          });
+          throw new ProviderGatewayError("INVALID_RESPONSE");
+        }
         return {
           requirementId: requirement.id,
           status,
           claimIds: selected.map(({ claim }) => claim.id),
           evidenceAssetIds: [],
-          explanation:
-            status === "met"
-              ? `简历证据覆盖关键词：${overlap.join("、")}`
-              : status === "partial"
-                ? `存在相关经历，但只覆盖：${overlap.join("、")}`
-                : status === "conflict"
-                  ? "相关简历声明存在待核对冲突。"
-                  : "当前简历中没有找到可追溯证据。",
-          confidence: status === "gap" ? 0.62 : status === "partial" ? 0.65 : 0.75,
-          suggestedAction:
-            status === "gap"
-              ? "如有真实经历，请补充具体行动与结果；没有则保留为能力缺口。"
-              : status === "partial"
-                ? "补充与该要求直接相关的方法或结果。"
-                : undefined,
+          explanation: providerMap.explanation.trim(),
+          confidence: providerMap.confidence,
+          suggestedAction: providerMap.suggestedAction?.trim(),
         } as const;
       });
       const totalWeight = matchInput.requirements.reduce((sum, requirement) => sum + requirement.importance, 0);
@@ -1210,19 +1350,52 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
       const evaluation = output as GatewayOutputMap["answer.evaluate"];
       const projectedAnswer = projector.redact(unwrapUntrustedDocumentText(answerInput.answer));
       const dimensionTotal = Object.values(evaluation.dimensions).reduce((sum, score) => sum + score, 0);
+      const rejectionReasons = new Set<string>();
+      if (evaluation.questionId !== answerInput.question.id) {
+        rejectionReasons.add("QUESTION_ID_MISMATCH");
+      }
+      if (evaluation.citedAnswerFragments.length > 5) {
+        rejectionReasons.add("TOO_MANY_CITATIONS");
+      }
       if (
-        evaluation.questionId !== answerInput.question.id ||
-        evaluation.citedAnswerFragments.length > 5 ||
         evaluation.citedAnswerFragments.some(
-          (fragment) => fragment.trim().length === 0 || !projectedAnswer.includes(fragment) || fragment.length > 500,
-        ) ||
-        evaluation.strengths.length > 8 ||
-        evaluation.improvements.length > 8 ||
-        [...evaluation.strengths, ...evaluation.improvements].some((item) => item.length > 500) ||
-        (evaluation.followUpQuestion !== undefined && !evaluation.followUpQuestion.trim()) ||
-        Math.abs(evaluation.overallScore - dimensionTotal) > 0.2
+          (fragment) =>
+            fragment.trim().length === 0 ||
+            !projectedAnswer.includes(fragment) ||
+            fragment.length > 500,
+        )
       ) {
+        rejectionReasons.add("INVALID_ANSWER_CITATION");
+      }
+      if (evaluation.strengths.length > 8) {
+        rejectionReasons.add("TOO_MANY_STRENGTHS");
+      }
+      if (evaluation.improvements.length > 8) {
+        rejectionReasons.add("TOO_MANY_IMPROVEMENTS");
+      }
+      if (
+        [...evaluation.strengths, ...evaluation.improvements].some(
+          (item) => item.length > 500,
+        )
+      ) {
+        rejectionReasons.add("FEEDBACK_TEXT_TOO_LONG");
+      }
+      if (
+        evaluation.followUpQuestion !== undefined &&
+        !evaluation.followUpQuestion.trim()
+      ) {
+        rejectionReasons.add("EMPTY_FOLLOW_UP");
+      }
+      if (rejectionReasons.size > 0) {
+        console.warn("ai_answer_evaluate_rejected", {
+          reasonCodes: [...rejectionReasons],
+        });
         throw new ProviderGatewayError("INVALID_RESPONSE");
+      }
+      if (Math.abs(evaluation.overallScore - dimensionTotal) > 0.2) {
+        console.info("ai_answer_evaluate_normalized", {
+          reasonCodes: ["OVERALL_SCORE_RECOMPUTED"],
+        });
       }
       return { ...evaluation, overallScore: dimensionTotal } as GatewayOutputMap[K];
     }
@@ -1237,19 +1410,55 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
         coachOutput.factSafetyReminder,
       ];
       const sourceNumbers = numericTokens(unwrapUntrustedDocumentText(coachInput.answer));
+      const rejectionReasons = new Set<string>();
       if (
-        Math.abs(coachInput.evaluation.overallScore - evaluationTotal) > 0.2 ||
-        coachOutput.headline.length < 1 ||
-        coachOutput.headline.length > 300 ||
-        coachOutput.actions.length < 1 ||
-        coachOutput.actions.length > 5 ||
-        coachOutput.improvedOutline.length < 2 ||
-        coachOutput.improvedOutline.length > 8 ||
-        new Set(coachOutput.actions).size !== coachOutput.actions.length ||
-        outputStrings.some((item) => item.trim().length === 0 || item.length > 500) ||
-        outputStrings.flatMap(numericTokens).some((number) => !sourceNumbers.includes(number)) ||
-        !/(?:真实|核实|验证|不.{0,4}(?:编造|虚构)|verify|do not invent|never invent|fabricat)/iu.test(coachOutput.factSafetyReminder)
+        Math.abs(coachInput.evaluation.overallScore - evaluationTotal) > 0.2
       ) {
+        rejectionReasons.add("EVALUATION_SCORE_MISMATCH");
+      }
+      if (
+        coachOutput.headline.length < 1 ||
+        coachOutput.headline.length > 300
+      ) {
+        rejectionReasons.add("INVALID_HEADLINE_LENGTH");
+      }
+      if (coachOutput.actions.length < 1 || coachOutput.actions.length > 5) {
+        rejectionReasons.add("INVALID_ACTION_COUNT");
+      }
+      if (
+        coachOutput.improvedOutline.length < 2 ||
+        coachOutput.improvedOutline.length > 8
+      ) {
+        rejectionReasons.add("INVALID_OUTLINE_COUNT");
+      }
+      if (new Set(coachOutput.actions).size !== coachOutput.actions.length) {
+        rejectionReasons.add("DUPLICATE_ACTION");
+      }
+      if (
+        outputStrings.some(
+          (item) => item.trim().length === 0 || item.length > 500,
+        )
+      ) {
+        rejectionReasons.add("INVALID_TEXT_LENGTH");
+      }
+      if (
+        outputStrings
+          .flatMap(numericTokens)
+          .some((number) => !sourceNumbers.includes(number))
+      ) {
+        rejectionReasons.add("COACHING_ADDS_NUMBER");
+      }
+      if (
+        !/(?:真实|核实|验证|不.{0,4}(?:编造|虚构)|verify|do not invent|never invent|fabricat)/iu.test(
+          coachOutput.factSafetyReminder,
+        )
+      ) {
+        rejectionReasons.add("MISSING_FACT_SAFETY_REMINDER");
+      }
+      if (rejectionReasons.size > 0) {
+        console.warn("ai_answer_coach_rejected", {
+          reasonCodes: [...rejectionReasons],
+        });
         throw new ProviderGatewayError("INVALID_RESPONSE");
       }
       return coachOutput as GatewayOutputMap[K];
@@ -1275,6 +1484,7 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
     "Preserve meaningful line breaks, numbered-item boundaries, and structural labels such as 技术栈： or 核心职责与实现： in proposedText. Never merge visually separate modules into one sentence.",
     "Do not generate IDs, revision values, statuses, hashes, sourceBlockIds, or patches; the server creates all system fields after validation.",
     "A rewrite may only rearrange factual words already present in originalText or cited valid claims; never introduce new numbers, achievements, responsibilities, tools, credentials, ranking, business scope, or implied ownership.",
+    "proposedText must use export-safe plain text. Never output placeholder squares, replacement characters, private-use glyphs, emoji, or invisible control and formatting characters.",
     "Omit bullets that are already strong or do not have a material, fully supported improvement; do not return use_as_is placeholders.",
   ].join(" "),
   "resume.chat": [
@@ -1286,13 +1496,13 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
     "A rewrite may use only facts in the current target text, cited valid claims, conversation.confirmedFacts, or this turn's confirmedFacts. Never invent or infer numbers, achievements, responsibilities, tools, credentials, rankings, business scope, dates, or ownership.",
     "If the user asks for analysis or discussion without requesting a change, return no suggestions. Limit suggestions to the smallest set needed for the latest request, at most eight.",
   ].join(" "),
-  "jd.parse": "Parse only explicit job requirements. Preserve the supplied locale and do not infer employer facts.",
-  "job.match": "Map every supplied requirement exactly once. Cite only supplied claim IDs and leave evidenceAssetIds empty.",
-  "copy.rewrite.zh": "Rewrite the supplied Chinese text for clarity and professional tone. Preserve every preserveTerms value exactly, keep all numbers unchanged, and do not add achievements, scope, credentials, rankings, or any other facts. Set original to the supplied text and addedFacts to false.",
-  "copy.rewrite.en": "Rewrite the supplied English text for clarity and professional tone. Preserve every preserveTerms value exactly, keep all numbers unchanged, and do not add achievements, scope, credentials, rankings, or any other facts. Set original to the supplied text and addedFacts to false.",
+  "jd.parse": "Parse only explicit job requirements. Every requirement text must be a verbatim contiguous excerpt of the supplied text, and every keyword must be a verbatim contiguous excerpt of its requirement text. When title, company, or location is supplied, return that value exactly; otherwise omit optional job fields unless their value is a verbatim excerpt of the supplied text. Preserve the supplied locale, use unique IDs, keep every requirement jobPostingId equal to the returned jobPosting id, and do not infer or paraphrase employer facts.",
+  "job.match": "Map every supplied requirement exactly once. Decide met, partial, gap, or conflict from the supplied requirement and claims. For each requirement, claimIds must be a subset of that requirement eligibleClaimIds: cite at most three, cite none and use gap when the list is empty or no eligible claim supports coverage, and use conflict only when the cited eligible claim status is conflicting. Never cite a claim based only on broad semantic similarity without the server-computed lexical evidence. Leave evidenceAssetIds empty. Write a concise requirement-specific explanation for every mapping and a concrete requirement-specific suggestedAction when useful. Do not reuse stock explanations across unrelated requirements, do not invent facts or numbers, and do not mention evidence outside the cited claims.",
+  "copy.rewrite.zh": "Rewrite the supplied Chinese text as one concise, coherent resume paragraph in professional language. When the input contains multiple fragments, combine them and remove conversational filler while preserving every explicit fact. Preserve every preserveTerms value exactly, keep all numbers unchanged, and do not add achievements, scope, credentials, rankings, or any other facts. Use export-safe plain text only: no placeholder squares, replacement characters, private-use glyphs, emoji, or invisible control and formatting characters. Set original to the supplied text and addedFacts to false.",
+  "copy.rewrite.en": "Rewrite the supplied English text as one concise, coherent resume paragraph in professional language. When the input contains multiple fragments, combine them and remove conversational filler while preserving every explicit fact. Preserve every preserveTerms value exactly, keep all numbers unchanged, and do not add achievements, scope, credentials, rankings, or any other facts. Use export-safe plain text only: no placeholder squares, replacement characters, private-use glyphs, emoji, or invisible control and formatting characters. Set original to the supplied text and addedFacts to false.",
   "interview.plan": "Select and order only supplied question IDs. Do not invent or rewrite questions.",
-  "answer.evaluate": "Evaluate only the supplied answer. Cited fragments must be exact substrings of the answer.",
-  "answer.coach": "Give concrete coaching grounded only in the supplied answer and evaluation. Do not invent candidate facts.",
+  "answer.evaluate": "Evaluate only the supplied answer. Cited fragments must be non-empty exact substrings of the answer. Set questionId exactly to the supplied question id, return at most five cited fragments and at most eight strengths and improvements, and set overallScore to the exact sum of the five dimension scores.",
+  "answer.coach": "Give concrete coaching grounded only in the supplied answer and evaluation. Return one concise headline, one to five unique actions, and two to eight improvedOutline items. Do not output any number that does not appear exactly in the answer. The factSafetyReminder must explicitly tell the candidate to use only real or verifiable facts and not invent facts. Do not invent candidate facts.",
 };
 
 const schemas = {

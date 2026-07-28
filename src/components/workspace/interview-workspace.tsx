@@ -668,6 +668,10 @@ function InterviewWorkspaceSession({
           >
             {question.category === "technical" ? "岗位能力" : "经历与动机"}
           </h1>
+          <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-success">
+            <ShieldCheck aria-hidden="true" size={15} />
+            真实 AI 已验证：面试出题
+          </p>
         </div>
         <div
           role="progressbar"
@@ -847,6 +851,10 @@ function InterviewWorkspaceSession({
           {evaluation ? (
             <>
               <div className="border-b border-line p-5">
+                <p className="mb-3 inline-flex items-center gap-1.5 text-xs font-medium text-success">
+                  <ShieldCheck aria-hidden="true" size={15} />
+                  真实 AI 已验证：回答评审与教练反馈
+                </p>
                 <div className="flex items-end justify-between gap-3">
                   <div>
                     <p className="text-xs font-medium text-muted">

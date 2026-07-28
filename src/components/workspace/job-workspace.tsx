@@ -13,6 +13,7 @@ import {
   LoaderCircle,
   Quote,
   ShieldAlert,
+  ShieldCheck,
 } from "lucide-react";
 import { matchJob } from "@/lib/client/api";
 import { useAppStore } from "@/lib/client/store";
@@ -287,6 +288,10 @@ export function JobWorkspace() {
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
                     {jobMatch.summary}
                   </p>
+                  <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-success">
+                    <ShieldCheck aria-hidden="true" size={15} />
+                    真实 AI 已验证：JD 解析与岗位匹配
+                  </p>
                 </div>
                 <div className="text-right">
                   <p className="text-xs font-medium text-muted">证据覆盖率</p>
@@ -422,7 +427,7 @@ export function JobWorkspace() {
                       <p className="text-sm font-semibold">岗位版已生成</p>
                       <p className="mt-0.5 text-xs leading-5 text-muted">
                         {jobMatch.variant.name} · 基于通用版{" "}
-                        {jobMatch.variant.baseRevision + 1} · 仅调整已有内容顺序
+                        {jobMatch.variant.baseRevision + 1} · 更新目标岗位并优先展示匹配内容
                       </p>
                     </div>
                     <span className="rounded-[6px] bg-white px-2.5 py-1 text-xs font-medium text-brand">

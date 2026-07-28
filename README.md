@@ -8,12 +8,12 @@
 
 - PDF 原生解析、必要 OCR、低置信度提醒和原稿定位。
 - 来自 `resume.score@2.x+` 的六维质量评分，以及来自 `resume.suggest@2.x+` 的证据约束修改建议。
-- 一个可恢复的 JD/职位元信息草稿、要求-证据-缺口矩阵和岗位定制分支。
+- 来自 `jd.parse@2.x+` 与 `job.match@2.x+` 的可恢复 JD 解析、要求-证据-缺口矩阵和岗位定制分支。
 - `Professional`、`Minimal`、`Compact` 三套 Typst 模板。
 - 原版/新版真实 PDF 预览、导出质量报告和下载硬门。
-- 60 个双语面试问题单元、设备检查、浏览器语音转文字、两轮追问和可恢复的回答评审。
+- 60 个双语面试问题单元，以及由 `interview.plan@2.x+`、`answer.evaluate@2.x+`、`answer.coach@2.x+` 驱动的出题、回答评审和教练反馈。
 - 当前设备最近分析记录；24 小时到期，最多 10 条、总计最多 50 MB。
-- 版本化的 31 项 Capability Registry；上传评分、上传建议和持续 AI 编辑对话禁止 baseline 冒充真实 AI。
+- 版本化的 31 项 Capability Registry；简历分析、持续编辑、岗位分析和面试推理都禁止 baseline 冒充真实 AI。
 
 ## 环境要求
 
@@ -47,7 +47,7 @@ docker compose -f infra/docker-compose.yml up --build
 
 若本机使用独立 Compose 二进制，请把 `docker compose` 替换为 `docker-compose`。默认入口仍是 [http://127.0.0.1:3000](http://127.0.0.1:3000)，worker 健康检查可通过 [http://127.0.0.1:8001/health](http://127.0.0.1:8001/health) 查看。
 
-## 上传分析必需的 AI 配置
+## 用户分析流程必需的 AI 配置
 
 应用在没有 Key 时仍可启动，但会禁用 PDF 上传和体验示例，并明确说明不会提供本地模板分析。先撤销任何曾在聊天、终端输出或提交中暴露的旧 Key，再把轮换后的新 Key 写入被忽略的 `.env.local`：
 
@@ -60,7 +60,7 @@ AI_MODEL=gpt-5.5
 
 Docker 模式使用仓库根部被忽略的 `.env`，变量名相同。Key 只能进入服务端环境，不要添加 `NEXT_PUBLIC_` 前缀，也不要写入代码、README、`.env.example` 或日志。
 
-AI 只接收 10 项白名单能力的最小化 DTO。用户上传和体验示例中的 `resume.score`、`resume.suggest` 必须同时获得 `@2.x+` 结果；未配置、超时、限流、网络失败、非法结构或事实检查失败时，整个请求失败，不返回本地评分、模板建议或部分 AI 结果。`resume.chat` 同样禁止固定 baseline 冒充回复；本轮未要求改造的 JD、岗位匹配、双语改写和面试能力仍保留原兼容策略。PDF 解析、OCR、证据图、PII 清理、ATS、渲染与导出审计不会交给外部模型。
+AI 只接收 10 项白名单能力的最小化 DTO。简历评分与建议、持续编辑、JD 解析、岗位匹配、面试计划、回答评估和教练反馈都必须获得各自 `@2.x+` 结果；未配置、超时、限流、网络失败、非法结构或事实检查失败时，对应用户操作直接失败，不返回 baseline 模板或部分 AI 结果。双语文案改写仍保留受事实校验约束的兼容路径；PDF 解析、OCR、证据图、PII 清理、ATS、题库检索、渲染与导出审计是确定性基础设施，不会冒充 AI 推理。
 
 用户修改当前 Resume AST 后，旧 AI 结果会进入 `stale/refreshing` 状态；只有 `/api/resume-analysis` 为同一 ID/revision 返回新的评分与建议后才重新标记为 `fresh`。等待或失败期间不会展示本地评分，JD 匹配和模拟面试也会保持禁用。
 

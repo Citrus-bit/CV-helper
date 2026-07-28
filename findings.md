@@ -309,3 +309,48 @@ _每执行2次查看/浏览器/搜索操作后更新此文件_
 - 最终 Knip 从 88 个 unused exports / 23 个 unused exported types 降至 31 / 17；余项是 Capability、领域、对话和客户端公共 Schema/类型，保留用于稳定边界。唯一 unused file 报告 `tests/server-only.ts` 是 `vitest.config.ts` 明确 alias，属于假阳性。
 - 本轮没有删除 `/api/resume-suggestions` 兼容路由、legacy 本地数据迁移、PaddleOCR 兼容分支、Next 路由、题库、模板或插件文件；生产构建确认全部现有路由仍生成。
 - 兼容性边界：HTTP API 与持久化 Schema 未变；内部 `matchJob/createInterviewPlan/evaluateAnswer` 现在要求显式版本，baseline 顶层不再导出裸实现。仓库内调用方均已迁移；若存在仓库外直接源码导入，需要同步改用 Registry 门面。
+## 2026-07-28 阶段 15 初始发现：岗位定制版未体现定制
+
+- 用户截图中已选择“算法工程师定制版”，并排对照左侧标注“原始 PDF”，右侧说明“仅重排已有内容，修改建议仅作用于通用版”。当前可见简历仍以“后端开发实习生”为求职意向，技能与项目顺序也未显示算法岗位导向。
+- 该现象至少可能来自三类断点：岗位版生成结果与原 AST 无差异；岗位版已经生成但 Store/组件仍传入通用 AST；导出/预览缓存未把岗位版本或其内容纳入身份键。
+- 修复必须保持事实安全：允许基于已有事实做排序、摘要和措辞聚焦，但不能为算法岗位虚构未在原简历或已确认事实中出现的经历、技能或指标。
+
+## 2026-07-28 阶段 15 根因定位
+
+- `buildJobVariant()` 当前注释和实现都把允许操作限制为 section/entry 稳定重排；`ResumeVariantChangeSchema` 也只接受 `section_reorder` 与 `entry_reorder`。
+- 学生简历常见结构是“专业技能”一个 entry 下有多条 bullet、“项目经历”一个 entry 下有多条成果。当前实现遇到 `section.entries.length < 2` 会直接跳过，且从不排列 `entry.bullets`，所以岗位关键词最相关的技能和项目成果不会前置。
+- 当前实现也不接收目标岗位标题，因此 `contact.headline` 中的“后端开发实习生”不会随“算法工程师”岗位变化。目标岗位名称属于求职意向而非既有工作事实，可以在岗位分支中更新，但必须作为可审计变更记录。
+- 预览/导出链路已确认会在激活岗位版时传入 `jobVariant.ast`，并按岗位版 ID/revision 校验缓存；当前主要缺陷位于岗位版内容生成能力，而不是 PDF 组件仍固定读取通用 AST。
+
+## 2026-07-28 阶段 15 实现与验证发现
+
+- 岗位版变更契约已向后兼容扩展：原有 section/entry reorder 保留，新增 `bullet_reorder` 和可审计的 `headline_update`。
+- `buildJobVariant()` 现在能处理单 entry、多 bullet 的技能/项目结构；相关 bullet 只改变顺序、不改变字符串库存。目标岗位 headline 更新明确标记为求职意向，不作为新增经历或能力事实。
+- `/api/job-match` 已将经过现有安全处理的 `finalPosting.title` 传入岗位版生成器；隔离运行“用户岗位元信息覆盖”路由用例 1/1 通过，返回的岗位版 headline 为目标岗位。
+- 预览与导出仍沿用现有岗位版 AST 绑定和真实 PDF 质量门，不需要另改读取路径。当前工作区已有改动移除了并排预览模式，本轮没有恢复或覆盖该改动。
+- 首轮整文件路由测试的多项失败来自当前在研的强制 AI capability mock/fixture 状态，不是岗位版实现本身；生成器、领域 Schema、模板导出和简历工作区共 13 项目标测试通过，修改文件 ESLint 通过。
+- 本地浏览器恢复示例简历后，以“算法工程师”标题和对应 JD 发起真实岗位分析；页面正确进入等待态，但增强 AI 最终返回“AI 分析未完成，未返回本地模板结果”。应用没有用 baseline 假结果冒充成功，符合现有强制真实 AI 策略。由于外部 Provider 未成功，本轮浏览器无法生成新的岗位矩阵，改由确定性 API/渲染集成测试覆盖岗位 AST 到 PDF 的链路。
+- 新增独立真实 PDF 集成测试：同一基础 AST 分别渲染通用版和“算法工程师”岗位版，两个产物均为有效 PDF；岗位版 `astContentCovered=true`、报告绑定岗位版 ID，且两份 SHA 不同，直接证明岗位定制内容进入最终 PDF。
+- 正式文档此前只笼统描述岗位版会选择、排序或改写真实事实，没有明确当前可见定制层级；已同步为“目标岗位 headline + section/entry/bullet 稳定重排 + 可审计变更”，并强调不改写经历事实。
+
+## 2026-07-28 阶段 16 初始发现：岗位与面试真实 AI 硬门
+
+- 最近一次岗位请求中 `jd.parse@2.0.0` 成功，但 `job.match@2.0.0` 返回 HTTP 429；Registry 默认 `fallbackPolicy: allow`，接口仍返回本地 `job.match@1.0.0` 成功结果。
+- 岗位映射即使 Provider 成功，当前校验器也只采用 Provider 引用的 Claim，随后以固定规则重算状态、覆盖率、解释和下一步文案；前端不展示 `usedFallback` 或 `sourceVersion`，用户无法区分真实 AI 与本地结果。
+- 本轮必须让 `jd.parse`、`job.match`、`interview.plan`、`answer.evaluate`、`answer.coach` 失败关闭，并让客户端独立验证所有必需能力均为 `@2.x+`。
+- 本地题库检索、安全过滤、事实校验、录音转写和导出等确定性基础设施不属于生成式推理，不需要伪装为真实 AI；它们仍应作为 AI 输出的约束和证据来源。
+- `/api/interview/plan` 当前对可选 JD 的 `jd.parse` 和最终 `interview.plan` 都调用通用 `invokeCapability`；`/api/interview/evaluate` 对 `answer.evaluate`、`answer.coach` 也是相同路径，任一 Provider 失败都会静默回退。
+- 岗位、面试计划和面试评估仅在 `x-capability-trace` 响应头记录来源；正式 JSON Schema、客户端 API、Store 和本地历史都不验证这些来源，因此无法建立端到端的真实 AI 证明。
+- 现有 `client/ai-analysis.ts` 已有按 capability ID 验证 `@2.x+` 的模式，可泛化复用于岗位和面试，而不在各调用点复制正则。
+- 将来源证明设为 JobMatch/InterviewPlan/Evaluation 的必填正式字段后，旧缓存会在现有 Zod 恢复边界自然失效；这符合“不能把旧 baseline 当当前 AI 成功”的目标。
+- 当前网关只让 `jd.parse`、`answer.evaluate` 等少数能力优先使用 `json_object`；`job.match`、`interview.plan`、`answer.coach` 默认发送 `json_schema`。最近的 `job.match` 正是在该格式下收到 429 `invalid_request_error`，而同一供应商上的简历能力使用 `json_object` 成功。
+- 为当前已验证供应商兼容性，应让岗位匹配和两项面试能力也优先使用 `json_object`，仍由本地 Zod 和事实安全校验器执行严格结构验证；这不会降低输出约束，只是避免供应商的结构化响应格式兼容问题。
+- 仅禁止 fallback 仍不足以解决右侧同文案问题：原校验器会丢弃 Provider 的 explanation/action。现改为接受 AI 对 `met/partial/gap/conflict` 的判断和逐条文案，但仅在 Claim 存在、相关、状态相容、引用不超过 3 条、无新增数字且长度受限时通过；覆盖率继续由服务端重算。
+- 岗位和面试客户端契约现在已足以作为 UI 来源证明边界：结果只有在所有必需 `capabilityVersions` 均通过对应 `@2.x+` 校验后才能进入组件，因此组件可安全显示“真实 AI 已验证”，无需暴露供应商或模型名。
+- 当前严格用户流程使用 `json_object`，两项 copy 改写仍默认 JSON Schema；先前架构文档“所有能力首次请求 JSON Schema”的描述已过期。
+- 首次真实岗位请求在 `jd.parse` 发网前失败：单独传入的目标岗位 `location: "上海"` 被通用 PII 复检按 JSON 字段名误判为候选人地址。目标地点由服务端在 AI 解析后覆盖回岗位对象，因此不必发送给 Provider；从最小化 DTO 删除该字段既修复误判也减少数据外发。
+- 修复地点 DTO 后的聚焦测试还发现“产品经理岗位”会被宽松上下文姓名复检拆成“经理 + 岗位”，而“岗位”未被非人名词表排除；已将“岗位/职位”加入排除项，真实人名模式和其他 PII 规则保持不变。
+- 多次真实 `job.match` 输出被确认仅命中 `AMBIGUOUS_CONTEXT_NAME_PATTERN`。岗位解释天然包含“产品经理岗位所需”等结构，因此只在 `job.match` 输出侧关闭这条宽松兜底；输入侧仍严格，输出侧的已知姓名、常见中文姓名、联系方式和地址规则全部保留。
+- 宽松 PII 误判修复后，真实 `job.match` 首个证据错误为 `CITED_CLAIM_NOT_RELEVANT`：模型做了语义关联，但引用 Claim 不满足服务端词语重合门槛。为避免放松证据边界，服务端现按每条要求预计算 `eligibleClaimIds` 并随最小 DTO 发送，模型只能从该集合引用。
+- `answer.evaluate` 的 `overallScore` 是五个 AI 维度分数的确定性总和，不应因模型重复计算出现小幅或任意差异就丢弃整份真实评估；现由服务端统一重算，总分不再作为失败条件，问题身份、回答原文引用和反馈边界仍严格校验。
+- 真实回答反馈也会因“产品经理岗位/经理职责”等措辞命中 `AMBIGUOUS_CONTEXT_NAME_PATTERN`。现对 `answer.evaluate`/`answer.coach` 输出应用与岗位匹配相同的窄化规则；直接姓名模式仍有效，输入侧严格复检不变。

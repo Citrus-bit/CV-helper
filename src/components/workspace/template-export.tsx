@@ -23,6 +23,7 @@ import {
   renderResume,
 } from "@/lib/client/api";
 import { useAppStore, type TemplateId } from "@/lib/client/store";
+import type { AuditCheck } from "@/lib/domain";
 
 const templates: Array<{ id: TemplateId; name: string; description: string }> =
   [
@@ -61,10 +62,18 @@ export function exportConfirmationBlocker(input: {
   downloadable: boolean;
   astContentCovered: boolean;
   previewed: boolean;
+  blockingChecks?: readonly AuditCheck[];
 }) {
   if (!input.hasOriginalPdf) return "请先重新附加原 PDF，再进行最终对照确认。";
-  if (!input.hardGatePassed || !input.downloadable || !input.astContentCovered)
+  if (!input.hardGatePassed || !input.downloadable || !input.astContentCovered) {
+    const blockingCheck = input.blockingChecks?.find(
+      (check) => check.status === "fail",
+    );
+    if (blockingCheck) {
+      return `当前 PDF 未通过“${blockingCheck.label}”：${blockingCheck.details ?? "请调整内容后重新生成。"}`;
+    }
     return "当前 PDF 存在致命导出错误，请重新生成或调整内容。";
+  }
   if (!input.previewed) return "等待新版 PDF 预览完成像素验证后确认。";
   return null;
 }
@@ -157,6 +166,9 @@ export function TemplateExport() {
         downloadable: current.report.downloadable,
         astContentCovered: current.astContentCovered,
         previewed,
+        blockingChecks: current.report.checks.filter((check) =>
+          current.hardGate.blockingCheckIds.includes(check.id),
+        ),
       })
     : "请先生成当前模板的真实 PDF。";
   const canConfirm = confirmationBlocker === null;

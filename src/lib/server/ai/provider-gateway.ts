@@ -14,7 +14,10 @@ const JSON_OBJECT_PREFERRED_CAPABILITIES = new Set<ProviderGatewayCapabilityId>(
   "resume.suggest",
   "resume.chat",
   "jd.parse",
+  "job.match",
+  "interview.plan",
   "answer.evaluate",
+  "answer.coach",
 ]);
 
 type ProviderEnvironment = Readonly<Record<string, string | undefined>>;

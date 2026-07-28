@@ -124,6 +124,9 @@ function interviewPlanFixture(): InterviewPlan {
     stories: [],
     durationMinutes: 20,
     maxFollowUps: 2,
+    capabilityVersions: {
+      "interview.plan": "interview.plan@2.0.0",
+    },
   };
 }
 
@@ -147,6 +150,10 @@ function mainEvaluationFixture(): EvaluationResponse {
       followUpQuestion: "请说明个人行动。",
     },
     consistencyWarnings: [],
+    capabilityVersions: {
+      "answer.evaluate": "answer.evaluate@2.0.0",
+      "answer.coach": "answer.coach@2.0.0",
+    },
   };
 }
 
@@ -581,6 +588,59 @@ describe("v2 to v3 session migration", () => {
     expect(merged.stage).toBe("upload");
     expect(merged.module).toBe("resume");
     expect(merged.analysis).toBe(analysis);
+  });
+
+  it("drops persisted job and interview results without enhanced AI provenance", () => {
+    const analysis = analysisFixture();
+    const interviewPlan = interviewPlanFixture();
+    const legacyInterviewPlan = {
+      ...interviewPlan,
+      capabilityVersions: {
+        "interview.plan": "interview.plan@1.0.0",
+      },
+    };
+    const legacyEvaluation = {
+      ...mainEvaluationFixture(),
+      capabilityVersions: {
+        "answer.evaluate": "answer.evaluate@1.0.0",
+        "answer.coach": "answer.coach@1.0.0",
+      },
+    };
+
+    const merged = mergePersistedSessionState(
+      {
+        stage: "workspace",
+        module: "interview",
+        analysis,
+        jobMatch: {
+          sourceResumeId: analysis.resume.id,
+          sourceResumeRevision: analysis.resume.revision,
+          job: {
+            id: "legacy-job",
+            title: "旧岗位结果",
+            locale: "zh-CN",
+            rawText: "旧岗位描述",
+          },
+          requirements: [],
+          mappings: [],
+          coverage: 0,
+          summary: "旧本地匹配结果。",
+          riskFlags: [],
+          capabilityVersions: {
+            "jd.parse": "jd.parse@1.0.0",
+            "job.match": "job.match@1.0.0",
+          },
+        },
+        interviewPlan: legacyInterviewPlan,
+        evaluations: [legacyEvaluation],
+      },
+      useAppStore.getState(),
+    );
+
+    expect(merged.jobMatch).toBeNull();
+    expect(merged.interviewPlan).toBeNull();
+    expect(merged.evaluations).toEqual([]);
+    expect(merged.interviewProgress).toBeNull();
   });
 
   it("normalizes incompatible interview progress instead of crossing plans", () => {

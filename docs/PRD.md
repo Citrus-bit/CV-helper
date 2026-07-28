@@ -117,9 +117,11 @@ MVP 的主闭环为：
 - 上述字段作为一个可恢复草稿保存在标签页会话和最近分析中；任一字段变化都会立即清除旧矩阵、岗位版和面试计划，不允许旧结果与新输入并存。
 - 系统抽取硬性要求、核心职责、技能工具、加分项、地点及其他限制。
 - 页面以矩阵展示“JD 要求 → 相关证据 → 满足/部分满足/缺口/冲突 → 建议或补充问题”。
+- JD 抽取必须来自 `jd.parse@2.x+`，要求映射、逐项解释与下一步建议必须来自 `job.match@2.x+`；两项原子成功后才展示结果，并显示“真实 AI 已验证”。任一能力失败都不得回退本地固定矩阵。
 - 始终可显示证据覆盖率；只有材料和偏好足够时才显示更完整的岗位匹配分。
 - 匹配结果表示当前材料对 JD 的覆盖程度，不表示面试、录取或 offer 概率。
 - 岗位定制从基线 Resume revision 创建 `ResumeVariant`，仅重新选择、排序或改写已有真实事实。
+- 当前实现把最终岗位标题写入岗位分支的求职意向，并按要求-证据相关度稳定重排章节、经历和条目内要点；求职意向只表示本次投递目标，项目、技能、指标和经历原文不因岗位版被虚构或扩写。每项变化都写入可审计的 `ResumeVariantChange`。
 
 ## 5. 排版预览与导出
 
@@ -157,17 +159,17 @@ MVP 的主闭环为：
 - 界面在启动前披露浏览器供应商可能参与语音处理；识别不可用、报错、超时、停止或离开页面时立即结束采集。
 - 无麦克风权限、浏览器不支持或 ASR 不可用时，始终提供文字输入。
 - 当前问题、两轮追问、追问评审和未提交转写草稿会保存至 `sessionStorage` 和 IndexedDB 历史；恢复时必须同时匹配简历 ID/revision 和面试计划指纹，不能跨版本串状态。
-- 当前 baseline 每题反馈相关性、结构、具体证据、岗位能力线索和表达清晰度，并引用用户回答中的可核对片段；领域技术正确性需要后续专项 Skill 与评测集，当前不作专家级承诺。
-- 当前 baseline 检查相关简历声明中的新增数值，以及声明本身是否为 `conflicting/needs_evidence`；日期、角色、实体和更深语义口径属于后续一致性 Skill。提示只要求用户核对，不指控用户欺骗。
+- 面试题计划必须来自 `interview.plan@2.x+`；每次回答的五维评估与教练反馈必须分别来自 `answer.evaluate@2.x+` 和 `answer.coach@2.x+`。计划或单题评审中的任一 AI 能力失败都直接报错，不展示本地模板结果；成功结果显示“真实 AI 已验证”。
+- 本地确定性一致性检查继续核对回答中的新增数值，以及相关简历声明是否为 `conflicting/needs_evidence`；它是 AI 评审后的安全补充，不替代 AI。日期、角色、实体和更深语义口径属于后续一致性 Skill。提示只要求用户核对，不指控用户欺骗。
 - 不评价口音、性别、音色、情绪或人格；MVP 不提供 AI 语音播报或实时双向语音。
 
 ## 7. Skill 可扩展体验
 
 - 运行时 Capability 契约版本为 `1.0`，MVP 内置实现版本为 `1.0.0`；候选 Skill 必须声明兼容契约及明确回滚目标。
 - 前端只读取 `FeatureAvailability` 的 `available`、`baseline | enhanced | unavailable`、locale 和 fallback 状态，不暴露供应商、密钥或内部实现。
-- 所有核心 Capability 都保留内置 baseline 供确定性评测和兼容场景。配置服务端 provider gateway 后，十项白名单能力 `resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate`、`answer.coach` 可进入增强模式。用户上传、体验示例和 revision 重分析中的 `resume.score`、`resume.suggest` 明确使用 `fallbackPolicy: "forbid"`，`resume.chat` 也不展示固定 baseline；本轮未要求改造的其他能力保留 `allow` 兼容策略。
+- 所有核心 Capability 都保留内置 baseline 供确定性评测和非用户兼容场景。配置服务端 provider gateway 后，十项白名单能力 `resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate`、`answer.coach` 可进入增强模式。其中除双语文案改写外，八项用户可见 AI 能力均使用 `fallbackPolicy: "forbid"`，且响应必须携带对应 `@2.x+` 来源。
 - 用户不能上传或执行任意 Skill。所有运行时 Skill 由服务器白名单、版本锁定和 feature flag 管理。
-- 任意扩展执行仍默认关闭；只有 canonical Schema、禁网且有 baseline 的受信本地候选可进入评测。`provider_gateway` 只允许上述十项能力，其中 `resume.chat` 与 `copy.rewrite.zh/en` 必须通过原文映射、保留术语、数字、高风险事实和 revision 检查；其余能力保持确定性 baseline。
+- 任意扩展执行仍默认关闭；只有 canonical Schema、禁网且有 baseline 的受信本地候选可进入评测。`provider_gateway` 只允许上述十项能力；严格 AI 能力还必须通过身份、revision、引用、数字、结构和事实安全检查，双语改写必须通过原文映射、保留术语、数字和高风险事实检查。
 - Provider Base URL 必须命中代码内静态批准列表，不能通过环境变量或用户输入扩大；上传分析要求 `AI_PROVIDER=provider_gateway` 和有效的服务端 Key。没有 Key 时应用仍可启动，但上传与体验示例不可用。
 - 新 Skill 不得绕过事实安全、人工确认、隐私、导出质检或“不承诺录取”的产品底线。
 - 仓库内另有统一的 Codex Development Skill Toolkit，用于帮助开发者实现、审查和评测上述能力。它不会出现在用户界面，不会在产品请求中自动执行，也不改变 FeatureAvailability、数据保留、人工确认或 fallback 行为。
@@ -197,11 +199,11 @@ MVP 的主闭环为：
 
 阶段 9 自动化验收已通过 TypeScript、ESLint、44 个文件 / 259 项 Web 测试、34 项 document-worker pytest、3 项 loopback proxy pytest、生产构建与 `git diff --check`。拖拽回归覆盖激活重渲染、多次跨子元素、窗口目标与几何边界、框外移动、页面离开、`Escape`、窗口失焦、drop、真实 PDF 单次提交、监听器卸载和非文件 payload；浏览器隔离自动化无法构造操作系统 `DataTransfer`，因此真实页面用于布局、默认状态和最终状态检查，完整拖动事件序列由组件测试验证。Mac 锁定时不绕过系统锁，Finder 物理实拖保留为人工验收项。
 
-当前浏览器验收已覆盖 1024、1280、1440、1920px 首页与工作区，无横向滚动；375、768、1023px 只显示电脑访问提示且不挂载工作台。示例会话的顶栏返回、侧栏品牌返回、历史恢复、流程门、JD 草稿与证据矩阵、面试设备检查/回答/追问恢复、当前会话删除、单条删除、清空取消与确认均通过，控制台无应用 error/warn。Professional PDF 为 100/100、18/18，预览确认前下载禁用。本地 worker health 确认 Typst 与 Tesseract 可用；未配置轮换后新 Key 时，AI capability 保持 baseline。
+当前浏览器验收已覆盖 1024、1280、1440、1920px 首页与工作区，无横向滚动；375、768、1023px 只显示电脑访问提示且不挂载工作台。示例会话的顶栏返回、侧栏品牌返回、历史恢复、流程门、JD 草稿与证据矩阵、面试设备检查/回答/追问恢复、当前会话删除、单条删除、清空取消与确认均通过，控制台无应用 error/warn。Professional PDF 为 100/100、18/18，预览确认前下载禁用。本地 worker health 确认 Typst 与 Tesseract 可用；未配置轮换后新 Key 时应用仍可启动，但八项严格 AI 用户流程不可用且不会返回 baseline 结果。
 
 本地 Docker 路径可用；安全健康端点已有 4 项 Vitest，覆盖 baseline `ready`、isolated/enhanced `ready` 且无实现细节泄漏、显式配置失效时 `degraded`，以及 `no-store` 的 Schema 合法响应。Gitleaks 对全部 Git 历史、当前差异、未跟踪源码和提交消息均未发现密钥。Vercel、Private Blob 与 Hosted 模式仍延期，不属于本轮发布验收。
 
-这些结果只代表已登记 fixture、构建和 smoke 范围。Provider gateway 已接线，上传分析已禁止 baseline，但在完成两份合成简历、三次连续上传的真实 Provider 终验前仍不得标记为最终实现。下列生产级门槛仍需完成，包括 40 份文档样本、OCR 召回率、Safari/屏幕阅读器、持久化幂等与对象所有权：
+这些结果只代表已登记 fixture、构建和 smoke 范围。Provider gateway 已接线，简历、岗位和面试严格 AI 流程已禁止 baseline；岗位与面试端到端真实 Provider 已通过，但上传分析在完成两份合成简历、三次连续上传的独立终验前仍不得标记为最终实现。下列生产级门槛仍需完成，包括 40 份文档样本、OCR 召回率、Safari/屏幕阅读器、持久化幂等与对象所有权：
 
 - 至少 40 份脱敏/合成样本覆盖中英文、单双栏、数字、扫描、混合、旋转和异常 PDF。
 - 原生文本字符召回率目标 ≥ 99%；清晰扫描件 OCR 字符召回率目标 ≥ 95%；人工抽检阅读顺序正确率 ≥ 95%。这些是待生产样本验证的目标，不是当前已证明指标。

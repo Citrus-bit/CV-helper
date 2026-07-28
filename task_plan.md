@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-阶段 13：上传与 revision 分析强制真实 AI
+阶段 16：岗位分析与面试强制真实 AI
 
 ## 各阶段
 
@@ -148,10 +148,34 @@
 - [x] 运行格式、类型、静态检查、测试和生产构建，记录兼容性风险
 - **状态：** complete
 
+### 阶段 15：岗位定制简历与原版一致问题修复
+
+- [x] 复现并追踪岗位匹配结果、岗位定制 AST、排版预览和 PDF 导出的数据链路
+- [x] 定位导致岗位定制版沿用原始简历的根因，并明确事实安全边界
+- [x] 修复生成、状态持久化或导出读取错误，确保定制版实际体现岗位相关调整
+- [x] 补充能区分原版与岗位版的回归测试，覆盖预览和导出请求
+- [x] 运行相关测试、类型检查与实际页面回归，并记录验证结果
+- **状态：** complete
+- **错误记录：** 首次多文件补丁因 `document-preview.tsx` 已有用户改动、目标旧文案不存在而整体未应用；后续按实际文件拆分补丁，不覆盖现有预览模式修改。
+- **错误记录：** 首次测试补丁包含空的 `job-workspace.test.ts` hunk，校验拒绝且未应用；已删除空 hunk，并改为逐个测试文件补丁。
+- **错误记录：** 首轮相关测试中 4 个文件通过、2 个文件失败；`job-workspace` 与全量类型错误来自现有 `capabilityVersions` 必填契约和旧 fixture 不一致，路由测试另有 500/400，需隔离岗位用例继续诊断。
+- **错误记录：** 首次端口探测使用了 zsh 只读变量名 `status`；未改变系统状态，改用任务专用变量名后重试。
+- **错误记录：** 浏览器真实岗位匹配调用的增强 AI Provider 本次未完成，应用按策略显式失败且未返回 baseline；不重复依赖该外部状态，改用确定性路由与 PDF 渲染测试完成本轮验证。
+- **错误记录：** 仓库未安装 Prettier，`pnpm exec prettier --check` 无法运行；不为本轮引入新依赖，改以 ESLint、目标测试和 `git diff --check` 验证格式与语法。
+
+### 阶段 16：岗位分析与面试强制真实 AI
+
+- [x] 盘点岗位解析/匹配与面试计划/评估/教练的全部 Provider 调用和 fallback 路径
+- [x] 将用户可见岗位与面试推理能力切换为禁止 baseline fallback 的原子成功语义
+- [x] 在服务端响应、客户端契约和持久化边界校验 `@2.x+` 真实 AI 来源
+- [x] 补齐未配置、限流、超时、非法响应及半成功场景的失败关闭测试
+- [x] 运行类型、静态检查、相关测试、全量测试、生产构建和真实 Provider 回归
+- **状态：** complete
+
 ## 关键问题
 
 1. 项目内 Typst 0.15.1、Poppler 和本地中英文 Tesseract 模型已安装。Docker CLI、`docker-compose` 和 Colima 已安装并启动；`docker compose` 子命令当前不可用，容器验收使用 `docker-compose`，Web/worker 最终镜像均已构建并通过 smoke。
-2. 用户提供的旧 AI Key 已视为泄露且禁止使用；provider gateway 只读取新的服务端环境变量。上传、示例和 revision 中的 `resume.score`、`resume.suggest` 以及 `resume.chat` 必须显式失败，不能用 baseline 伪装真实 AI；其他未纳入本轮的能力保持兼容策略。
+2. 用户提供的旧 AI Key 已视为泄露且禁止使用；provider gateway 只读取新的服务端环境变量。`resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`interview.plan`、`answer.evaluate`、`answer.coach` 必须显式失败，不能用 baseline 伪装真实 AI；两项 copy 能力保持受事实校验约束的兼容策略。
 3. 用户已临时暂停 Vercel 部署；本阶段不保留 Private Blob、Hosted API、Vercel 配置或云端 worker 半成品。
 4. 阶段 6 最终验证通过：TypeScript、ESLint、33 个文件 / 179 项 Web 测试、32 项 document-worker 测试、3 项 loopback proxy 测试及 `git diff --check` 全部通过；其中健康路由 4 项测试通过。
 5. Compose 默认服务已精确验证为 Web、worker 和 loopback；`future-infra` profile 配置可解析。loopback 的 3 项资源边界测试通过。
@@ -192,8 +216,18 @@
 | 代理测试用 `importlib` 装载时未登记模块                          | 1        | 在执行模块前写入 `sys.modules`，让 `dataclass` 可解析所属命名空间                                            |
 | Compose 默认服务断言误计命令替换的结尾换行                       | 1        | 改用逗号归一化后的精确服务列表断言，不依赖 shell 保留尾部换行                                                |
 | 多文件 patch 复用了格式化前的 Markdown 上下文                    | 2        | 拆分代码与文档 patch，并按 Prettier 后的实际表格行重新应用                                                   |
+| 阶段 16 首次类型检查发现岗位/面试旧测试夹具缺少 AI 来源证明       | 1        | 保留严格必填契约，逐个更新合法夹具并增加旧 baseline/缺失来源拒绝测试                                         |
+| 仓库未安装 Prettier，定向格式检查命令不可用                     | 1        | 不引入无关依赖；使用现有 ESLint、TypeScript、`git diff --check` 与测试验证                                   |
+| 首轮定向测试的 routes 测试仍按旧请求和仅简历能力的 AI mock 运行  | 1        | 扩展统一成功 Provider mock 覆盖岗位/面试能力，并给面试请求补齐服务端版本绑定字段                             |
+| 阶段 16 首次路由负向测试补丁使用了错误的既有测试标题上下文       | 1        | 已读取实际测试标题与精确行，拆分为小补丁应用，不覆盖阶段 15 同文件改动                                     |
+| AI 岗位解释测试把单项 partial 覆盖率误写为 40                    | 1        | 按服务端公式修正为 50；单一要求的 importance 在分子分母抵消，partial 权重固定为 0.5                         |
 | 环境样例严格检查发现注释仍出现密钥变量名                         | 1        | 删除该注释；密钥配置方式只在文档中指向被 Git 忽略的私有文件                                                  |
 | 新增组件测试使用 `.test.tsx`，未匹配仓库的 `.test.ts` include    | 1        | 将两个无 JSX 组件测试改名为 `.test.ts`，并用显式文件列表验证实际执行                                         |
+| 生产服务启动命令把 `--` 透传给 Next，导致 `-p` 被识别为目录     | 1        | 改用 `pnpm exec next start -p 3005` 直接调用 Next CLI；失败命令未启动服务或发送业务请求                       |
+| 目标岗位地点被通用 PII 复检误判为候选人地址                    | 1        | 从 `jd.parse` Provider 最小 DTO 删除独立地点字段；成功后仍由服务端写回目标地点，并补隐私边界回归测试         |
+| “产品经理岗位”被宽松上下文姓名复检误判                         | 1        | 将“岗位/职位”加入非人名上下文词表；保留真实姓名、地址和其他 PII 检测规则                                   |
+| 岗位原因日志补丁两次与实际上下文不一致                          | 2        | 读取实际行后把代码、进度与计划拆成独立小补丁；两次失败均未改动文件                                         |
+| 文件规划技能引用的 `check-complete.sh` 不存在                    | 1        | 以阶段 16 勾选、全量自动化、生产健康和真实 Provider 端到端证据作为完成依据                                 |
 | Store 测试的 `reset()` 按产品语义保留历史摘要，造成跨用例残留    | 1        | `beforeEach` 在清 IndexedDB 后同步清空测试内 `recentAnalyses`，补齐状态隔离                                  |
 | Next standalone 重复复制 `pdfjs-dist`，移除后又漏掉 fake worker  | 2        | 统一服务端 PDF.js loader 显式导入 worker，并补子路径类型声明；不再依赖重复 tracing include                   |
 | Prettier 无法推断 Git/Docker ignore 文件 parser                  | 1        | ignore 文件保持人工审阅，并用 Docker build、`git check-ignore` 与 `git diff --check` 验证                    |

@@ -4,7 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 
 import type { RenderResponse } from "./contracts";
-import { downloadVerifiedResume, loadDemoAnalysis, matchJob } from "./api";
+import {
+  createInterviewPlan,
+  downloadVerifiedResume,
+  evaluateAnswer,
+  generateEvidenceRewrite,
+  loadDemoAnalysis,
+  matchJob,
+} from "./api";
 import { ResumeASTSchema } from "@/lib/domain";
 
 const ast = ResumeASTSchema.parse({
@@ -14,11 +21,60 @@ const ast = ResumeASTSchema.parse({
   sections: [],
 });
 
+const interviewQuestion = {
+  id: "question-client-ai",
+  locale: "zh-CN" as const,
+  prompt: "请介绍一次可核实的项目改进经历。",
+  category: "resume" as const,
+  difficulty: "intermediate" as const,
+  roleFamilies: [],
+  skills: [],
+  followUps: [],
+  scoringAnchors: [],
+  source: "client-test",
+  generated: false,
+  referenceQuestionIds: [],
+};
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("version-bound client requests", () => {
+  it("accepts only an evidence rewrite bound to the requested suggestion revision", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        resumeId: "resume-current",
+        resumeRevision: 6,
+        suggestionId: "suggestion-current",
+        rewrittenText: "使用 JMeter 完成 QPS 1000 场景压测。",
+        sourceVersion: "copy.rewrite.zh@2.0.0",
+        durationMs: 800,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      generateEvidenceRewrite({
+        resumeId: "resume-current",
+        resumeRevision: 6,
+        suggestionId: "suggestion-current",
+        locale: "zh-CN",
+        originalText: "完成接口性能优化。",
+        supplementalFacts: "使用 JMeter，压测 QPS 为 1000。",
+      }),
+    ).resolves.toMatchObject({
+      rewrittenText: expect.stringContaining("JMeter"),
+    });
+
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      resumeId: "resume-current",
+      resumeRevision: 6,
+      suggestionId: "suggestion-current",
+    });
+  });
+
   it("sends the explicitly provided resume revision with a job-match request", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: "stop after request capture" }), {
@@ -53,6 +109,115 @@ describe("version-bound client requests", () => {
       language: "zh-CN",
     });
     expect(new Headers(request.headers).has("x-resume-session")).toBe(false);
+  });
+
+  it("rejects a job result whose matching capability came from baseline", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          sourceResumeId: "resume-current",
+          sourceResumeRevision: 6,
+          job: {
+            id: "job-client-ai",
+            title: "算法工程师",
+            locale: "zh-CN",
+            rawText: "算法工程师岗位要求机器学习、模型评估与工程部署经验。",
+          },
+          requirements: [],
+          mappings: [],
+          coverage: 0,
+          summary: "仅表示材料覆盖率。",
+          riskFlags: [],
+          capabilityVersions: {
+            "jd.parse": "jd.parse@2.0.0",
+            "job.match": "job.match@1.0.0",
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      matchJob({
+        jdText: "算法工程师岗位要求机器学习、模型评估与工程部署经验。",
+        resumeId: "resume-current",
+        revision: 6,
+        ast,
+        claims: [],
+        evidence: [],
+      }),
+    ).rejects.toThrow("岗位 AI 分析未返回可验证的真实 AI 结果");
+  });
+
+  it("rejects an interview plan that omits AI parsing for its target JD", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          sourceResumeId: "resume-current",
+          sourceResumeRevision: 6,
+          questions: [interviewQuestion],
+          stories: [],
+          durationMinutes: 20,
+          maxFollowUps: 2,
+          capabilityVersions: {
+            "interview.plan": "interview.plan@2.0.0",
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      createInterviewPlan({
+        resumeId: "resume-current",
+        revision: 6,
+        ast,
+        claims: [],
+        stories: [],
+        jdText: "算法工程师岗位要求机器学习、模型评估与工程部署经验。",
+      }),
+    ).rejects.toThrow("AI 面试计划与当前简历或岗位不一致");
+  });
+
+  it("rejects an interview review containing any baseline AI source", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          sourceResumeId: "resume-current",
+          sourceResumeRevision: 6,
+          evaluation: {
+            questionId: interviewQuestion.id,
+            overallScore: 80,
+            dimensions: {
+              relevance: 16,
+              structure: 16,
+              evidence: 16,
+              roleCompetency: 16,
+              clarity: 16,
+            },
+            strengths: [],
+            improvements: [],
+            citedAnswerFragments: [],
+          },
+          consistencyWarnings: [],
+          capabilityVersions: {
+            "answer.evaluate": "answer.evaluate@2.0.0",
+            "answer.coach": "answer.coach@1.0.0",
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      evaluateAnswer({
+        resumeId: "resume-current",
+        revision: 6,
+        question: interviewQuestion,
+        answer: "我梳理了流程并协调团队完成改进，结果可以通过项目记录核对。",
+        claims: [],
+      }),
+    ).rejects.toThrow("AI 面试评审缺少可验证的真实 AI 结果");
   });
 
   it("does not send a client-controlled rate-limit identity for demo analysis", async () => {

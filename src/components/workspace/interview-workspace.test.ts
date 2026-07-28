@@ -118,6 +118,9 @@ function planFixture(prefix: string, revision = 0): InterviewPlan {
     stories: [],
     durationMinutes: 20,
     maxFollowUps: 2,
+    capabilityVersions: {
+      "interview.plan": "interview.plan@2.0.0",
+    },
   };
 }
 
@@ -140,6 +143,10 @@ function evaluation(questionId: string, revision = 0): EvaluationResponse {
       citedAnswerFragments: [],
     },
     consistencyWarnings: [],
+    capabilityVersions: {
+      "answer.evaluate": "answer.evaluate@2.0.0",
+      "answer.coach": "answer.coach@2.0.0",
+    },
   };
 }
 
@@ -248,6 +255,10 @@ describe("InterviewWorkspace session identity", () => {
     expect(screen.getByText("我重新梳理了入职流程")).toBeInTheDocument();
     expect(screen.getByText("建议回答结构")).toBeInTheDocument();
     expect(screen.getByText("只使用可核对的事实。")).toBeInTheDocument();
+    expect(screen.getByText("真实 AI 已验证：面试出题")).toBeInTheDocument();
+    expect(
+      screen.getByText("真实 AI 已验证：回答评审与教练反馈"),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "回答追问 1/2" }));
     expect(screen.getByText("第一个追问")).toBeInTheDocument();

@@ -37,6 +37,7 @@ import {
   claimParts,
   excerpt,
   extractKeywords,
+  normalizeText,
   stableId,
 } from "@/lib/baseline/utils";
 import { cancelAnalysisRequest } from "./analysis-request";
@@ -92,7 +93,7 @@ let activeRevisionAnalysis:
 export type WorkspaceModule = "resume" | "job" | "interview";
 type WorkspaceStage = "upload" | "analyzing" | "workspace";
 export type TemplateId = ResumeTemplateId;
-type PreviewMode = "original" | "current" | "compare";
+type PreviewMode = "original" | "current";
 export type ResumePanel = "suggestions" | "chat" | "templates";
 type InterviewProgressUpdate = Partial<
   Pick<
@@ -167,6 +168,12 @@ export type AppState = {
   ) => boolean;
   clearResumeChat: () => void;
   confirmClaim: (id: string, content?: string) => void;
+  stageEvidenceRewrite: (
+    suggestionId: string,
+    supplementalFacts: string,
+    rewrittenText: string,
+    sourceVersion: string,
+  ) => boolean;
   undo: () => void;
   updateJobDraft: (update: Partial<JobDraft>) => void;
   setJobMatch: (jobMatch: JobMatchBundle) => void;
@@ -897,9 +904,13 @@ export function mergePersistedSessionState(
     recentAnalysesLoading: false,
     homeNavigationPending: false,
   } as AppState;
+  const parsedJobMatch = merged.jobMatch
+    ? JobMatchBundleSchema.safeParse(merged.jobMatch)
+    : null;
   const jobMatch =
-    merged.jobMatch && isJobMatchForAnalysis(merged.analysis, merged.jobMatch)
-      ? merged.jobMatch
+    parsedJobMatch?.success &&
+    isJobMatchForAnalysis(merged.analysis, parsedJobMatch.data)
+      ? parsedJobMatch.data
       : null;
   const activeResumeVariantId =
     jobMatch?.variant?.id === merged.activeResumeVariantId
@@ -1947,6 +1958,153 @@ export const useAppStore = create<AppState>()(
             interviewSessionVersion: state.interviewSessionVersion + 1,
           };
         }),
+      stageEvidenceRewrite: (
+        suggestionId,
+        supplementalFacts,
+        rewrittenText,
+        sourceVersion,
+      ) => {
+        let staged = false;
+        set((state) => {
+          if (!state.analysis || state.homeNavigationPending) return state;
+          const facts = supplementalFacts.trim();
+          const rewrite = rewrittenText.trim();
+          const suggestion = state.analysis.suggestions.find(
+            (item) => item.id === suggestionId,
+          );
+          if (
+            !facts ||
+            !rewrite ||
+            !suggestion ||
+            suggestion.status !== "pending" ||
+            suggestion.resumeRevision !== state.analysis.resume.revision ||
+            (suggestion.kind !== "needs_proof" &&
+              suggestion.kind !== "ask_user") ||
+            !suggestionBeforeHashMatches(
+              state.analysis.resume.ast,
+              suggestion,
+            )
+          ) {
+            return state;
+          }
+          const patches = confirmedReplacePatch(
+            state.analysis.resume.ast,
+            suggestion,
+            rewrite,
+          );
+          if (!patches) return state;
+
+          const suggestionSourceIds = new Set(suggestion.sourceBlockIds);
+          const linkedClaim =
+            state.analysis.claims.find((claim) =>
+              suggestion.claimIds.includes(claim.id),
+            ) ??
+            state.analysis.claims.find(
+              (claim) =>
+                normalizeText(claim.text) ===
+                  normalizeText(suggestion.originalText) &&
+                (suggestionSourceIds.size === 0 ||
+                  claim.sourceBlockIds.some((id) =>
+                    suggestionSourceIds.has(id),
+                  )),
+            );
+          const claimId =
+            linkedClaim?.id ??
+            stableId(
+              "claim-user",
+              `${state.analysis.resume.id}:${state.analysis.resume.revision}:${suggestion.id}`,
+            );
+          const evidenceId = stableId(
+            "user-statement",
+            `${claimId}:${suggestion.id}`,
+          );
+          const userStatement: EvidenceAsset = {
+            id: evidenceId,
+            kind: "user_statement",
+            label: "用户补充事实",
+            content: facts,
+            sourceBlockIds: [],
+            verifiedByUser: true,
+            confidence: 0.9,
+          };
+          const claims: Claim[] = linkedClaim
+            ? state.analysis.claims.map((claim) =>
+                claim.id === claimId
+                  ? {
+                      ...claim,
+                      status:
+                        claim.status === "supported"
+                          ? "supported"
+                          : "user_confirmed",
+                      confidence: Math.max(0.8, claim.confidence),
+                      evidenceAssetIds: [
+                        ...new Set([...claim.evidenceAssetIds, evidenceId]),
+                      ],
+                    }
+                  : claim,
+              )
+            : [
+                ...state.analysis.claims,
+                {
+                  id: claimId,
+                  text: suggestion.originalText,
+                  ...claimParts(suggestion.originalText),
+                  sourceBlockIds: suggestion.sourceBlockIds,
+                  evidenceAssetIds: [evidenceId],
+                  status: "user_confirmed",
+                  confidence: 0.8,
+                },
+              ];
+          const suggestions = state.analysis.suggestions.map((item) =>
+            item.id === suggestion.id
+              ? {
+                  ...item,
+                  claimIds: [...new Set([...item.claimIds, claimId])],
+                  kind: "rewrite" as const,
+                  proposedText: rewrite,
+                  patches,
+                  rationale: `${item.rationale} AI 已根据补充事实生成改写，请核对后接受。`,
+                }
+              : item,
+          );
+          const evidence = [
+            ...state.analysis.evidence.filter(
+              (asset) => asset.id !== evidenceId,
+            ),
+            userStatement,
+          ];
+          const nextAnalysis = {
+            ...state.analysis,
+            claims,
+            suggestions,
+            evidence,
+            processing: {
+              ...state.analysis.processing,
+              capabilityVersions: {
+                ...state.analysis.processing.capabilityVersions,
+                [sourceVersion.split("@")[0] || "copy.rewrite"]:
+                  sourceVersion,
+              },
+            },
+          };
+          staged = true;
+          return {
+            analysis: nextAnalysis,
+            resumeChat: resumeChatAfterRevision(
+              state.resumeChat,
+              nextAnalysis,
+              `已补充事实并生成待审阅改写：${facts}`,
+            ),
+            undoStack: [
+              ...state.undoStack,
+              snapshot(state.analysis),
+            ].slice(-20),
+            ...invalidatedDerivedState(),
+            interviewSessionVersion: state.interviewSessionVersion + 1,
+          };
+        });
+        return staged;
+      },
       undo: () => {
         activeRevisionAnalysis?.controller.abort();
         activeRevisionAnalysis = null;
@@ -2191,9 +2349,7 @@ export const useAppStore = create<AppState>()(
           accepted = true;
           return {
             renders: { ...state.renders, [render.template]: render },
-            previewMode: state.analysis?.originalPdfBase64
-              ? "compare"
-              : "current",
+            previewMode: "current",
           };
         });
         if (accepted) {
@@ -2428,13 +2584,8 @@ export const useAppStore = create<AppState>()(
           activeResumeVariantId,
           resumePanel,
           selectedTemplate: record.payload.selectedTemplate,
-          previewMode: activeResumeVariantId
-            ? "current"
-            : hasCachedRender
-              ? originalPdfBase64
-                ? "compare"
-                : "current"
-              : "original",
+          previewMode:
+            activeResumeVariantId || hasCachedRender ? "current" : "original",
           previewedRenderHashes: [],
           renders,
           undoStack: [],

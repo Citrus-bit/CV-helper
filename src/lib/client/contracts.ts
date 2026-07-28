@@ -63,6 +63,44 @@ export type ResumeAnalysisResponse = z.infer<
   typeof ResumeAnalysisResponseSchema
 >;
 
+export const EvidenceRewriteRequestSchema = z
+  .object({
+    resumeId: z.string().min(1).max(160),
+    resumeRevision: z.number().int().nonnegative(),
+    suggestionId: z.string().min(1).max(160),
+    locale: z.enum(["zh-CN", "en-US", "zh-TW", "mixed"]),
+    originalText: z.string().trim().min(2).max(6_000),
+    supplementalFacts: z.string().trim().min(2).max(2_000),
+  })
+  .strict();
+export type EvidenceRewriteRequest = z.infer<
+  typeof EvidenceRewriteRequestSchema
+>;
+
+export const EvidenceRewriteResponseSchema = z
+  .object({
+    resumeId: z.string().min(1).max(160),
+    resumeRevision: z.number().int().nonnegative(),
+    suggestionId: z.string().min(1).max(160),
+    rewrittenText: z.string().trim().min(2).max(4_000),
+    sourceVersion: z.string().min(1),
+    durationMs: z.number().nonnegative(),
+  })
+  .strict();
+export type EvidenceRewriteResponse = z.infer<
+  typeof EvidenceRewriteResponseSchema
+>;
+
+function enhancedAiSourceVersion(capabilityId: string) {
+  const escapedId = capabilityId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return z
+    .string()
+    .regex(
+      new RegExp(`^${escapedId}@(2|[3-9]|\\d{2,})\\.`),
+      `${capabilityId} must come from the enhanced AI provider.`,
+    );
+}
+
 export const JobMatchBundleSchema = z
   .object({
     sourceResumeId: z.string().min(1),
@@ -73,6 +111,12 @@ export const JobMatchBundleSchema = z
     coverage: z.number().min(0).max(100),
     summary: z.string(),
     riskFlags: z.array(z.string()),
+    capabilityVersions: z
+      .object({
+        "jd.parse": enhancedAiSourceVersion("jd.parse"),
+        "job.match": enhancedAiSourceVersion("job.match"),
+      })
+      .strict(),
     variant: ResumeVariantSchema.optional(),
     variantUnavailableReason: z.string().min(1).optional(),
   })
@@ -118,12 +162,18 @@ export const JobDraftSchema = z
 export type JobDraft = z.infer<typeof JobDraftSchema>;
 
 export const InterviewPlanSchema = z.object({
-  sourceResumeId: z.string().min(1).optional(),
-  sourceResumeRevision: z.number().int().nonnegative().optional(),
+  sourceResumeId: z.string().min(1),
+  sourceResumeRevision: z.number().int().nonnegative(),
   questions: z.array(InterviewQuestionSchema),
   stories: z.array(InterviewStorySchema),
   durationMinutes: z.number().int().positive(),
   maxFollowUps: z.number().int().nonnegative(),
+  capabilityVersions: z
+    .object({
+      "jd.parse": enhancedAiSourceVersion("jd.parse").optional(),
+      "interview.plan": enhancedAiSourceVersion("interview.plan"),
+    })
+    .strict(),
 });
 export type InterviewPlan = z.infer<typeof InterviewPlanSchema>;
 
@@ -150,12 +200,18 @@ export const AnswerCoachingSchema = z.object({
 export type AnswerCoaching = z.infer<typeof AnswerCoachingSchema>;
 
 export const EvaluationResponseSchema = z.object({
-  sourceResumeId: z.string().min(1).optional(),
-  sourceResumeRevision: z.number().int().nonnegative().optional(),
+  sourceResumeId: z.string().min(1),
+  sourceResumeRevision: z.number().int().nonnegative(),
   evaluation: AnswerEvaluationSchema,
   // Optional so a v3 session created before coaching was exposed can still be restored.
   coaching: AnswerCoachingSchema.optional(),
   consistencyWarnings: z.array(z.string()).transform(dedupeConsistencyWarnings),
+  capabilityVersions: z
+    .object({
+      "answer.evaluate": enhancedAiSourceVersion("answer.evaluate"),
+      "answer.coach": enhancedAiSourceVersion("answer.coach"),
+    })
+    .strict(),
 });
 export type EvaluationResponse = z.infer<typeof EvaluationResponseSchema>;
 

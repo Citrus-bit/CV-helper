@@ -215,6 +215,45 @@ describe("ResumeContentEditor", () => {
     expect(useAppStore.getState().undoStack).toHaveLength(1);
   });
 
+  it("preserves consecutive spaces in the headline preview and saved resume", async () => {
+    useAppStore.getState().setAnalysis(analysisFixture(false));
+    api.renderResume.mockResolvedValue(renderFixture(1));
+    const user = userEvent.setup();
+    render(createElement(ResumeContentEditor));
+
+    await user.click(
+      screen.getByRole("button", { name: /直接编辑简历内容/ }),
+    );
+    const headline = screen.getByRole("textbox", {
+      name: "求职方向 / 个人标题",
+    });
+    const spacedHeadline = "年 龄：19    性 别：男";
+    await user.type(headline, spacedHeadline);
+
+    expect(
+      screen.getByText(
+        (_content, element) =>
+          element?.tagName === "P" && element.textContent === spacedHeadline,
+      ),
+    ).toHaveClass("whitespace-pre-wrap");
+
+    await user.click(
+      screen.getByRole("button", { name: "保存并生成 PDF" }),
+    );
+
+    await waitFor(() => expect(api.renderResume).toHaveBeenCalledTimes(1));
+    expect(api.renderResume).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ast: expect.objectContaining({
+          contact: expect.objectContaining({ headline: spacedHeadline }),
+        }),
+      }),
+    );
+    expect(
+      useAppStore.getState().analysis?.resume.ast.contact.headline,
+    ).toBe(spacedHeadline);
+  });
+
   it("keeps the dialog open when the user rejects discarding unsaved edits", async () => {
     useAppStore.getState().setAnalysis(analysisFixture(false));
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);

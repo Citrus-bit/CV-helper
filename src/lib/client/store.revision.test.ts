@@ -178,6 +178,10 @@ function jobMatchFixture(revision: number): JobMatchBundle {
     coverage: 0,
     summary: "仅表示材料匹配度。",
     riskFlags: [],
+    capabilityVersions: {
+      "jd.parse": "jd.parse@2.0.0",
+      "job.match": "job.match@2.0.0",
+    },
     variant: {
       id: "variant-1",
       baseResumeId: "resume-1",
@@ -215,6 +219,9 @@ function interviewPlanFixture(revision: number): InterviewPlan {
     stories: [],
     durationMinutes: 20,
     maxFollowUps: 2,
+    capabilityVersions: {
+      "interview.plan": "interview.plan@2.0.0",
+    },
   };
 }
 
@@ -237,6 +244,10 @@ function evaluationFixture(revision: number): EvaluationResponse {
       citedAnswerFragments: [],
     },
     consistencyWarnings: [],
+    capabilityVersions: {
+      "answer.evaluate": "answer.evaluate@2.0.0",
+      "answer.coach": "answer.coach@2.0.0",
+    },
   };
 }
 
@@ -247,7 +258,7 @@ function seedDerived(revision: number) {
     evaluations: [evaluationFixture(revision)],
     renders: { professional: { template: "professional" } as RenderResponse },
     previewedRenderHashes: ["previewed"],
-    previewMode: "compare",
+    previewMode: "current",
   });
 }
 

@@ -63,6 +63,36 @@ const SPARSE_CHINESE_AST = ResumeASTSchema.parse({
   sections: [],
 });
 
+const EXPECTED_SQUARE_AST = ResumeASTSchema.parse({
+  schemaVersion: "1.0",
+  locale: "zh-CN",
+  contact: {
+    name: "测试候选人",
+    headline: "前端工程师",
+    links: [],
+  },
+  sections: [
+    {
+      id: "skills",
+      type: "skills",
+      title: "专业技能",
+      entries: [
+        {
+          id: "skills-entry",
+          title: "技术能力",
+          bullets: [
+            "□ 熟悉 TypeScript 和 React",
+            "□ 熟悉 TypeScript 和 React",
+          ],
+          keywords: [],
+          sourceBlockIds: [],
+        },
+      ],
+      sourceBlockIds: [],
+    },
+  ],
+});
+
 async function whiteTextPdf() {
   const document = await PDFDocument.create();
   const page = document.addPage([595, 842]);
@@ -425,6 +455,22 @@ describe.sequential("export visual hard gate", () => {
     expect(
       report.checks.find((check) => check.id === "text-visibility")?.status,
     ).toBe("pass");
+  });
+
+  it("does not treat a visibly rendered square from the source as a missing glyph", async () => {
+    const resume = toRenderableResume(EXPECTED_SQUARE_AST);
+    const pdf = await renderResumePdf(resume, "professional");
+    const report = await auditRenderedPdf(
+      pdf,
+      resume,
+      { resumeId: "expected-square", revision: 1, template: "professional" },
+      astContentFragments(EXPECTED_SQUARE_AST),
+    );
+
+    expect(
+      report.checks.find((check) => check.id === "missing-glyphs")?.status,
+    ).toBe("pass");
+    expect(report.downloadable).toBe(true);
   });
 
   it("rejects PDFs whose trusted page tree exceeds five pages", async () => {

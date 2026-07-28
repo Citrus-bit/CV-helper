@@ -268,18 +268,43 @@ export const RequirementEvidenceMapSchema = z.object({
 });
 export type RequirementEvidenceMap = z.infer<typeof RequirementEvidenceMapSchema>;
 
+const ResumeVariantReorderChangeSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(["section_reorder", "entry_reorder", "bullet_reorder"]),
+  path: z.string().startsWith("/sections"),
+  beforeIds: z.array(z.string().min(1)).min(2),
+  afterIds: z.array(z.string().min(1)).min(2),
+  requirementIds: z.array(z.string().min(1)).default([]),
+  claimIds: z.array(z.string().min(1)).default([]),
+  explanation: z.string().min(1),
+});
+
+const ResumeVariantHeadlineChangeSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal("headline_update"),
+  path: z.literal("/contact/headline"),
+  beforeText: z.string(),
+  afterText: z.string().trim().min(1),
+  requirementIds: z.array(z.string().min(1)).default([]),
+  claimIds: z.array(z.string().min(1)).default([]),
+  explanation: z.string().min(1),
+});
+
 export const ResumeVariantChangeSchema = z
-  .object({
-    id: z.string().min(1),
-    kind: z.enum(["section_reorder", "entry_reorder"]),
-    path: z.string().startsWith("/sections"),
-    beforeIds: z.array(z.string().min(1)).min(2),
-    afterIds: z.array(z.string().min(1)).min(2),
-    requirementIds: z.array(z.string().min(1)).default([]),
-    claimIds: z.array(z.string().min(1)).default([]),
-    explanation: z.string().min(1),
-  })
+  .discriminatedUnion("kind", [
+    ResumeVariantReorderChangeSchema,
+    ResumeVariantHeadlineChangeSchema,
+  ])
   .superRefine((change, context) => {
+    if (change.kind === "headline_update") {
+      if (change.beforeText.trim() === change.afterText.trim()) {
+        context.addIssue({
+          code: "custom",
+          message: "Variant headline change must update the target role.",
+        });
+      }
+      return;
+    }
     if (change.beforeIds.length !== change.afterIds.length) {
       context.addIssue({
         code: "custom",
