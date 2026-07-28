@@ -14,10 +14,12 @@ import { useAppStore } from "@/lib/client/store";
 
 const mocks = vi.hoisted(() => ({
   generateEvidenceRewrite: vi.fn(),
+  renderResume: vi.fn(),
 }));
 
 vi.mock("@/lib/client/api", () => ({
   generateEvidenceRewrite: mocks.generateEvidenceRewrite,
+  renderResume: mocks.renderResume,
 }));
 
 import { SuggestionReview } from "./suggestion-review";
@@ -144,11 +146,89 @@ function analysisFixture(): AnalysisBundle {
 afterEach(() => {
   cleanup();
   mocks.generateEvidenceRewrite.mockReset();
+  mocks.renderResume.mockReset();
   useAppStore.getState().reset();
   window.sessionStorage.clear();
 });
 
 describe("evidence rewrite dialog", () => {
+  it("accepts and applies the complete safe rewrite batch without hiding it for another AI wait", async () => {
+    const analysis = analysisFixture();
+    const originalText = analysis.resume.ast.sections[0].entries[0].bullets[0];
+    const proposedText =
+      "优化接口调用链路，将响应时间从 500ms 降低至 150ms。";
+    analysis.suggestions = [
+      {
+        id: "suggestion-safe-1",
+        resumeRevision: 0,
+        sourceBlockIds: ["block-1"],
+        claimIds: [],
+        kind: "rewrite",
+        status: "pending",
+        originalText,
+        proposedText,
+        rationale: "调整动作顺序，让性能优化结果更容易扫描。",
+        beforeHash: stableId("hash", originalText),
+        patches: [
+          {
+            operation: "replace",
+            path: "/sections/0/entries/0/bullets/0",
+            value: proposedText,
+          },
+        ],
+        affectedDimensions: ["clarity"],
+        factRisk: "none",
+        interviewRisk: "none",
+      },
+    ];
+    mocks.renderResume.mockResolvedValue({
+      template: "professional",
+      pdfBase64: "JVBERi0xLjQK",
+      sha256: "rendered-safe-batch",
+      report: {
+        resumeId: analysis.resume.id,
+        resumeRevision: 1,
+        template: "professional",
+        artifactSha256: "rendered-safe-batch",
+        downloadable: true,
+        score: 100,
+        pageCount: 1,
+        checks: [],
+      },
+      hardGate: { passed: true, blockingCheckIds: [] },
+      astContentCovered: true,
+    });
+    useAppStore.getState().setAnalysis(analysis);
+    const user = userEvent.setup();
+    render(createElement(SuggestionReview));
+
+    await user.click(
+      screen.getByRole("button", { name: "一键接受并应用 1 条" }),
+    );
+
+    expect(
+      useAppStore.getState().analysis?.resume.ast.sections[0].entries[0]
+        .bullets[0],
+    ).toBe(proposedText);
+    expect(useAppStore.getState().analysis?.suggestions[0].status).toBe(
+      "accepted",
+    );
+    expect(await screen.findByText(/已一次应用 1 条可直接修改项/)).toBeVisible();
+    expect(mocks.renderResume).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 1, template: "professional" }),
+    );
+    expect(useAppStore.getState()).toMatchObject({
+      previewMode: "current",
+      renders: { professional: { sha256: "rendered-safe-batch" } },
+    });
+    expect(
+      screen.getByText(/不会在最终评分后再生成第二批建议/),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "完成修改并查看最终评分" }),
+    ).toBeVisible();
+  });
+
   it("generates a reviewable paragraph from supplemental facts without a linked claim", async () => {
     const rewrittenText =
       "使用 JMeter 在 QPS 1000 场景下完成压测，将接口响应时间从 500ms 降低至 150ms。";

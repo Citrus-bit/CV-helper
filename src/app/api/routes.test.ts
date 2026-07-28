@@ -948,8 +948,15 @@ describe.sequential("API routes", () => {
         "overlap",
         "font-embedding",
         "ats-order",
+        "revision-reference",
       ]),
     );
+    expect(
+      result.report.checks.find((item) => item.id === "revision-reference"),
+    ).toMatchObject({
+      status: "pass",
+      details: expect.stringContaining("当前最新版本 r2"),
+    });
     expect(
       result.report.checks.find((item) => item.id === "visual-content")?.status,
     ).toBe("pass");
@@ -990,7 +997,7 @@ describe.sequential("API routes", () => {
     ).toBe("%PDF-");
     expect(result.report.checks.map((item) => item.id)).toEqual(
       expect.arrayContaining([
-        "page-count-change",
+        "revision-reference",
         "font-size",
         "line-spacing",
         "orphan-heading",

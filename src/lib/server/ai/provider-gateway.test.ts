@@ -211,7 +211,9 @@ describe("OpenAI-compatible provider gateway", () => {
   it("describes resume review as a contextual editing task instead of a generic checklist", () => {
     const instruction = providerInstructions["resume.suggest"];
 
-    expect(instruction).toContain("at most 8 suggestions");
+    expect(instruction).toContain("at most 32 suggestions");
+    expect(instruction).toContain("one complete review batch");
+    expect(instruction).toContain("Do not intentionally defer a visible issue");
     expect(instruction).toContain("complete, ready-to-paste replacement sentence");
     expect(instruction).toContain("Do not reuse stock rationales");
     expect(instruction).toContain("do not return use_as_is placeholders");
@@ -542,10 +544,10 @@ describe("OpenAI-compatible provider gateway", () => {
     ]);
   });
 
-  it("returns at most the first eight validated AI findings", async () => {
+  it("keeps the complete validated finding batch for a typical resume", async () => {
     const longResume = structuredClone(resume);
     const bullets = Array.from(
-      { length: 10 },
+      { length: 14 },
       (_, index) => `主要负责第 ${index + 1} 个交付流程.`,
     );
     longResume.sourceBlocks = bullets.map((text, index) => ({
@@ -553,7 +555,7 @@ describe("OpenAI-compatible provider gateway", () => {
       pageIndex: 0,
       order: index,
       text,
-      bbox: { x: 0.1, y: 0.05 + index * 0.08, width: 0.8, height: 0.04 },
+      bbox: { x: 0.1, y: 0.03 + index * 0.065, width: 0.8, height: 0.04 },
       source: "native" as const,
       confidence: 1,
       role: "list-item" as const,
@@ -588,11 +590,11 @@ describe("OpenAI-compatible provider gateway", () => {
     );
 
     expect(result.usedFallback).toBe(false);
-    expect(result.data.suggestions).toHaveLength(8);
+    expect(result.data.suggestions).toHaveLength(14);
     expect(
       result.data.suggestions.map((suggestion) => suggestion.sourceBlockIds),
     ).toEqual(
-      Array.from({ length: 8 }, (_, index) => [`bulk-block-${index}`]),
+      Array.from({ length: 14 }, (_, index) => [`bulk-block-${index}`]),
     );
   });
 

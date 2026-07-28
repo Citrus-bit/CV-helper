@@ -20,6 +20,7 @@ vi.mock("./capability-runtime", async (importOriginal) => {
 import {
   analyzeResumeRevisionWithAi,
   assertResumeAnalysisResponseForRequest,
+  scoreResumeRevisionWithAi,
 } from "./resume-analysis";
 
 const resume = ResumeDocumentSchema.parse({
@@ -111,6 +112,24 @@ describe("revision AI analysis service", () => {
         "resume.score": "resume.score@2.1.0",
         "resume.suggest": "resume.suggest@2.2.0",
       },
+    });
+  });
+
+  it("supports a final score without generating another suggestion batch", async () => {
+    mocks.invokeRequiredAiCapability.mockResolvedValueOnce(
+      capabilityResult(scoreData(), "resume.score@2.1.0"),
+    );
+
+    const result = await scoreResumeRevisionWithAi({ resume, claims: [] });
+
+    expect(
+      mocks.invokeRequiredAiCapability.mock.calls.map((call) => call[0]),
+    ).toEqual(["resume.score"]);
+    expect(result).toMatchObject({
+      resumeId: resume.id,
+      resumeRevision: resume.revision,
+      scorecard: { sourceVersion: "resume.score@2.1.0" },
+      sourceVersion: "resume.score@2.1.0",
     });
   });
 

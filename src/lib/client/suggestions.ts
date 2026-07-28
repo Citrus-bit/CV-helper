@@ -21,8 +21,6 @@ export function safeAiRewriteSuggestions(
       suggestion.status === "pending" &&
       suggestion.resumeRevision === analysis.resume.revision &&
       suggestion.kind === "rewrite" &&
-      suggestion.factRisk !== "medium" &&
-      suggestion.factRisk !== "high" &&
       Boolean(suggestion.proposedText?.trim()) &&
       suggestion.proposedText !== suggestion.originalText &&
       suggestionBeforeHashMatches(analysis.resume.ast, suggestion),

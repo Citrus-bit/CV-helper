@@ -127,7 +127,6 @@ export function TemplateExport() {
         revision: target.revision,
         ast: target.ast,
         template,
-        sourcePageCount: analysis.resume.pageCount,
       }),
     onSuccess: setRender,
   });
@@ -211,6 +210,10 @@ export function TemplateExport() {
         </h2>
         <p className="mt-1 text-xs leading-5 text-muted">
           正在处理{target.name}，预览和下载来自同一份真实 PDF，不调用 AI。
+        </p>
+        <p className="mt-1 text-xs leading-5 text-muted">
+          检查基准：当前最新版本 r{target.revision}。原 PDF 只用于人工对照，
+          不参与自动质量判定。
         </p>
       </div>
 

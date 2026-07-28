@@ -245,7 +245,7 @@ type CapabilityResult<T> = {
 
 ## 6. 排版与质量审计
 
-`layout.recommend` 根据 AST 内容字符量、目标页数和可选模板偏好推荐 `professional | minimal | compact`，并估算页数；当前导出 UI 通过 `/api/layout-recommend` 展示结果。`resume.render` 读取 Resume AST 中需要展示的内容（包括用户选择保留的联系方式），不读取原 PDF。`export.audit` 独立读取 AST 和渲染结果，同时抽取文字层并在服务器逐页栅格化；它不信任客户端的预览结论。
+`layout.recommend` 根据 AST 内容字符量、目标页数和可选模板偏好推荐 `professional | minimal | compact`，并估算页数；当前导出 UI 通过 `/api/layout-recommend` 展示结果。`resume.render` 读取当前最新 revision 的 Resume AST 中需要展示的内容（包括用户选择保留的联系方式），不读取原 PDF。`export.audit` 以同一 revision 的 AST 作为唯一自动内容基准，独立读取渲染结果，同时抽取文字层并在服务器逐页栅格化；原 PDF 和历史 revision 只用于人工对照，不参与自动质量分，它也不信任客户端的预览结论。
 
 当前自动审计读取 PDF 文字层和文本对象 bbox，覆盖：
 
@@ -253,7 +253,7 @@ type CapabilityResult<T> = {
 - 服务器逐页检查非白像素、强对比像素、亮度范围与亮度方差；纯白、纯透明或无实际标记的纯色页直接失败。
 - 服务器分别渲染完整页、去文字页和强制黑色文字 mask，用差分证明文字本身实际改变了画面；每个 text item 再沿真实 mask 墨迹列分成最多 16 个局部带，并用约 0.75 字符宽的重叠滑窗检查局部贡献。白字白底、装饰线掩护、句尾 10% 遮挡和中段窄数字遮挡不能只凭完整文字层通过。
 - 文本 bbox 越界、显著文本重叠、24pt 左右安全边界、低于 7pt 的文本对象和页末孤立标题信号。
-- 替代字符/空方框信号、PDF 内 `FontFile*` 字体嵌入信号、页数与原稿页数变化。
+- 替代字符/空方框信号、PDF 内 `FontFile*` 字体嵌入信号，以及当前 PDF 自身的分页密度。
 - ATS 线性文字提取顺序、PDF 结构和下载 SHA-256。
 - 下载请求再次执行 `export.audit`；客户端再计算响应字节 SHA-256，双重一致后才创建本地下载。
 - 确认前，客户端 PDF.js 必须把新版第一页绘制到 canvas，并检查完整画布的非白像素比例、强对比像素、亮度范围和亮度方差；纯白或纯透明画布不会写入 `previewedRenderHashes`。

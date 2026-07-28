@@ -79,4 +79,14 @@ describe("AI suggestion source and bulk eligibility", () => {
     expect(suggestionGenerationSource(analysis)).toBe("rules");
     expect(safeAiRewriteSuggestions(analysis)).toEqual([]);
   });
+
+  it("includes a server-validated rewrite even when its interview risk is high", () => {
+    const analysis = analysisFixture();
+    analysis.suggestions[0].factRisk = "high";
+    analysis.suggestions[0].interviewRisk = "high";
+
+    expect(safeAiRewriteSuggestions(analysis).map((item) => item.id)).toEqual([
+      "suggestion-1",
+    ]);
+  });
 });

@@ -121,7 +121,9 @@ export function ResumeWorkspace() {
             <p>
               {aiStatus === "failed"
                 ? "当前版本的 AI 评分未完成，旧分数不会作为当前结论展示。"
-                : "当前版本正在进行 AI 分析，完成前不展示旧分数。"}
+                : aiStatus === "stale"
+                  ? "修改已应用。处理完本次完整清单后，只更新最终评分，不会再生成第二批建议。"
+                  : "当前版本正在进行 AI 分析，完成前不展示旧分数。"}
             </p>
             {aiStatus === "failed" ? (
               <button

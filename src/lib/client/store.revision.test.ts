@@ -4,10 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiMocks = vi.hoisted(() => ({
   analyzeResumeRevision: vi.fn(),
+  scoreResumeRevision: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
   analyzeResumeRevision: apiMocks.analyzeResumeRevision,
+  scoreResumeRevision: apiMocks.scoreResumeRevision,
 }));
 
 import {
@@ -264,7 +266,11 @@ function seedDerived(revision: number) {
 
 beforeEach(() => {
   apiMocks.analyzeResumeRevision.mockReset();
+  apiMocks.scoreResumeRevision.mockReset();
   apiMocks.analyzeResumeRevision.mockImplementation(
+    () => new Promise(() => undefined),
+  );
+  apiMocks.scoreResumeRevision.mockImplementation(
     () => new Promise(() => undefined),
   );
 });
@@ -647,6 +653,148 @@ describe("resume-derived state revisions", () => {
     expect(revised.analysis?.processing.capabilityVersions["resume.suggest"])
       .toBe("resume.suggest@2.0.0");
     expect(revised.undoStack).toHaveLength(1);
+    expect(revised.analysis?.processing.aiAnalysis?.status).toBe("stale");
+    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
+  });
+
+  it("keeps the analyzed batch available across individual accepts until one explicit refresh", async () => {
+    const analysis = analysisFixture();
+    analysis.resume.ast.sections[0].entries.push({
+      id: "entry-2",
+      title: "工程师",
+      current: false,
+      bullets: ["主要负责数据平台"],
+      keywords: ["数据平台"],
+      sourceBlockIds: ["block-2"],
+    });
+    analysis.suggestions.push(
+      SuggestionSchema.parse({
+        id: "suggestion-2",
+        resumeRevision: 0,
+        sourceBlockIds: ["block-2"],
+        claimIds: [],
+        kind: "rewrite",
+        status: "pending",
+        originalText: "主要负责数据平台",
+        proposedText: "负责数据平台",
+        rationale: "删去弱化词。",
+        beforeHash: stableId("hash", "主要负责数据平台"),
+        patches: [
+          {
+            operation: "replace",
+            path: "/sections/0/entries/1/bullets/0",
+            value: "负责数据平台",
+          },
+        ],
+        affectedDimensions: ["clarity"],
+        factRisk: "none",
+        interviewRisk: "none",
+      }),
+    );
+    useAppStore.getState().setAnalysis(analysis);
+
+    useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
+    useAppStore.getState().decideSuggestion("suggestion-2", "accepted");
+    await Promise.resolve();
+
+    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
+    expect(useAppStore.getState().analysis).toMatchObject({
+      resume: { revision: 2 },
+      suggestions: [
+        { id: "suggestion-1", status: "accepted" },
+        { id: "suggestion-2", status: "accepted" },
+      ],
+      processing: { aiAnalysis: { status: "stale" } },
+    });
+
+    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(aiRevisionResult(2));
+    useAppStore.getState().retryAiAnalysis();
+    await vi.waitFor(() =>
+      expect(apiMocks.analyzeResumeRevision).toHaveBeenCalledOnce(),
+    );
+    await vi.waitFor(() =>
+      expect(
+        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+      ).toBe("fresh"),
+    );
+  });
+
+  it("does not reopen a target that was already reviewed in the completed batch", async () => {
+    const analysis = analysisFixture();
+    useAppStore.getState().setAnalysis(analysis);
+    useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
+    const repeatedTarget = SuggestionSchema.parse({
+      ...analysis.suggestions[0],
+      id: "suggestion-repeated-target",
+      resumeRevision: 1,
+      status: "pending",
+      originalText: "负责核心平台开发",
+      proposedText: "负责平台核心开发",
+      beforeHash: stableId("hash", "负责核心平台开发"),
+      patches: [
+        {
+          operation: "replace",
+          path: "/sections/0/entries/0/bullets/0",
+          value: "负责平台核心开发",
+        },
+      ],
+    });
+    apiMocks.analyzeResumeRevision.mockResolvedValueOnce({
+      ...aiRevisionResult(1),
+      suggestions: [repeatedTarget],
+    });
+
+    useAppStore.getState().retryAiAnalysis();
+    await vi.waitFor(() =>
+      expect(
+        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+      ).toBe("fresh"),
+    );
+
+    expect(useAppStore.getState().analysis?.suggestions).toEqual([]);
+    expect(useAppStore.getState().selectedSuggestionId).toBeNull();
+  });
+
+  it("finalizes the completed batch with score only and no second suggestion pass", async () => {
+    const analysis = analysisFixture();
+    useAppStore.getState().setAnalysis(analysis);
+    useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
+    const revised = useAppStore.getState().analysis!;
+    apiMocks.scoreResumeRevision.mockResolvedValueOnce({
+      resumeId: revised.resume.id,
+      resumeRevision: revised.resume.revision,
+      scorecard: {
+        ...revised.scorecard,
+        resumeRevision: revised.resume.revision,
+        total: 88,
+        summary: "最终评分已完成。",
+        sourceVersion: "resume.score@2.1.0",
+      },
+      sourceVersion: "resume.score@2.1.0",
+      durationMs: 25,
+    });
+
+    useAppStore.getState().finalizeSuggestionReview();
+
+    await vi.waitFor(() =>
+      expect(apiMocks.scoreResumeRevision).toHaveBeenCalledOnce(),
+    );
+    await vi.waitFor(() =>
+      expect(
+        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+      ).toBe("fresh"),
+    );
+    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
+    expect(useAppStore.getState().analysis).toMatchObject({
+      scorecard: { total: 88, summary: "最终评分已完成。" },
+      suggestions: [],
+      processing: {
+        aiAnalysis: {
+          scoreSourceVersion: "resume.score@2.1.0",
+          suggestionSourceVersion: "resume.suggest@2.0.0",
+        },
+      },
+    });
   });
 
   it("replaces pending rule output with regenerated AI suggestions", () => {

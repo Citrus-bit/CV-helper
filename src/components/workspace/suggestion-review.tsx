@@ -22,7 +22,7 @@ import {
   type SuggestionKind,
 } from "@/lib/domain";
 import { useAppStore } from "@/lib/client/store";
-import { generateEvidenceRewrite } from "@/lib/client/api";
+import { generateEvidenceRewrite, renderResume } from "@/lib/client/api";
 import { safeAiRewriteSuggestions } from "@/lib/client/suggestions";
 import { resumeTextSafetyError } from "@/lib/resume-text-safety";
 import {
@@ -276,11 +276,15 @@ export function SuggestionReview() {
   const selectSuggestion = useAppStore((state) => state.selectSuggestion);
   const decideSuggestion = useAppStore((state) => state.decideSuggestion);
   const retryAiAnalysis = useAppStore((state) => state.retryAiAnalysis);
+  const finalizeSuggestionReview = useAppStore(
+    (state) => state.finalizeSuggestionReview,
+  );
   const [editing, setEditing] = useState(false);
   const [manualText, setManualText] = useState("");
   const [bulkMessage, setBulkMessage] = useState("");
   const [bulkError, setBulkError] = useState("");
   const [optimizing, setOptimizing] = useState(false);
+  const [optimizingCount, setOptimizingCount] = useState(0);
 
   const selectedIndex = Math.max(
     0,
@@ -293,6 +297,8 @@ export function SuggestionReview() {
   const meta = suggestion ? kindMeta[suggestion.kind] : null;
   const Icon = meta?.icon ?? Pencil;
   const aiStatus = analysis.processing.aiAnalysis?.status ?? "failed";
+  const reviewingStaleBatch =
+    aiStatus === "stale" && analysis.suggestions.length > 0;
   const automaticSuggestions = useMemo(
     () => safeAiRewriteSuggestions(analysis),
     [analysis],
@@ -321,7 +327,7 @@ export function SuggestionReview() {
     return `第 ${first.pageIndex + 1} 页 · ${extractionLabel}`;
   }, [sourceBlocks]);
 
-  if (aiStatus !== "fresh") {
+  if (aiStatus !== "fresh" && !reviewingStaleBatch) {
     return (
       <div className="p-6 text-sm leading-6 text-muted" role="status">
         <p>
@@ -362,23 +368,42 @@ export function SuggestionReview() {
   async function optimizeWithAi() {
     setBulkMessage("");
     setBulkError("");
+    setOptimizingCount(automaticSuggestions.length);
     setOptimizing(true);
+    let count = 0;
     try {
-      const count = useAppStore.getState().applyAiSuggestions();
+      count = useAppStore.getState().applyAiSuggestions();
+      if (count > 0) {
+        const current = useAppStore.getState();
+        const resume = current.analysis!.resume;
+        const rendered = await renderResume({
+          resumeId: resume.id,
+          revision: resume.revision,
+          ast: resume.ast,
+          template: current.selectedTemplate,
+          sourcePageCount: resume.pageCount,
+        });
+        current.setRender(rendered);
+      }
       setBulkMessage(
         count > 0
-          ? `已应用 ${count} 条 AI 改写，可使用顶部撤销按钮恢复。`
+          ? `已一次应用 ${count} 条可直接修改项，并生成新版 PDF。需要补充事实的项目仍保留在本次清单中。`
           : "AI 已完成逐条分析，当前没有可在不补充事实的前提下自动应用的改写。",
       );
       setEditing(false);
     } catch (error) {
       setBulkError(
         error instanceof Error
-          ? error.message
-          : "AI 优化未完成，请稍后重试。",
+          ? count > 0
+            ? `修改已应用，但新版 PDF 生成失败：${error.message}`
+            : error.message
+          : count > 0
+            ? "修改已应用，但新版 PDF 生成失败，请在排版预览中重试。"
+            : "批量应用未完成，请稍后重试。",
       );
     } finally {
       setOptimizing(false);
+      setOptimizingCount(0);
     }
   }
 
@@ -392,7 +417,7 @@ export function SuggestionReview() {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 id="suggestions-heading" className="text-sm font-semibold">
-                逐条审阅
+                本次完整问题清单
               </h2>
               <span
                 className={`inline-flex items-center gap-1 rounded-[6px] px-2 py-0.5 text-[11px] font-medium ${
@@ -400,7 +425,7 @@ export function SuggestionReview() {
                 }`}
               >
                 <Sparkles aria-hidden="true" size={12} />
-                AI 分析
+                {reviewingStaleBatch ? "继续审阅" : "AI 已汇总"}
               </span>
             </div>
             <p className="mt-0.5 text-xs text-muted">
@@ -408,7 +433,7 @@ export function SuggestionReview() {
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {automaticSuggestions.length > 0 ? (
+            {automaticSuggestions.length > 0 || optimizing ? (
               <button
                 type="button"
                 onClick={() => void optimizeWithAi()}
@@ -417,19 +442,29 @@ export function SuggestionReview() {
               >
                 {optimizing ? (
                   <>
-                    <span>AI 优化中</span>
+                    <span>{`正在应用 ${optimizingCount} 条`}</span>
                     <EstimatedProgressText
-                      expectedDurationMs={estimatedDurations.aiRewrite}
-                      label="AI 简历优化预估进度"
+                      expectedDurationMs={estimatedDurations.pdfGeneration}
+                      label="新版 PDF 生成预估进度"
                       className="text-white/85"
                     />
                   </>
                 ) : (
                   <>
                     <Sparkles aria-hidden="true" size={16} />
-                    {`AI 一键优化 ${automaticSuggestions.length} 条`}
+                    {`一键接受并应用 ${automaticSuggestions.length} 条`}
                   </>
                 )}
+              </button>
+            ) : null}
+            {reviewingStaleBatch && pending === 0 && !optimizing ? (
+              <button
+                type="button"
+                onClick={finalizeSuggestionReview}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf]"
+              >
+                <Sparkles aria-hidden="true" size={16} />
+                完成修改并查看最终评分
               </button>
             ) : null}
             <div className="flex items-center gap-1">
@@ -473,6 +508,15 @@ export function SuggestionReview() {
           </p>
         ) : null}
       </div>
+
+      {reviewingStaleBatch ? (
+        <p
+          className="border-b border-line bg-[#fff7df] px-5 py-2 text-xs leading-5 text-[#72510b]"
+          role="status"
+        >
+          本次完整问题清单已一次生成。可直接改写项能一键全部应用；需补充事实的项目会留在同一清单中，不会在最终评分后再生成第二批建议。
+        </p>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
         <div className="flex flex-wrap items-center gap-2">

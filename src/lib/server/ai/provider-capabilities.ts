@@ -65,8 +65,10 @@ const ProviderSuggestionSchema = z.object({
 });
 
 const ProviderSuggestionOutputSchema = z.object({
-  suggestions: z.array(ProviderSuggestionSchema).max(16),
+  suggestions: z.array(ProviderSuggestionSchema).max(32),
 });
+
+const MAX_RESUME_SUGGESTIONS = 32;
 
 const INTERVIEW_PLAN_SOURCE = "interview.plan@2.0.0";
 
@@ -957,7 +959,7 @@ function validateCanonicalSuggestionOutput(
   );
 
   for (const candidate of actionable) {
-    if (suggestions.length >= 8) break;
+    if (suggestions.length >= MAX_RESUME_SUGGESTIONS) break;
     const rationaleKey = normalizedGroundingText(candidate.rationale);
     const questionKey = candidate.question
       ? normalizedGroundingText(candidate.question)
@@ -1138,7 +1140,7 @@ function validateProviderSuggestionOutput(
   };
 
   for (const candidate of output.suggestions) {
-    if (suggestions.length >= 8) break;
+    if (suggestions.length >= MAX_RESUME_SUGGESTIONS) break;
     const rationaleKey = normalizedGroundingText(candidate.rationale);
     const questionKey = candidate.question
       ? normalizedGroundingText(candidate.question)
@@ -1711,7 +1713,8 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
     "Never output or infer any person's name, email, phone number, URL, postal or residential address, or exact location, even if the input contains a redaction token. Do not use name, contact, address, or location labels; refer only to the resume or candidate generically.",
   ].join(" "),
   "resume.suggest": [
-    "Task: act as a senior resume editor and return only the most important actionable findings from the supplied editableTargets, ordered by recruiter impact, with at most 8 suggestions.",
+    "Task: act as a senior resume editor. Inspect every supplied editableTarget as one complete review batch before writing the response, aggregate all material actionable findings, order them by recruiter impact, and return at most 32 suggestions.",
+    "The response is the complete editing batch for this resume revision. Do not intentionally defer a visible issue to a later review pass, and do not split one target into multiple suggestions.",
     "scoreContext is the validated result of the immediately preceding independent resume.score request. Use it as read-only context to prioritize suggestions and avoid contradicting that assessment.",
     "For every item, diagnose that exact sentence rather than applying a generic checklist. rationale must identify the concrete wording or information issue in originalText, explain its effect on a recruiter, and state what the proposed change improves. Do not reuse stock rationales, repeated sentence templates, or the same question across unrelated bullets.",
     "When a fact-preserving improvement is possible, return kind rewrite with a complete, ready-to-paste replacement sentence. Prefer concise action-method-result ordering and remove weak, repetitive, or vague phrasing, but do not demand a metric when the source contains none.",

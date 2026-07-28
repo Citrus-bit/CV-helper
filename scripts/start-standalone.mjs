@@ -6,6 +6,22 @@ const projectRoot = process.cwd();
 const standaloneRoot = path.join(projectRoot, ".next", "standalone");
 const serverPath = path.join(standaloneRoot, "server.js");
 
+async function copyRequiredDirectory(relativePath, setupHint) {
+  const source = path.join(projectRoot, relativePath);
+  try {
+    await stat(source);
+  } catch {
+    console.error(
+      `Required runtime assets not found: ${relativePath}. ${setupHint}`,
+    );
+    process.exit(1);
+  }
+  await cp(source, path.join(standaloneRoot, relativePath), {
+    recursive: true,
+    force: true,
+  });
+}
+
 try {
   await stat(serverPath);
 } catch {
@@ -18,6 +34,15 @@ await cp(
   path.join(projectRoot, ".next", "static"),
   path.join(standaloneRoot, ".next", "static"),
   { recursive: true, force: true },
+);
+
+await copyRequiredDirectory(
+  ".tools/typst",
+  "Run `bash scripts/bootstrap-tools.sh` before starting the app.",
+);
+await copyRequiredDirectory(
+  "templates/typst",
+  "Restore the Typst templates before starting the app.",
 );
 
 try {

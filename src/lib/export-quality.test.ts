@@ -16,10 +16,10 @@ describe("export quality policy", () => {
         details: "存在小字号。",
       },
       {
-        id: "page-count-change",
-        label: "原版页数对照",
+        id: "pagination",
+        label: "分页密度",
         status: "warn" as const,
-        details: "新版增加一页。",
+        details: "当前版本超过两页。",
       },
     ].map(normalizeExportCheckSeverity);
 

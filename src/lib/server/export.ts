@@ -893,14 +893,10 @@ export async function auditRenderedPdf(
           : `当前为 ${pageCount} 页。`,
       ),
       check(
-        "page-count-change",
-        "原版页数对照",
-        meta.sourcePageCount && pageCount > meta.sourcePageCount
-          ? "warn"
-          : "pass",
-        meta.sourcePageCount
-          ? `原版 ${meta.sourcePageCount} 页，新版 ${pageCount} 页。`
-          : "本次未提供原版页数，已保留人工并排确认门槛。",
+        "revision-reference",
+        "内容检查基准",
+        "pass",
+        `仅以当前最新版本 r${meta.revision} 的结构化内容检查本 PDF；原版和历史版本不参与自动质量判定。`,
       ),
       check(
         "font-size",

@@ -298,6 +298,9 @@ describe("TemplateExport resume target", () => {
       ),
     );
     expect(screen.getByText(/正在处理产品经理定制版/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/检查基准：当前最新版本 r0/),
+    ).toBeInTheDocument();
     expect(await screen.findByText("测试")).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: "生成 Professional PDF" }),
@@ -311,6 +314,9 @@ describe("TemplateExport resume target", () => {
           ast: variantAst,
         }),
       ),
+    );
+    expect(api.renderResume).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sourcePageCount: expect.anything() }),
     );
     expect(screen.getByRole("button", { name: /^Minimal/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^Compact/ })).toBeDisabled();

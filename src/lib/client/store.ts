@@ -89,6 +89,7 @@ const LOCAL_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 let activeRevisionAnalysis:
   | { resumeId: string; revision: number; controller: AbortController }
   | null = null;
+let finalScoreRetryTarget: { resumeId: string; revision: number } | null = null;
 
 export type WorkspaceModule = "resume" | "job" | "interview";
 type WorkspaceStage = "upload" | "analyzing" | "workspace";
@@ -161,6 +162,7 @@ export type AppState = {
   applyAiSuggestions: () => number;
   applyManualResumeAst: (ast: ResumeAST, changeSummary?: string) => number | null;
   retryAiAnalysis: () => void;
+  finalizeSuggestionReview: () => void;
   beginResumeChatTurn: (content: string) => ResumeChatMessage | null;
   completeResumeChatTurn: (
     userMessageId: string,
@@ -305,6 +307,7 @@ function cancelWorkspaceActivity() {
   cancelAnalysisRequest();
   activeRevisionAnalysis?.controller.abort();
   activeRevisionAnalysis = null;
+  finalScoreRetryTarget = null;
   cancelAllClientRequests();
   disposeRegisteredClientRuntimeActivities();
 }
@@ -349,6 +352,19 @@ function rebindPendingSuggestion(
   return suggestionBeforeHashMatches(ast, rebound)
     ? rebound
     : { ...suggestion, status: "stale" };
+}
+
+function reviewedSuggestionPaths(suggestions: readonly Suggestion[]) {
+  return new Set(
+    suggestions
+      .filter(
+        (suggestion) =>
+          suggestion.status === "accepted" ||
+          suggestion.status === "manual" ||
+          suggestion.status === "rejected",
+      )
+      .flatMap((suggestion) => suggestion.patches.map((patch) => patch.path)),
+  );
 }
 
 function processingAfterLocalRevision(
@@ -1109,6 +1125,10 @@ function scheduleRevisionAiAnalysis(resumeId: string, revision: number) {
   queueMicrotask(() => void refreshRevisionAiAnalysis(resumeId, revision));
 }
 
+function scheduleFinalResumeScore(resumeId: string, revision: number) {
+  queueMicrotask(() => void refreshFinalResumeScore(resumeId, revision));
+}
+
 function scheduleRevisionAiAnalysisTarget(
   target: { resumeId: string; revision: number } | null,
 ) {
@@ -1172,12 +1192,19 @@ async function refreshRevisionAiAnalysis(resumeId: string, revision: number) {
     ) {
       return;
     }
+    const reviewedPaths = reviewedSuggestionPaths(
+      latest.analysis.suggestions,
+    );
+    const unreviewedSuggestions = result.suggestions.filter(
+      (suggestion) =>
+        !suggestion.patches.some((patch) => reviewedPaths.has(patch.path)),
+    );
     activeRevisionAnalysis = null;
     useAppStore.setState({
       analysis: {
         ...latest.analysis,
         scorecard: result.scorecard,
-        suggestions: result.suggestions,
+        suggestions: unreviewedSuggestions,
         processing: {
           ...latest.analysis.processing,
           capabilityVersions: {
@@ -1194,8 +1221,9 @@ async function refreshRevisionAiAnalysis(resumeId: string, revision: number) {
         },
       },
       selectedSuggestionId:
-        result.suggestions.find((suggestion) => suggestion.status === "pending")
-          ?.id ?? null,
+        unreviewedSuggestions.find(
+          (suggestion) => suggestion.status === "pending",
+        )?.id ?? null,
       error: null,
     });
     try {
@@ -1256,6 +1284,143 @@ async function refreshRevisionAiAnalysis(resumeId: string, revision: number) {
         error instanceof Error
           ? error.message
           : "当前版本的 AI 分析未完成，请重新进行 AI 分析。",
+    });
+  }
+}
+
+async function refreshFinalResumeScore(resumeId: string, revision: number) {
+  activeRevisionAnalysis?.controller.abort();
+  const controller = new AbortController();
+  const request = { resumeId, revision, controller };
+  activeRevisionAnalysis = request;
+  const state = useAppStore.getState();
+  if (
+    state.analysis?.resume.id !== resumeId ||
+    state.analysis.resume.revision !== revision ||
+    state.analysis.suggestions.some((suggestion) => suggestion.status === "pending")
+  ) {
+    activeRevisionAnalysis = null;
+    return;
+  }
+  useAppStore.setState({
+    analysis: {
+      ...state.analysis,
+      processing: {
+        ...state.analysis.processing,
+        aiAnalysis: {
+          ...(state.analysis.processing.aiAnalysis ?? {
+            analyzedRevision: state.analysis.scorecard.resumeRevision,
+            scoreSourceVersion:
+              state.analysis.scorecard.sourceVersion ??
+              "legacy.resume.score@0.0.0",
+            suggestionSourceVersion:
+              state.analysis.processing.capabilityVersions["resume.suggest"] ??
+              "legacy.resume.suggest@0.0.0",
+          }),
+          status: "refreshing",
+        },
+      },
+    },
+    error: null,
+  });
+  try {
+    const { scoreResumeRevision } = await import("./api");
+    const current = useAppStore.getState().analysis;
+    if (
+      activeRevisionAnalysis !== request ||
+      !current ||
+      current.resume.id !== resumeId ||
+      current.resume.revision !== revision
+    ) {
+      return;
+    }
+    const result = await scoreResumeRevision(
+      { resume: current.resume, claims: current.claims },
+      controller.signal,
+    );
+    const latest = useAppStore.getState();
+    if (
+      activeRevisionAnalysis !== request ||
+      latest.analysis?.resume.id !== result.resumeId ||
+      latest.analysis.resume.revision !== result.resumeRevision
+    ) {
+      return;
+    }
+    const suggestionSourceVersion =
+      latest.analysis.processing.aiAnalysis?.suggestionSourceVersion ??
+      latest.analysis.processing.capabilityVersions["resume.suggest"] ??
+      "resume.suggest@2.0.0";
+    activeRevisionAnalysis = null;
+    finalScoreRetryTarget = null;
+    useAppStore.setState({
+      analysis: {
+        ...latest.analysis,
+        scorecard: result.scorecard,
+        suggestions: [],
+        processing: {
+          ...latest.analysis.processing,
+          capabilityVersions: {
+            ...latest.analysis.processing.capabilityVersions,
+            "resume.score": result.sourceVersion,
+          },
+          aiAnalysis: {
+            status: "fresh",
+            analyzedRevision: result.resumeRevision,
+            scoreSourceVersion: result.sourceVersion,
+            suggestionSourceVersion,
+          },
+        },
+      },
+      selectedSuggestionId: null,
+      error: null,
+    });
+    try {
+      const recentAnalyses = await saveCurrentSessionToRecent();
+      const settled = useAppStore.getState();
+      if (
+        settled.analysis?.resume.id === resumeId &&
+        settled.analysis.resume.revision === revision
+      ) {
+        useAppStore.setState({ recentAnalyses });
+      }
+    } catch {
+      // The completed score remains valid even if local history persistence fails.
+    }
+  } catch (error) {
+    if (activeRevisionAnalysis !== request) return;
+    activeRevisionAnalysis = null;
+    if (controller.signal.aborted) return;
+    const latest = useAppStore.getState();
+    if (
+      latest.analysis?.resume.id !== resumeId ||
+      latest.analysis.resume.revision !== revision
+    ) {
+      return;
+    }
+    finalScoreRetryTarget = { resumeId, revision };
+    useAppStore.setState({
+      analysis: {
+        ...latest.analysis,
+        processing: {
+          ...latest.analysis.processing,
+          aiAnalysis: {
+            ...(latest.analysis.processing.aiAnalysis ?? {
+              analyzedRevision: latest.analysis.scorecard.resumeRevision,
+              scoreSourceVersion:
+                latest.analysis.scorecard.sourceVersion ??
+                "legacy.resume.score@0.0.0",
+              suggestionSourceVersion:
+                latest.analysis.processing.capabilityVersions["resume.suggest"] ??
+                "legacy.resume.suggest@0.0.0",
+            }),
+            status: "failed",
+          },
+        },
+      },
+      error:
+        error instanceof Error
+          ? error.message
+          : "最终评分未完成，请稍后重试。",
     });
   }
 }
@@ -1397,7 +1562,6 @@ export const useAppStore = create<AppState>()(
             : { selectedSuggestionId, previewMode: "original" },
         ),
       decideSuggestion: (id, status, manualText) => {
-        let aiRevision: { resumeId: string; revision: number } | null = null;
         set((state) => {
           if (!state.analysis || state.homeNavigationPending) return state;
           const current = state.analysis.suggestions.find(
@@ -1479,7 +1643,6 @@ export const useAppStore = create<AppState>()(
               ? syncAcceptedUserClaims(state.analysis, decided)
               : null;
           if (changed) {
-            aiRevision = { resumeId: resume.id, revision: resume.revision };
             const reanalysis = reanalyzeResumeRevision({
               analysis: state.analysis,
               resume,
@@ -1559,7 +1722,6 @@ export const useAppStore = create<AppState>()(
               : {}),
           };
         });
-        scheduleRevisionAiAnalysisTarget(aiRevision);
       },
       replaceAiSuggestions: (incoming, sourceVersion) =>
         set((state) => {
@@ -1605,7 +1767,6 @@ export const useAppStore = create<AppState>()(
         }),
       applyAiSuggestions: () => {
         let appliedCount = 0;
-        let aiRevision: { resumeId: string; revision: number } | null = null;
         set((state) => {
           if (!state.analysis || state.homeNavigationPending) return state;
           const candidates = safeAiRewriteSuggestions(state.analysis);
@@ -1631,7 +1792,6 @@ export const useAppStore = create<AppState>()(
             revision: state.analysis.resume.revision + 1,
             ast: nextAst,
           };
-          aiRevision = { resumeId: resume.id, revision: resume.revision };
           const firstApplied = applied.values().next().value!;
           const reanalysis = reanalyzeResumeRevision({
             analysis: state.analysis,
@@ -1677,7 +1837,6 @@ export const useAppStore = create<AppState>()(
             interviewSessionVersion: state.interviewSessionVersion + 1,
           };
         });
-        scheduleRevisionAiAnalysisTarget(aiRevision);
         return appliedCount;
       },
       applyManualResumeAst: (ast, changeSummary = "已直接编辑简历内容。") => {
@@ -1750,9 +1909,36 @@ export const useAppStore = create<AppState>()(
         return appliedRevision;
       },
       retryAiAnalysis: () => {
-        const resume = get().analysis?.resume;
-        if (resume) {
-          scheduleRevisionAiAnalysis(resume.id, resume.revision);
+        const analysis = get().analysis;
+        if (analysis) {
+          if (
+            finalScoreRetryTarget?.resumeId === analysis.resume.id &&
+            finalScoreRetryTarget.revision === analysis.resume.revision
+          ) {
+            scheduleFinalResumeScore(
+              analysis.resume.id,
+              analysis.resume.revision,
+            );
+          } else {
+            scheduleRevisionAiAnalysis(
+              analysis.resume.id,
+              analysis.resume.revision,
+            );
+          }
+        }
+      },
+      finalizeSuggestionReview: () => {
+        const analysis = get().analysis;
+        if (
+          analysis &&
+          !analysis.suggestions.some(
+            (suggestion) => suggestion.status === "pending",
+          )
+        ) {
+          scheduleFinalResumeScore(
+            analysis.resume.id,
+            analysis.resume.revision,
+          );
         }
       },
       beginResumeChatTurn: (content) => {

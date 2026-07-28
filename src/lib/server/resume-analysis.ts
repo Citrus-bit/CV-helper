@@ -87,3 +87,44 @@ export async function analyzeResumeRevisionWithAi(input: {
     input.resume,
   );
 }
+
+export async function scoreResumeRevisionWithAi(input: {
+  resume: ResumeDocument;
+  claims: Claim[];
+  signal?: AbortSignal;
+}) {
+  const startedAt = performance.now();
+  const context = createCapabilityContext(
+    input.resume.locale,
+    ["source_blocks", "resume_ast", "evidence_graph"],
+    input.signal,
+    AI_CAPABILITY_TIMEOUT_MS,
+  );
+  const scoreResult = await invokeRequiredAiCapability(
+    "resume.score",
+    { resume: input.resume, claims: input.claims },
+    context,
+  );
+  const scorecard = {
+    ...scoreResult.data,
+    sourceVersion: scoreResult.sourceVersion,
+  };
+  if (
+    scorecard.resumeId !== input.resume.id ||
+    scorecard.resumeRevision !== input.resume.revision ||
+    !isEnhancedAiSourceVersion("resume.score", scoreResult.sourceVersion)
+  ) {
+    throw new AiAnalysisUnavailableError(
+      "resume.score",
+      "invalid_response",
+      true,
+    );
+  }
+  return {
+    resumeId: input.resume.id,
+    resumeRevision: input.resume.revision,
+    scorecard,
+    sourceVersion: scoreResult.sourceVersion,
+    durationMs: Math.max(0, performance.now() - startedAt),
+  };
+}
