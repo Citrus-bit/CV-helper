@@ -523,6 +523,7 @@ const resumeSuggestCapability = defineCapability(
               // replaces this value before the suggestion can be applied.
               patches: [{ operation: "replace", path, value: bullet }],
               affectedDimensions: ["impact", "language"],
+              scoreGain: 0,
               factRisk: "high",
               interviewRisk: "high",
             });
@@ -548,6 +549,7 @@ const resumeSuggestCapability = defineCapability(
                   ? []
                   : [{ operation: "replace", path, value: proposed }],
               affectedDimensions: ["clarity", "language"],
+              scoreGain: 0,
               factRisk: "none",
               interviewRisk: "none",
             });

@@ -565,6 +565,7 @@ def parse_document(
     native_document = None
     render_document = None
     try:
+        # Use separate native-text and rendering engines, then require page-count agreement.
         native_document = pdfplumber.open(io.BytesIO(data))
         render_document = pdfium.PdfDocument(data)
     except Exception as exc:
@@ -638,6 +639,7 @@ def parse_document(
                         )
                     )
                 if regions:
+                    # Start the document OCR clock lazily so native-only pages spend no budget.
                     if ocr_deadline is None:
                         ocr_deadline = time.monotonic() + requested_budget
                     if time.monotonic() >= ocr_deadline:
@@ -651,11 +653,13 @@ def parse_document(
                             )
                         )
                     else:
+                        # Reserve before execution so failures cannot bypass the document cap.
                         ocr_regions_reserved += len(regions)
             elif ocr_stopped:
                 regions = []
 
             if include_previews or (regions and provider.available and not ocr_stopped):
+                # Reuse one page render for both the preview and any OCR crops.
                 pdfium_page = render_document.get_page(page_index)
                 try:
                     rendered = _render_page(pdfium_page, width, height)

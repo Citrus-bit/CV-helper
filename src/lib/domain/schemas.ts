@@ -184,6 +184,7 @@ export const SuggestionSchema = z.object({
   beforeHash: z.string().min(1),
   patches: z.array(SuggestionPatchSchema).default([]),
   affectedDimensions: z.array(z.string()).default([]),
+  scoreGain: z.number().int().nonnegative().default(0),
   factRisk: z.enum(["none", "low", "medium", "high"]),
   interviewRisk: z.enum(["none", "low", "medium", "high"]).default("none"),
 });

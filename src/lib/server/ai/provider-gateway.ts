@@ -280,6 +280,7 @@ export class OpenAiCompatibleGateway {
     generationAttempt?: 1 | 2;
     correctionReasonCodes?: readonly string[];
   }): Promise<ProviderCompletion<T>> {
+    // Reject projected PII before serialization so unsafe payloads never reach fetch.
     try {
       new PiiProjector().assertSafe(input.piiPayload ?? input.dto);
     } catch (cause) {
@@ -301,6 +302,7 @@ export class OpenAiCompatibleGateway {
       firstFormat,
       generationAttempt,
     );
+    // Format fallback is allowed only when the provider explicitly rejects JSON Schema.
     if (first.retryWithJsonObject) {
       return (
         await this.requestWithNetworkRetry(
@@ -329,6 +331,7 @@ export class OpenAiCompatibleGateway {
     format: "json_schema" | "json_object",
     attempt: 1 | 2,
   ): Promise<{ completion?: ProviderCompletion<T>; retryWithJsonObject?: true }> {
+    // Retry transport failures once, but keep enough deadline for the second request.
     for (const transportAttempt of [1, 2] as const) {
       try {
         return await this.request(
@@ -433,6 +436,7 @@ export class OpenAiCompatibleGateway {
         signal: input.context.signal,
       });
       status = response.status;
+      // Bound the body before parsing either provider errors or completion JSON.
       const responseText = await boundedResponseText(response);
       if (!response.ok) {
         this.logger({

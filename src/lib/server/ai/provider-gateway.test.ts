@@ -211,7 +211,8 @@ describe("OpenAI-compatible provider gateway", () => {
   it("describes resume review as a contextual editing task instead of a generic checklist", () => {
     const instruction = providerInstructions["resume.suggest"];
 
-    expect(instruction).toContain("at most 32 suggestions");
+    expect(instruction).toContain("at most 12 suggestions");
+    expect(instruction).toContain("positive integer scoreGain");
     expect(instruction).toContain("one complete review batch");
     expect(instruction).toContain("Do not intentionally defer a visible issue");
     expect(instruction).toContain("complete, ready-to-paste replacement sentence");
@@ -241,6 +242,7 @@ describe("OpenAI-compatible provider gateway", () => {
           proposedText: "负责上线流程，将交付周期缩短 99%.",
           rationale: "把结果改成更大的数字。",
           affectedDimensions: ["impact"],
+          scoreGain: 5,
           factRisk: "low",
           interviewRisk: "high",
         },
@@ -252,6 +254,7 @@ describe("OpenAI-compatible provider gateway", () => {
           proposedText: "上线流程负责，交付周期缩短 20%.",
           rationale: "把动作与结果并列，减少句中的弱连接词。",
           affectedDimensions: ["clarity"],
+          scoreGain: 3,
           factRisk: "none",
           interviewRisk: "none",
         },
@@ -320,6 +323,7 @@ describe("OpenAI-compatible provider gateway", () => {
           proposedText: "负责上线流程，将交付周期缩短 20%.",
           rationale: "使用未知路径。",
           affectedDimensions: ["clarity"],
+          scoreGain: 1,
           factRisk: "none",
           interviewRisk: "none",
         },
@@ -335,6 +339,7 @@ describe("OpenAI-compatible provider gateway", () => {
           proposedText: "上线流程负责，交付周期缩短 20%.",
           rationale: "调整语序，让动作与结果更直接。",
           affectedDimensions: ["clarity"],
+          scoreGain: 1,
           factRisk: "none",
           interviewRisk: "none",
         },
@@ -392,6 +397,7 @@ describe("OpenAI-compatible provider gateway", () => {
           proposedText: "□ 上线流程负责，交付周期缩短 20%.",
           rationale: "调整语序并增加一个占位符号。",
           affectedDimensions: ["clarity"],
+          scoreGain: 1,
           factRisk: "none",
           interviewRisk: "none",
         },
@@ -447,6 +453,7 @@ describe("OpenAI-compatible provider gateway", () => {
           proposedText: "负责上线流程，将交付周期缩短 99%.",
           rationale: "加入未被原文支持的数字。",
           affectedDimensions: ["impact"],
+          scoreGain: 1,
           factRisk: "high",
           interviewRisk: "high",
         },
@@ -498,6 +505,7 @@ describe("OpenAI-compatible provider gateway", () => {
       proposedText: `负责第 ${index + 1} 个交付流程.`,
       rationale,
       affectedDimensions: ["clarity"],
+      scoreGain: 1,
       factRisk: "none",
       interviewRisk: "none",
     });
@@ -510,6 +518,7 @@ describe("OpenAI-compatible provider gateway", () => {
       rationale,
       question: proofQuestion,
       affectedDimensions: ["impact"],
+      scoreGain: 1,
       factRisk: "high",
       interviewRisk: "high",
     });
@@ -573,6 +582,7 @@ describe("OpenAI-compatible provider gateway", () => {
         proposedText: `负责第 ${index + 1} 个交付流程.`,
         rationale: `删除第 ${index + 1} 条中的弱化词“主要”。`,
         affectedDimensions: ["clarity"],
+        scoreGain: index + 1,
         factRisk: "none",
         interviewRisk: "none",
       })),
@@ -585,17 +595,23 @@ describe("OpenAI-compatible provider gateway", () => {
 
     const result = await registry.invoke<unknown, { suggestions: Suggestion[] }>(
       "resume.suggest",
-      { resume: longResume, claims: [] },
+      { resume: longResume, claims: [], scoreContext: { ...scoreOutput(), total: 72 } },
       context(),
     );
 
     expect(result.usedFallback).toBe(false);
-    expect(result.data.suggestions).toHaveLength(14);
+    expect(result.data.suggestions).toHaveLength(12);
     expect(
       result.data.suggestions.map((suggestion) => suggestion.sourceBlockIds),
     ).toEqual(
-      Array.from({ length: 14 }, (_, index) => [`bulk-block-${index}`]),
+      Array.from({ length: 12 }, (_, index) => [`bulk-block-${index}`]),
     );
+    expect(
+      result.data.suggestions.reduce(
+        (sum, suggestion) => sum + suggestion.scoreGain,
+        0,
+      ),
+    ).toBe(28);
   });
 
   it("uses the default HTTPS allowlist and rejects unapproved bases without echoing them", () => {
@@ -1220,6 +1236,7 @@ describe("OpenAI-compatible provider gateway", () => {
             },
           ],
           affectedDimensions: ["impact"],
+          scoreGain: 1,
           factRisk: "low",
           interviewRisk: "high",
         },
@@ -1286,6 +1303,7 @@ describe("OpenAI-compatible provider gateway", () => {
             value: "负责上线流程，将交付周期缩短 20%，并降低成本 30%.",
           }],
           affectedDimensions: ["impact"],
+          scoreGain: 1,
           factRisk: "low",
           interviewRisk: "high",
         },

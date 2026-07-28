@@ -60,15 +60,17 @@ const ProviderSuggestionSchema = z.object({
   question: z.string().min(1).max(1_000).optional(),
   claimIds: z.array(z.string()).max(20),
   affectedDimensions: z.array(ScoreDimensionIdSchema).max(6),
+  scoreGain: z.number().int().positive().max(100),
   factRisk: z.enum(["none", "low", "medium", "high"]),
   interviewRisk: z.enum(["none", "low", "medium", "high"]),
 });
 
 const ProviderSuggestionOutputSchema = z.object({
-  suggestions: z.array(ProviderSuggestionSchema).max(32),
+  suggestions: z.array(ProviderSuggestionSchema).max(100),
 });
 
-const MAX_RESUME_SUGGESTIONS = 32;
+// Keep one review batch short enough to finish in a single pass.
+const MAX_RESUME_SUGGESTIONS = 12;
 
 const INTERVIEW_PLAN_SOURCE = "interview.plan@2.0.0";
 
@@ -1115,9 +1117,48 @@ function validateProviderSuggestionCandidate(
       },
     ],
     affectedDimensions: candidate.affectedDimensions,
+    scoreGain: candidate.scoreGain,
     factRisk: candidate.factRisk,
     interviewRisk: candidate.interviewRisk,
   };
+}
+
+function normalizeSuggestionScoreGains(
+  suggestions: Suggestion[],
+  currentScore: number,
+): Suggestion[] {
+  if (suggestions.length === 0) return suggestions;
+  const gap = Math.max(0, 100 - Math.round(currentScore));
+  if (gap === 0) {
+    return suggestions.map((suggestion) => ({ ...suggestion, scoreGain: 0 }));
+  }
+
+  // AI values express relative impact. Normalize them so processing this exact
+  // batch always closes the validated score gap without rounding drift.
+  const weightTotal = suggestions.reduce(
+    (sum, suggestion) => sum + Math.max(1, suggestion.scoreGain),
+    0,
+  );
+  const allocations = suggestions.map((suggestion, index) => {
+    const exact = (Math.max(1, suggestion.scoreGain) / weightTotal) * gap;
+    return { index, scoreGain: Math.floor(exact), remainder: exact % 1 };
+  });
+  let remaining =
+    gap - allocations.reduce((sum, allocation) => sum + allocation.scoreGain, 0);
+
+  // Largest-remainder apportionment preserves the AI ranking and exact sum.
+  for (const allocation of [...allocations].sort(
+    (left, right) => right.remainder - left.remainder || left.index - right.index,
+  )) {
+    if (remaining === 0) break;
+    allocation.scoreGain += 1;
+    remaining -= 1;
+  }
+
+  return suggestions.map((suggestion, index) => ({
+    ...suggestion,
+    scoreGain: allocations[index].scoreGain,
+  }));
 }
 
 function validateProviderSuggestionOutput(
@@ -1178,7 +1219,12 @@ function validateProviderSuggestionOutput(
       invalidCandidateReasonCounts: reasonCounts,
     });
   }
-  return { suggestions };
+  return {
+    suggestions: normalizeSuggestionScoreGains(
+      suggestions,
+      input.scoreContext?.total ?? 0,
+    ),
+  };
 }
 
 function validateOutput<K extends ProviderGatewayCapabilityId>(
@@ -1713,9 +1759,10 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
     "Never output or infer any person's name, email, phone number, URL, postal or residential address, or exact location, even if the input contains a redaction token. Do not use name, contact, address, or location labels; refer only to the resume or candidate generically.",
   ].join(" "),
   "resume.suggest": [
-    "Task: act as a senior resume editor. Inspect every supplied editableTarget as one complete review batch before writing the response, aggregate all material actionable findings, order them by recruiter impact, and return at most 32 suggestions.",
+    "Task: act as a senior resume editor. Inspect every supplied editableTarget as one complete review batch before writing the response, aggregate all material actionable findings, order them by recruiter impact, and return at most 12 suggestions.",
     "The response is the complete editing batch for this resume revision. Do not intentionally defer a visible issue to a later review pass, and do not split one target into multiple suggestions.",
     "scoreContext is the validated result of the immediately preceding independent resume.score request. Use it as read-only context to prioritize suggestions and avoid contradicting that assessment.",
+    "Assign every suggestion a positive integer scoreGain from 1 to 100 that represents its relative recruiter impact. The server will proportionally normalize these weights so the complete batch covers the gap from scoreContext.total to 100.",
     "For every item, diagnose that exact sentence rather than applying a generic checklist. rationale must identify the concrete wording or information issue in originalText, explain its effect on a recruiter, and state what the proposed change improves. Do not reuse stock rationales, repeated sentence templates, or the same question across unrelated bullets.",
     "When a fact-preserving improvement is possible, return kind rewrite with a complete, ready-to-paste replacement sentence. Prefer concise action-method-result ordering and remove weak, repetitive, or vague phrasing, but do not demand a metric when the source contains none.",
     "Use ask_user or needs_proof only when a specific missing or unsupported fact materially blocks a useful edit. question must name the exact project, action, result, or phrase that needs clarification and must not be a generic request for metrics.",
@@ -1772,6 +1819,7 @@ async function completeProviderScore(
   dto: unknown,
 ) {
   let correctionReasonCodes: string[] | undefined;
+  // A rejected candidate gets one correction attempt using safe reason codes only.
   for (const generationAttempt of [1, 2] as const) {
     const startedAt = performance.now();
     try {
@@ -1953,6 +2001,7 @@ function providerCapability<K extends ProviderGatewayCapabilityId>(
     outputSchema,
     async execute(input: GatewayInputMap[K], context: CapabilityContext) {
       const projector = projectorForInput(id, input);
+      // Build the minimum provider DTO before applying the independent PII gate.
       const dto = projectInput(id, input, projector);
       const piiPayload = providerInputPiiPayload(id, input, dto, projector);
       try {

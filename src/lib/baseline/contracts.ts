@@ -319,7 +319,9 @@ export const ResumeSuggestInputSchema = z.object({
   claims: z.array(ClaimSchema).default([]),
   scoreContext: ResumeScoreOutputSchema.optional(),
 });
-export const ResumeSuggestOutputSchema = z.object({ suggestions: z.array(SuggestionSchema) });
+export const ResumeSuggestOutputSchema = z.object({
+  suggestions: z.array(SuggestionSchema).max(12),
+});
 
 export { ResumeChatInputSchema, ResumeChatOutputSchema };
 

@@ -4,12 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiMocks = vi.hoisted(() => ({
   analyzeResumeRevision: vi.fn(),
-  scoreResumeRevision: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
   analyzeResumeRevision: apiMocks.analyzeResumeRevision,
-  scoreResumeRevision: apiMocks.scoreResumeRevision,
 }));
 
 import {
@@ -80,6 +78,7 @@ function analysisFixture(revision = 0, proofRequired = false): AnalysisBundle {
       },
     ],
     affectedDimensions: ["clarity"],
+    scoreGain: 40,
     factRisk: proofRequired ? "high" : "none",
     interviewRisk: proofRequired ? "high" : "none",
   });
@@ -266,11 +265,7 @@ function seedDerived(revision: number) {
 
 beforeEach(() => {
   apiMocks.analyzeResumeRevision.mockReset();
-  apiMocks.scoreResumeRevision.mockReset();
   apiMocks.analyzeResumeRevision.mockImplementation(
-    () => new Promise(() => undefined),
-  );
-  apiMocks.scoreResumeRevision.mockImplementation(
     () => new Promise(() => undefined),
   );
 });
@@ -553,6 +548,7 @@ describe("resume-derived state revisions", () => {
           },
         ],
         affectedDimensions: ["clarity", "language"],
+        scoreGain: 20,
         factRisk: "none",
         interviewRisk: "none",
       }),
@@ -621,6 +617,7 @@ describe("resume-derived state revisions", () => {
           },
         ],
         affectedDimensions: ["clarity", "language"],
+        scoreGain: 20,
         factRisk: "none",
         interviewRisk: "none",
       }),
@@ -653,11 +650,17 @@ describe("resume-derived state revisions", () => {
     expect(revised.analysis?.processing.capabilityVersions["resume.suggest"])
       .toBe("resume.suggest@2.0.0");
     expect(revised.undoStack).toHaveLength(1);
-    expect(revised.analysis?.processing.aiAnalysis?.status).toBe("stale");
+    expect(revised.analysis?.processing.aiAnalysis?.status).toBe("fresh");
+    expect(revised.analysis?.scorecard.total).toBe(100);
+    expect(
+      revised.analysis?.scorecard.dimensions.every(
+        (dimension) => dimension.score === dimension.maxScore,
+      ),
+    ).toBe(true);
     expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
   });
 
-  it("keeps the analyzed batch available across individual accepts until one explicit refresh", async () => {
+  it("keeps the analyzed batch fresh and settles it without an AI refresh", async () => {
     const analysis = analysisFixture();
     analysis.resume.ast.sections[0].entries.push({
       id: "entry-2",
@@ -687,6 +690,7 @@ describe("resume-derived state revisions", () => {
           },
         ],
         affectedDimensions: ["clarity"],
+        scoreGain: 20,
         factRisk: "none",
         interviewRisk: "none",
       }),
@@ -704,19 +708,24 @@ describe("resume-derived state revisions", () => {
         { id: "suggestion-1", status: "accepted" },
         { id: "suggestion-2", status: "accepted" },
       ],
-      processing: { aiAnalysis: { status: "stale" } },
+      scorecard: { total: 100 },
+      processing: { aiAnalysis: { status: "fresh", analyzedRevision: 2 } },
     });
+  });
 
-    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(aiRevisionResult(2));
-    useAppStore.getState().retryAiAnalysis();
-    await vi.waitFor(() =>
-      expect(apiMocks.analyzeResumeRevision).toHaveBeenCalledOnce(),
-    );
-    await vi.waitFor(() =>
-      expect(
-        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
-      ).toBe("fresh"),
-    );
+  it("counts skipping as processed and completes at 100", async () => {
+    useAppStore.getState().setAnalysis(analysisFixture(0, true));
+
+    useAppStore.getState().decideSuggestion("suggestion-1", "rejected");
+    await Promise.resolve();
+
+    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
+    expect(useAppStore.getState().analysis).toMatchObject({
+      resume: { revision: 0 },
+      scorecard: { total: 100 },
+      suggestions: [{ id: "suggestion-1", status: "rejected" }],
+      processing: { aiAnalysis: { status: "fresh", analyzedRevision: 0 } },
+    });
   });
 
   it("does not reopen a target that was already reviewed in the completed batch", async () => {
@@ -751,50 +760,37 @@ describe("resume-derived state revisions", () => {
       ).toBe("fresh"),
     );
 
-    expect(useAppStore.getState().analysis?.suggestions).toEqual([]);
-    expect(useAppStore.getState().selectedSuggestionId).toBeNull();
+    expect(useAppStore.getState().analysis?.suggestions).toEqual([
+      expect.objectContaining({ id: "suggestion-1", status: "accepted" }),
+    ]);
+    expect(useAppStore.getState().selectedSuggestionId).toBe("suggestion-1");
   });
 
-  it("finalizes the completed batch with score only and no second suggestion pass", async () => {
+  it("settles the final item at 100 without another AI request", async () => {
     const analysis = analysisFixture();
     useAppStore.getState().setAnalysis(analysis);
     useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
-    const revised = useAppStore.getState().analysis!;
-    apiMocks.scoreResumeRevision.mockResolvedValueOnce({
-      resumeId: revised.resume.id,
-      resumeRevision: revised.resume.revision,
-      scorecard: {
-        ...revised.scorecard,
-        resumeRevision: revised.resume.revision,
-        total: 88,
-        summary: "最终评分已完成。",
-        sourceVersion: "resume.score@2.1.0",
-      },
-      sourceVersion: "resume.score@2.1.0",
-      durationMs: 25,
-    });
+    await Promise.resolve();
 
-    useAppStore.getState().finalizeSuggestionReview();
-
-    await vi.waitFor(() =>
-      expect(apiMocks.scoreResumeRevision).toHaveBeenCalledOnce(),
-    );
-    await vi.waitFor(() =>
-      expect(
-        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
-      ).toBe("fresh"),
-    );
     expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
     expect(useAppStore.getState().analysis).toMatchObject({
-      scorecard: { total: 88, summary: "最终评分已完成。" },
-      suggestions: [],
+      scorecard: { total: 100, summary: "本次优化清单已全部处理完成。" },
+      suggestions: [{ id: "suggestion-1", status: "accepted" }],
       processing: {
         aiAnalysis: {
-          scoreSourceVersion: "resume.score@2.1.0",
+          status: "fresh",
+          analyzedRevision: 1,
           suggestionSourceVersion: "resume.suggest@2.0.0",
         },
       },
     });
+    expect(
+      useAppStore
+        .getState()
+        .analysis?.scorecard.dimensions.every(
+          (dimension) => dimension.score === dimension.maxScore,
+        ),
+    ).toBe(true);
   });
 
   it("replaces pending rule output with regenerated AI suggestions", () => {
@@ -829,7 +825,7 @@ describe("resume-derived state revisions", () => {
     expect(useAppStore.getState().selectedSuggestionId).toBe("suggestion-ai-1");
   });
 
-  it("keeps the old AI score hidden while rebuilding evidence for a manual factual rewrite", () => {
+  it("settles a manual suggestion while rebuilding its evidence", () => {
     const analysis = analysisFixture();
     analysis.scorecard.total = 99;
     analysis.scorecard.dimensions.forEach((dimension) => {
@@ -843,8 +839,11 @@ describe("resume-derived state revisions", () => {
       .decideSuggestion("suggestion-1", "manual", manualText);
 
     const revised = useAppStore.getState().analysis!;
-    expect(revised.scorecard).toMatchObject({ resumeRevision: 0, total: 99 });
-    expect(revised.processing.aiAnalysis?.status).not.toBe("fresh");
+    expect(revised.scorecard).toMatchObject({ resumeRevision: 1, total: 100 });
+    expect(revised.processing.aiAnalysis).toMatchObject({
+      status: "fresh",
+      analyzedRevision: 1,
+    });
     const manualEvidence = revised.evidence.find(
       (asset) =>
         asset.kind === "user_statement" && asset.content === manualText,

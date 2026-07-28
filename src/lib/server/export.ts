@@ -656,6 +656,7 @@ export async function auditRenderedPdf(
           };
 
           const pixels = await renderPixels();
+          // Compare full, text-free, and text-mask renders to prove glyphs are visible.
           const backgroundPixels = await renderPixels(
             (index) => !textPaintOperations.has(operatorList.fnArray[index]),
           );
@@ -748,6 +749,7 @@ export async function auditRenderedPdf(
           rightIndex += 1
         ) {
           const right = pageRectangles[rightIndex];
+          // Y-order lets us stop once later text can no longer overlap this item.
           if (right.y > left.y + left.height) break;
           budget.overlapComparisons += 1;
           if ((budget.overlapComparisons & 0x3ff) === 0) ensureAuditActive();

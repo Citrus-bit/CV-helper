@@ -63,15 +63,6 @@ export type ResumeAnalysisResponse = z.infer<
   typeof ResumeAnalysisResponseSchema
 >;
 
-export const ResumeScoreResponseSchema = z.object({
-  resumeId: z.string().min(1),
-  resumeRevision: z.number().int().nonnegative(),
-  scorecard: ScorecardSchema,
-  sourceVersion: z.string().min(1),
-  durationMs: z.number().nonnegative(),
-});
-export type ResumeScoreResponse = z.infer<typeof ResumeScoreResponseSchema>;
-
 export const EvidenceRewriteRequestSchema = z
   .object({
     resumeId: z.string().min(1).max(160),

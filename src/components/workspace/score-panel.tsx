@@ -39,6 +39,7 @@ export function ScorePanel({
   sourceBlocks = [],
 }: ScorePanelProps) {
   const [expanded, setExpanded] = useState(false);
+  const showsChecklistProgress = scorecard.summary.startsWith("本次优化清单");
   const sourceBlockById = new Map(
     sourceBlocks.map((block) => [block.id, block]),
   );
@@ -50,7 +51,7 @@ export function ScorePanel({
       <div className="flex items-start justify-between gap-4">
         <div>
           <p id="score-heading" className="text-xs font-medium text-muted">
-            简历内容评分
+            {showsChecklistProgress ? "本次优化完成度" : "简历内容评分"}
           </p>
           <div className="mt-1 flex items-baseline gap-1">
             <strong className="text-[30px] font-semibold tabular-nums leading-none">

@@ -121,6 +121,7 @@ function analysisFixture(): AnalysisBundle {
           },
         ],
         affectedDimensions: ["impact"],
+        scoreGain: 30,
         factRisk: "high",
         interviewRisk: "high",
       },
@@ -177,6 +178,7 @@ describe("evidence rewrite dialog", () => {
           },
         ],
         affectedDimensions: ["clarity"],
+        scoreGain: 30,
         factRisk: "none",
         interviewRisk: "none",
       },
@@ -221,12 +223,9 @@ describe("evidence rewrite dialog", () => {
       previewMode: "current",
       renders: { professional: { sha256: "rendered-safe-batch" } },
     });
-    expect(
-      screen.getByText(/不会在最终评分后再生成第二批建议/),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "完成修改并查看最终评分" }),
-    ).toBeVisible();
+    expect(screen.getByText(/全部处理后优化完成度自动到 100 分/)).toBeVisible();
+    expect(useAppStore.getState().analysis?.scorecard.total).toBe(100);
+    expect(screen.queryByRole("button", { name: /最终评分/ })).toBeNull();
   });
 
   it("generates a reviewable paragraph from supplemental facts without a linked claim", async () => {

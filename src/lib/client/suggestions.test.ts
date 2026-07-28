@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { AnalysisBundle } from "./contracts";
 import { stableId } from "@/lib/baseline/utils";
-import { safeAiRewriteSuggestions, suggestionGenerationSource } from "./suggestions";
+import {
+  ensureSuggestionScoreGains,
+  safeAiRewriteSuggestions,
+  suggestionGenerationSource,
+} from "./suggestions";
 
 function analysisFixture(sourceVersion = "resume.suggest@2.0.0") {
   return {
@@ -88,5 +92,19 @@ describe("AI suggestion source and bulk eligibility", () => {
     expect(safeAiRewriteSuggestions(analysis).map((item) => item.id)).toEqual([
       "suggestion-1",
     ]);
+  });
+
+  it("assigns the remaining gap to legacy suggestions without point values", () => {
+    const analysis = analysisFixture();
+    const legacy = [0, 1, 2].map((index) => ({
+      ...analysis.suggestions[0],
+      id: `legacy-${index}`,
+    }));
+
+    expect(
+      ensureSuggestionScoreGains(legacy, 72).map(
+        (suggestion) => suggestion.scoreGain,
+      ),
+    ).toEqual([10, 9, 9]);
   });
 });

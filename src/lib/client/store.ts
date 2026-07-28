@@ -59,7 +59,11 @@ import {
   hasRequiredAiProvenance,
 } from "./ai-analysis";
 import { applySuggestion, suggestionBeforeHashMatches } from "./resume";
-import { safeAiRewriteSuggestions } from "./suggestions";
+import {
+  ensureSuggestionScoreGains,
+  safeAiRewriteSuggestions,
+  settleSuggestionScorecard,
+} from "./suggestions";
 import { clearApiSessionId } from "./privacy";
 import { reanalyzeResumeRevision } from "@/lib/resume-reanalysis";
 import {
@@ -89,7 +93,6 @@ const LOCAL_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 let activeRevisionAnalysis:
   | { resumeId: string; revision: number; controller: AbortController }
   | null = null;
-let finalScoreRetryTarget: { resumeId: string; revision: number } | null = null;
 
 export type WorkspaceModule = "resume" | "job" | "interview";
 type WorkspaceStage = "upload" | "analyzing" | "workspace";
@@ -162,7 +165,6 @@ export type AppState = {
   applyAiSuggestions: () => number;
   applyManualResumeAst: (ast: ResumeAST, changeSummary?: string) => number | null;
   retryAiAnalysis: () => void;
-  finalizeSuggestionReview: () => void;
   beginResumeChatTurn: (content: string) => ResumeChatMessage | null;
   completeResumeChatTurn: (
     userMessageId: string,
@@ -307,7 +309,6 @@ function cancelWorkspaceActivity() {
   cancelAnalysisRequest();
   activeRevisionAnalysis?.controller.abort();
   activeRevisionAnalysis = null;
-  finalScoreRetryTarget = null;
   cancelAllClientRequests();
   disposeRegisteredClientRuntimeActivities();
 }
@@ -382,6 +383,34 @@ function processingAfterLocalRevision(
       status: "stale" as const,
       analyzedRevision:
         previousAi?.analyzedRevision ?? analysis.scorecard.resumeRevision,
+      scoreSourceVersion:
+        previousAi?.scoreSourceVersion ??
+        analysis.processing.capabilityVersions["resume.score"] ??
+        analysis.scorecard.sourceVersion ??
+        "legacy.resume.score@0.0.0",
+      suggestionSourceVersion:
+        previousAi?.suggestionSourceVersion ??
+        analysis.processing.capabilityVersions["resume.suggest"] ??
+        "legacy.resume.suggest@0.0.0",
+    },
+  };
+}
+
+function processingAfterSuggestionSettlement(
+  analysis: AnalysisBundle,
+  localVersions: Record<string, string>,
+  resumeRevision: number,
+) {
+  const previousAi = analysis.processing.aiAnalysis;
+  return {
+    ...analysis.processing,
+    capabilityVersions: {
+      ...analysis.processing.capabilityVersions,
+      ...localVersions,
+    },
+    aiAnalysis: {
+      status: "fresh" as const,
+      analyzedRevision: resumeRevision,
       scoreSourceVersion:
         previousAi?.scoreSourceVersion ??
         analysis.processing.capabilityVersions["resume.score"] ??
@@ -921,6 +950,15 @@ export function mergePersistedSessionState(
     recentAnalysesLoading: false,
     homeNavigationPending: false,
   } as AppState;
+  if (merged.analysis) {
+    const suggestions = ensureSuggestionScoreGains(
+      merged.analysis.suggestions,
+      merged.analysis.scorecard.total,
+    );
+    if (suggestions !== merged.analysis.suggestions) {
+      merged.analysis = { ...merged.analysis, suggestions };
+    }
+  }
   const parsedJobMatch = merged.jobMatch
     ? JobMatchBundleSchema.safeParse(merged.jobMatch)
     : null;
@@ -1125,10 +1163,6 @@ function scheduleRevisionAiAnalysis(resumeId: string, revision: number) {
   queueMicrotask(() => void refreshRevisionAiAnalysis(resumeId, revision));
 }
 
-function scheduleFinalResumeScore(resumeId: string, revision: number) {
-  queueMicrotask(() => void refreshFinalResumeScore(resumeId, revision));
-}
-
 function scheduleRevisionAiAnalysisTarget(
   target: { resumeId: string; revision: number } | null,
 ) {
@@ -1288,143 +1322,6 @@ async function refreshRevisionAiAnalysis(resumeId: string, revision: number) {
   }
 }
 
-async function refreshFinalResumeScore(resumeId: string, revision: number) {
-  activeRevisionAnalysis?.controller.abort();
-  const controller = new AbortController();
-  const request = { resumeId, revision, controller };
-  activeRevisionAnalysis = request;
-  const state = useAppStore.getState();
-  if (
-    state.analysis?.resume.id !== resumeId ||
-    state.analysis.resume.revision !== revision ||
-    state.analysis.suggestions.some((suggestion) => suggestion.status === "pending")
-  ) {
-    activeRevisionAnalysis = null;
-    return;
-  }
-  useAppStore.setState({
-    analysis: {
-      ...state.analysis,
-      processing: {
-        ...state.analysis.processing,
-        aiAnalysis: {
-          ...(state.analysis.processing.aiAnalysis ?? {
-            analyzedRevision: state.analysis.scorecard.resumeRevision,
-            scoreSourceVersion:
-              state.analysis.scorecard.sourceVersion ??
-              "legacy.resume.score@0.0.0",
-            suggestionSourceVersion:
-              state.analysis.processing.capabilityVersions["resume.suggest"] ??
-              "legacy.resume.suggest@0.0.0",
-          }),
-          status: "refreshing",
-        },
-      },
-    },
-    error: null,
-  });
-  try {
-    const { scoreResumeRevision } = await import("./api");
-    const current = useAppStore.getState().analysis;
-    if (
-      activeRevisionAnalysis !== request ||
-      !current ||
-      current.resume.id !== resumeId ||
-      current.resume.revision !== revision
-    ) {
-      return;
-    }
-    const result = await scoreResumeRevision(
-      { resume: current.resume, claims: current.claims },
-      controller.signal,
-    );
-    const latest = useAppStore.getState();
-    if (
-      activeRevisionAnalysis !== request ||
-      latest.analysis?.resume.id !== result.resumeId ||
-      latest.analysis.resume.revision !== result.resumeRevision
-    ) {
-      return;
-    }
-    const suggestionSourceVersion =
-      latest.analysis.processing.aiAnalysis?.suggestionSourceVersion ??
-      latest.analysis.processing.capabilityVersions["resume.suggest"] ??
-      "resume.suggest@2.0.0";
-    activeRevisionAnalysis = null;
-    finalScoreRetryTarget = null;
-    useAppStore.setState({
-      analysis: {
-        ...latest.analysis,
-        scorecard: result.scorecard,
-        suggestions: [],
-        processing: {
-          ...latest.analysis.processing,
-          capabilityVersions: {
-            ...latest.analysis.processing.capabilityVersions,
-            "resume.score": result.sourceVersion,
-          },
-          aiAnalysis: {
-            status: "fresh",
-            analyzedRevision: result.resumeRevision,
-            scoreSourceVersion: result.sourceVersion,
-            suggestionSourceVersion,
-          },
-        },
-      },
-      selectedSuggestionId: null,
-      error: null,
-    });
-    try {
-      const recentAnalyses = await saveCurrentSessionToRecent();
-      const settled = useAppStore.getState();
-      if (
-        settled.analysis?.resume.id === resumeId &&
-        settled.analysis.resume.revision === revision
-      ) {
-        useAppStore.setState({ recentAnalyses });
-      }
-    } catch {
-      // The completed score remains valid even if local history persistence fails.
-    }
-  } catch (error) {
-    if (activeRevisionAnalysis !== request) return;
-    activeRevisionAnalysis = null;
-    if (controller.signal.aborted) return;
-    const latest = useAppStore.getState();
-    if (
-      latest.analysis?.resume.id !== resumeId ||
-      latest.analysis.resume.revision !== revision
-    ) {
-      return;
-    }
-    finalScoreRetryTarget = { resumeId, revision };
-    useAppStore.setState({
-      analysis: {
-        ...latest.analysis,
-        processing: {
-          ...latest.analysis.processing,
-          aiAnalysis: {
-            ...(latest.analysis.processing.aiAnalysis ?? {
-              analyzedRevision: latest.analysis.scorecard.resumeRevision,
-              scoreSourceVersion:
-                latest.analysis.scorecard.sourceVersion ??
-                "legacy.resume.score@0.0.0",
-              suggestionSourceVersion:
-                latest.analysis.processing.capabilityVersions["resume.suggest"] ??
-                "legacy.resume.suggest@0.0.0",
-            }),
-            status: "failed",
-          },
-        },
-      },
-      error:
-        error instanceof Error
-          ? error.message
-          : "最终评分未完成，请稍后重试。",
-    });
-  }
-}
-
 async function refreshCurrentSessionArchive(): Promise<
   RecentAnalysisSummary[]
 > {
@@ -1525,25 +1422,32 @@ export const useAppStore = create<AppState>()(
         if (changed) scheduleCurrentSessionArchive();
       },
       setAnalysis: (analysis, suppliedPdfBlob) => {
+        const normalizedAnalysis = {
+          ...analysis,
+          suggestions: ensureSuggestionScoreGains(
+            analysis.suggestions,
+            analysis.scorecard.total,
+          ),
+        };
         const sourcePdfBlob =
           suppliedPdfBlob ??
-          (analysis.originalPdfBase64
-            ? base64ToPdfBlob(analysis.originalPdfBase64)
+          (normalizedAnalysis.originalPdfBase64
+            ? base64ToPdfBlob(normalizedAnalysis.originalPdfBase64)
             : null);
         set((state) => ({
           ...invalidatedDerivedState(),
-          analysis,
+          analysis: normalizedAnalysis,
           resumeChat: emptyResumeChatContext(
-            analysis.resume.id,
-            analysis.resume.revision,
+            normalizedAnalysis.resume.id,
+            normalizedAnalysis.resume.revision,
           ),
-          jobDraft: defaultJobDraft(analysis.resume.locale),
+          jobDraft: defaultJobDraft(normalizedAnalysis.resume.locale),
           sourcePdfBlob,
           interviewSessionVersion: state.interviewSessionVersion + 1,
-          expiresAt: sessionExpiry(analysis),
+          expiresAt: sessionExpiry(normalizedAnalysis),
           stage: "workspace",
           selectedSuggestionId:
-            analysis.suggestions.find((item) => item.status === "pending")
+            normalizedAnalysis.suggestions.find((item) => item.status === "pending")
               ?.id ?? null,
           undoStack: [],
           homeNavigationPending: false,
@@ -1663,9 +1567,15 @@ export const useAppStore = create<AppState>()(
               evidence: reanalysis.evidence,
               suggestions,
               stories: reanalysis.stories,
-              processing: processingAfterLocalRevision(
+              scorecard: settleSuggestionScorecard(
+                state.analysis,
+                suggestions,
+                resume.revision,
+              ),
+              processing: processingAfterSuggestionSettlement(
                 state.analysis,
                 reanalysis.capabilityVersions,
+                resume.revision,
               ),
             };
             const finalText =
@@ -1701,6 +1611,16 @@ export const useAppStore = create<AppState>()(
             ...state.analysis,
             resume,
             suggestions,
+            scorecard: settleSuggestionScorecard(
+              state.analysis,
+              suggestions,
+              resume.revision,
+            ),
+            processing: processingAfterSuggestionSettlement(
+              state.analysis,
+              {},
+              resume.revision,
+            ),
             ...(synchronizedGraph ?? {}),
           };
           return {
@@ -1817,9 +1737,15 @@ export const useAppStore = create<AppState>()(
             evidence: reanalysis.evidence,
             suggestions,
             stories: reanalysis.stories,
-            processing: processingAfterLocalRevision(
+            scorecard: settleSuggestionScorecard(
+              state.analysis,
+              suggestions,
+              resume.revision,
+            ),
+            processing: processingAfterSuggestionSettlement(
               state.analysis,
               reanalysis.capabilityVersions,
+              resume.revision,
             ),
           };
           return {
@@ -1911,31 +1837,7 @@ export const useAppStore = create<AppState>()(
       retryAiAnalysis: () => {
         const analysis = get().analysis;
         if (analysis) {
-          if (
-            finalScoreRetryTarget?.resumeId === analysis.resume.id &&
-            finalScoreRetryTarget.revision === analysis.resume.revision
-          ) {
-            scheduleFinalResumeScore(
-              analysis.resume.id,
-              analysis.resume.revision,
-            );
-          } else {
-            scheduleRevisionAiAnalysis(
-              analysis.resume.id,
-              analysis.resume.revision,
-            );
-          }
-        }
-      },
-      finalizeSuggestionReview: () => {
-        const analysis = get().analysis;
-        if (
-          analysis &&
-          !analysis.suggestions.some(
-            (suggestion) => suggestion.status === "pending",
-          )
-        ) {
-          scheduleFinalResumeScore(
+          scheduleRevisionAiAnalysis(
             analysis.resume.id,
             analysis.resume.revision,
           );
@@ -2715,7 +2617,13 @@ export const useAppStore = create<AppState>()(
           return false;
         }
 
-        const analysis = parsedAnalysis.data;
+        const analysis = {
+          ...parsedAnalysis.data,
+          suggestions: ensureSuggestionScoreGains(
+            parsedAnalysis.data.suggestions,
+            parsedAnalysis.data.scorecard.total,
+          ),
+        };
         if (!hasFreshRequiredAiAnalysis(analysis)) {
           set({
             stage: "upload",

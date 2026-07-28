@@ -108,6 +108,7 @@ function analysisWithPendingSuggestion(): AnalysisBundle {
         beforeHash: "before-hash",
         patches: [],
         affectedDimensions: ["clarity"],
+        scoreGain: 20,
         factRisk: "none",
         interviewRisk: "none",
       },

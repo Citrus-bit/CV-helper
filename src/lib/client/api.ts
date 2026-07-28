@@ -7,7 +7,6 @@ import {
   LayoutRecommendationSchema,
   RenderResponseSchema,
   ResumeAnalysisResponseSchema,
-  ResumeScoreResponseSchema,
   TranscriptionResponseSchema,
   type AnalysisBundle,
   type EvidenceRewriteRequest,
@@ -18,7 +17,6 @@ import {
   type LayoutRecommendation,
   type RenderResponse,
   type ResumeAnalysisResponse,
-  type ResumeScoreResponse,
   type TranscriptionResponse,
 } from "./contracts";
 import type {
@@ -148,33 +146,6 @@ export async function analyzeResumeRevision(
       "AI 重分析结果与当前简历版本不一致，请重新进行 AI 分析。",
       502,
       "INVALID_AI_ANALYSIS",
-      true,
-    );
-  }
-  return result;
-}
-
-export async function scoreResumeRevision(
-  input: { resume: ResumeDocument; claims: Claim[] },
-  signal?: AbortSignal,
-): Promise<ResumeScoreResponse> {
-  const response = await trackedFetch("/api/resume-score", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-    signal,
-  });
-  if (!response.ok) throw await apiError(response);
-  const result = ResumeScoreResponseSchema.parse(await response.json());
-  if (
-    result.resumeId !== input.resume.id ||
-    result.resumeRevision !== input.resume.revision ||
-    !isRequiredAiSource("resume.score", result.sourceVersion)
-  ) {
-    throw new ApiError(
-      "AI 最终评分与当前简历版本不一致，请重新评分。",
-      502,
-      "INVALID_AI_SCORE",
       true,
     );
   }

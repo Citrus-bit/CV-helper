@@ -276,9 +276,6 @@ export function SuggestionReview() {
   const selectSuggestion = useAppStore((state) => state.selectSuggestion);
   const decideSuggestion = useAppStore((state) => state.decideSuggestion);
   const retryAiAnalysis = useAppStore((state) => state.retryAiAnalysis);
-  const finalizeSuggestionReview = useAppStore(
-    (state) => state.finalizeSuggestionReview,
-  );
   const [editing, setEditing] = useState(false);
   const [manualText, setManualText] = useState("");
   const [bulkMessage, setBulkMessage] = useState("");
@@ -457,16 +454,6 @@ export function SuggestionReview() {
                 )}
               </button>
             ) : null}
-            {reviewingStaleBatch && pending === 0 && !optimizing ? (
-              <button
-                type="button"
-                onClick={finalizeSuggestionReview}
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf]"
-              >
-                <Sparkles aria-hidden="true" size={16} />
-                完成修改并查看最终评分
-              </button>
-            ) : null}
             <div className="flex items-center gap-1">
               <button
                 type="button"
@@ -509,14 +496,12 @@ export function SuggestionReview() {
         ) : null}
       </div>
 
-      {reviewingStaleBatch ? (
-        <p
-          className="border-b border-line bg-[#fff7df] px-5 py-2 text-xs leading-5 text-[#72510b]"
-          role="status"
-        >
-          本次完整问题清单已一次生成。可直接改写项能一键全部应用；需补充事实的项目会留在同一清单中，不会在最终评分后再生成第二批建议。
-        </p>
-      ) : null}
+      <p
+        className="border-b border-line bg-[#f3f8ff] px-5 py-2 text-xs leading-5 text-[#174f8f]"
+        role="status"
+      >
+        本次最多 12 条。接受、手动修改或跳过都会结算该条分值；全部处理后优化完成度自动到 100 分，不再进行第二轮分析。
+      </p>
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
         <div className="flex flex-wrap items-center gap-2">
@@ -538,6 +523,9 @@ export function SuggestionReview() {
               面试追问风险 {riskLabel[suggestion.interviewRisk]}
             </span>
           ) : null}
+          <span className="inline-flex items-center rounded-[6px] bg-[#eef8f2] px-2 py-1 text-xs font-semibold tabular-nums text-success">
+            处理后 +{suggestion.scoreGain} 分
+          </span>
         </div>
 
         <div className="mt-5 space-y-4">
@@ -698,7 +686,7 @@ export function SuggestionReview() {
               className="inline-flex min-h-11 items-center gap-2 rounded-[8px] border border-line px-4 text-sm font-medium text-muted hover:bg-[#f0f1f3]"
             >
               <X aria-hidden="true" size={17} />
-              拒绝
+              跳过
             </button>
             {suggestion.proposedText ? (
               <button
