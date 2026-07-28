@@ -34,10 +34,12 @@ import {
   type SkillManifest,
 } from "@/lib/capabilities";
 import {
+  InterviewQuestionSchema,
   resolveResumeTextSourceBlocks,
   resolveResumeTextTarget,
   ScoreDimensionIdSchema,
   type Claim,
+  type InterviewQuestion,
   type Suggestion,
 } from "@/lib/domain";
 import { resumeTextSafetyError } from "@/lib/resume-text-safety";
@@ -64,6 +66,32 @@ const ProviderSuggestionSchema = z.object({
 
 const ProviderSuggestionOutputSchema = z.object({
   suggestions: z.array(ProviderSuggestionSchema).max(16),
+});
+
+const INTERVIEW_PLAN_SOURCE = "interview.plan@2.0.0";
+
+const ProviderInterviewQuestionSchema = InterviewQuestionSchema.extend({
+  id: z.string().min(8).max(160),
+  prompt: z.string().min(8).max(800),
+  roleFamilies: z.array(z.string().min(1).max(120)).max(8),
+  skills: z.array(z.string().min(1).max(120)).max(12),
+  followUps: z.array(z.string().min(4).max(400)).max(2),
+  scoringAnchors: z.array(z.string().min(2).max(300)).min(2).max(8),
+  source: z.literal(INTERVIEW_PLAN_SOURCE),
+  generated: z.literal(true),
+  referenceQuestionIds: z.array(z.string().min(1).max(200)).min(1).max(8),
+});
+
+const ProviderInterviewPlanOutputSchema = z.object({
+  durationMinutes: z.number().int().min(5).max(90),
+  maxFollowUpsPerQuestion: z.number().int().min(0).max(2),
+  items: z.array(
+    z.object({
+      order: z.number().int().positive(),
+      question: ProviderInterviewQuestionSchema,
+      targetMinutes: z.number().positive().max(90),
+    }),
+  ).min(1).max(20),
 });
 
 type ProviderSuggestion = z.infer<typeof ProviderSuggestionSchema>;
@@ -274,6 +302,21 @@ function projectedScoreContext(
   };
 }
 
+function projectedScoreNaturalLanguage(
+  score: NonNullable<GatewayInputMap["resume.suggest"]["scoreContext"]>,
+  sanitize: (value: string) => string,
+) {
+  const projected = projectedScoreContext(score, sanitize);
+  return {
+    summary: projected.summary,
+    dimensions: projected.dimensions.map((dimension) => ({
+      label: dimension.label,
+      evidence: dimension.evidence,
+      deductions: dimension.deductions,
+    })),
+  };
+}
+
 function providerInputPiiPayload<K extends ProviderGatewayCapabilityId>(
   id: K,
   input: GatewayInputMap[K],
@@ -296,11 +339,32 @@ function providerInputPiiPayload<K extends ProviderGatewayCapabilityId>(
         sanitize(claim.text),
       ),
       scoreContext: suggestionInput.scoreContext
-        ? projectedScoreContext(suggestionInput.scoreContext, sanitize)
+        ? projectedScoreNaturalLanguage(suggestionInput.scoreContext, sanitize)
         : undefined,
     };
   }
   return dto;
+}
+
+function sensitivePayloadPaths(
+  value: unknown,
+  projector: PiiProjector,
+  path = "$",
+): string[] {
+  if (typeof value === "string") {
+    return projector.containsSensitiveValue(value) ? [path] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) =>
+      sensitivePayloadPaths(item, projector, `${path}[${index}]`),
+    );
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value).flatMap(([key, item]) =>
+      sensitivePayloadPaths(item, projector, `${path}.${key}`),
+    );
+  }
+  return [];
 }
 
 function resumeGroundingCorpus(
@@ -416,10 +480,14 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
     case "interview.plan": {
       const planInput = input as GatewayInputMap["interview.plan"];
       return {
+        locale: planInput.locale,
+        role: planInput.role ? sanitize(planInput.role) : undefined,
+        skills: planInput.skills.map(sanitize),
+        jobRequirements: planInput.jobRequirements.map(sanitize),
         durationMinutes: planInput.durationMinutes,
         questionCount: planInput.questionCount,
         maxFollowUpsPerQuestion: planInput.maxFollowUpsPerQuestion,
-        questions: planInput.questions.map((question) => ({
+        referenceQuestions: planInput.questions.map((question) => ({
           id: question.id,
           locale: question.locale,
           prompt: sanitize(question.prompt),
@@ -430,8 +498,6 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
           followUps: question.followUps.map(sanitize),
           scoringAnchors: question.scoringAnchors.map(sanitize),
           source: question.source,
-          generated: question.generated,
-          referenceQuestionIds: question.referenceQuestionIds,
         })),
       };
     }
@@ -480,6 +546,191 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
 
 function normalizedGroundingText(value: string): string {
   return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+}
+
+function compactQuestionText(value: string): string {
+  return normalizedGroundingText(value).replace(/[\p{P}\p{S}\s]+/gu, "");
+}
+
+function questionTextSimilarity(left: string, right: string): number {
+  const leftText = compactQuestionText(left);
+  const rightText = compactQuestionText(right);
+  if (!leftText || !rightText) return 0;
+  if (leftText === rightText) return 1;
+  const shorter = leftText.length <= rightText.length ? leftText : rightText;
+  const longer = leftText.length > rightText.length ? leftText : rightText;
+  if (shorter.length >= 8 && longer.includes(shorter)) {
+    return shorter.length / longer.length;
+  }
+  const size = Math.min(3, leftText.length, rightText.length);
+  const grams = (value: string) => {
+    const result = new Set<string>();
+    for (let index = 0; index <= value.length - size; index += 1) {
+      result.add(value.slice(index, index + size));
+    }
+    return result;
+  };
+  const leftGrams = grams(leftText);
+  const rightGrams = grams(rightText);
+  const overlap = [...leftGrams].filter((gram) => rightGrams.has(gram)).length;
+  return (2 * overlap) / (leftGrams.size + rightGrams.size);
+}
+
+function promptMatchesLocale(prompt: string, locale: GatewayInputMap["interview.plan"]["locale"]): boolean {
+  const hasHan = /\p{Script=Han}/u.test(prompt);
+  const hasLatin = /\p{Script=Latin}/u.test(prompt);
+  if (locale === "en-US") return hasLatin && !hasHan;
+  if (locale === "mixed") return hasHan && hasLatin;
+  return hasHan;
+}
+
+function hasDuplicateText(values: readonly string[]): boolean {
+  const normalized = values.map(normalizedGroundingText);
+  return normalized.some((value, index) => !value || normalized.indexOf(value) !== index);
+}
+
+function providerSafeQuestionId(prompt: string, index: number): string {
+  const ordinal = String.fromCharCode("a".charCodeAt(0) + index);
+  return stableId(`interview_ai_${ordinal}`, prompt).replace(/\d/g, (digit) =>
+    String.fromCharCode("k".charCodeAt(0) + Number(digit)),
+  );
+}
+
+function generatedQuestionsContainPii(questions: readonly InterviewQuestion[]): boolean {
+  const naturalLanguage = questions.map((question) => ({
+    prompt: question.prompt,
+    roleFamilies: question.roleFamilies,
+    skills: question.skills,
+    followUps: question.followUps,
+    scoringAnchors: question.scoringAnchors,
+  }));
+  const serialized = JSON.stringify(naturalLanguage);
+  const projected = new PiiProjector().redact(serialized);
+  if (/\[(?:EMAIL|ID_NUMBER|LINK|NAME|ADDRESS)\]/u.test(projected)) return true;
+  return /(?:电话|手机|手机号|联系电话|phone|mobile|tel(?:ephone)?)\s*[：:]?\s*\+?\d[\d\s().-]{5,}\d/iu.test(serialized);
+}
+
+class InterviewPlanOutputValidationError extends Error {
+  constructor(readonly reasonCodes: readonly string[]) {
+    super(reasonCodes.join(", "));
+    this.name = "InterviewPlanOutputValidationError";
+  }
+}
+
+function validateInterviewPlanOutput(
+  input: GatewayInputMap["interview.plan"],
+  output: GatewayOutputMap["interview.plan"],
+): GatewayOutputMap["interview.plan"] {
+  const reasonCodes = new Set<string>();
+  const references = new Map(input.questions.map((question) => [question.id, question]));
+  const referenceIds = new Set(references.keys());
+  const expectedOrders = Array.from({ length: input.questionCount }, (_, index) => index + 1);
+  const outputOrders = output.items.map((item) => item.order).sort((left, right) => left - right);
+  const questions = output.items.map((item) => item.question);
+
+  if (generatedQuestionsContainPii(questions)) reasonCodes.add("PII_OUTPUT");
+
+  if (output.durationMinutes !== input.durationMinutes) reasonCodes.add("DURATION_MISMATCH");
+  if (output.maxFollowUpsPerQuestion !== input.maxFollowUpsPerQuestion) {
+    reasonCodes.add("FOLLOW_UP_LIMIT_MISMATCH");
+  }
+  if (output.items.length !== input.questionCount) reasonCodes.add("QUESTION_COUNT_MISMATCH");
+  if (
+    outputOrders.length !== expectedOrders.length ||
+    outputOrders.some((order, index) => order !== expectedOrders[index])
+  ) {
+    reasonCodes.add("INVALID_ORDER_SEQUENCE");
+  }
+  if (new Set(questions.map((question) => question.id)).size !== questions.length) {
+    reasonCodes.add("DUPLICATE_GENERATED_ID");
+  }
+  if (questions.some((question) => referenceIds.has(question.id))) {
+    reasonCodes.add("REUSED_REFERENCE_ID");
+  }
+  if (new Set(questions.map((question) => compactQuestionText(question.prompt))).size !== questions.length) {
+    reasonCodes.add("DUPLICATE_GENERATED_PROMPT");
+  }
+
+  for (const question of questions) {
+    if (question.locale !== input.locale || !promptMatchesLocale(question.prompt, input.locale)) {
+      reasonCodes.add("LOCALE_MISMATCH");
+    }
+    if (
+      question.referenceQuestionIds.length === 0 ||
+      question.referenceQuestionIds.some((id) => !referenceIds.has(id))
+    ) {
+      reasonCodes.add("UNKNOWN_OR_MISSING_REFERENCE_ID");
+    }
+    if (new Set(question.referenceQuestionIds).size !== question.referenceQuestionIds.length) {
+      reasonCodes.add("DUPLICATE_REFERENCE_ID");
+    }
+    if (question.followUps.length > input.maxFollowUpsPerQuestion) {
+      reasonCodes.add("TOO_MANY_FOLLOW_UPS");
+    }
+    if (
+      hasDuplicateText(question.roleFamilies) ||
+      hasDuplicateText(question.skills) ||
+      hasDuplicateText(question.followUps) ||
+      hasDuplicateText(question.scoringAnchors)
+    ) {
+      reasonCodes.add("DUPLICATE_OR_EMPTY_METADATA");
+    }
+    if (
+      input.questions.some(
+        (reference) => questionTextSimilarity(question.prompt, reference.prompt) >= 0.82,
+      )
+    ) {
+      reasonCodes.add("COPIED_REFERENCE_PROMPT");
+    }
+  }
+
+  const storyReferenceIds = new Set(
+    input.questions
+      .filter((question) => question.source.startsWith("resume-story-context@"))
+      .map((question) => question.id),
+  );
+  const firstQuestion = output.items.find((item) => item.order === 1)?.question;
+  if (
+    storyReferenceIds.size > 0 &&
+    (!firstQuestion ||
+      firstQuestion.category !== "resume" ||
+      !firstQuestion.referenceQuestionIds.some((id) => storyReferenceIds.has(id)))
+  ) {
+    reasonCodes.add("FIRST_QUESTION_NOT_STORY_GROUNDED");
+  }
+
+  if (reasonCodes.size > 0) {
+    throw new InterviewPlanOutputValidationError([...reasonCodes]);
+  }
+
+  const ordered = output.items.slice().sort((left, right) => left.order - right.order);
+  const totalWeight = ordered.reduce((sum, item) => sum + item.targetMinutes, 0);
+  let allocated = 0;
+  return {
+    durationMinutes: input.durationMinutes,
+    maxFollowUpsPerQuestion: input.maxFollowUpsPerQuestion,
+    items: ordered.map((item, index) => {
+      const targetMinutes = index === ordered.length - 1
+        ? Math.max(0.1, Math.round((input.durationMinutes - allocated) * 10) / 10)
+        : Math.max(0.1, Math.round((item.targetMinutes / totalWeight) * input.durationMinutes * 10) / 10);
+      allocated += targetMinutes;
+      return {
+        order: index + 1,
+        question: {
+          ...item.question,
+          id: providerSafeQuestionId(item.question.prompt, index),
+          prompt: item.question.prompt.trim(),
+          roleFamilies: item.question.roleFamilies.map((value) => value.trim()),
+          skills: item.question.skills.map((value) => value.trim()),
+          followUps: item.question.followUps.map((value) => value.trim()),
+          scoringAnchors: item.question.scoringAnchors.map((value) => value.trim()),
+          source: INTERVIEW_PLAN_SOURCE,
+          generated: true,
+        },
+        targetMinutes,
+      };
+    }),
+  };
 }
 
 function isGroundedFragment(fragment: string, source: string): boolean {
@@ -1325,25 +1576,10 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
         projector,
       ) as GatewayOutputMap[K];
     case "interview.plan": {
-      const planInput = input as GatewayInputMap["interview.plan"];
-      const planOutput = output as GatewayOutputMap["interview.plan"];
-      const questions = new Map(planInput.questions.map((question) => [question.id, question]));
-      if (
-        planOutput.items.length !== Math.min(planInput.questionCount, planInput.questions.length) ||
-        new Set(planOutput.items.map((item) => item.question.id)).size !== planOutput.items.length ||
-        planOutput.items.some((item) => !questions.has(item.question.id))
-      ) {
-        throw new ProviderGatewayError("INVALID_RESPONSE");
-      }
-      return {
-        durationMinutes: planInput.durationMinutes,
-        maxFollowUpsPerQuestion: planInput.maxFollowUpsPerQuestion,
-        items: planOutput.items.map((item, index) => ({
-          order: index + 1,
-          question: questions.get(item.question.id)!,
-          targetMinutes: item.targetMinutes,
-        })),
-      } as GatewayOutputMap[K];
+      return validateInterviewPlanOutput(
+        input as GatewayInputMap["interview.plan"],
+        output as GatewayOutputMap["interview.plan"],
+      ) as GatewayOutputMap[K];
     }
     case "answer.evaluate": {
       const answerInput = input as GatewayInputMap["answer.evaluate"];
@@ -1500,7 +1736,14 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
   "job.match": "Map every supplied requirement exactly once. Decide met, partial, gap, or conflict from the supplied requirement and claims. For each requirement, claimIds must be a subset of that requirement eligibleClaimIds: cite at most three, cite none and use gap when the list is empty or no eligible claim supports coverage, and use conflict only when the cited eligible claim status is conflicting. Never cite a claim based only on broad semantic similarity without the server-computed lexical evidence. Leave evidenceAssetIds empty. Write a concise requirement-specific explanation for every mapping and a concrete requirement-specific suggestedAction when useful. Do not reuse stock explanations across unrelated requirements, do not invent facts or numbers, and do not mention evidence outside the cited claims.",
   "copy.rewrite.zh": "Rewrite the supplied Chinese text as one concise, coherent resume paragraph in professional language. When the input contains multiple fragments, combine them and remove conversational filler while preserving every explicit fact. Preserve every preserveTerms value exactly, keep all numbers unchanged, and do not add achievements, scope, credentials, rankings, or any other facts. Use export-safe plain text only: no placeholder squares, replacement characters, private-use glyphs, emoji, or invisible control and formatting characters. Set original to the supplied text and addedFacts to false.",
   "copy.rewrite.en": "Rewrite the supplied English text as one concise, coherent resume paragraph in professional language. When the input contains multiple fragments, combine them and remove conversational filler while preserving every explicit fact. Preserve every preserveTerms value exactly, keep all numbers unchanged, and do not add achievements, scope, credentials, rankings, or any other facts. Use export-safe plain text only: no placeholder squares, replacement characters, private-use glyphs, emoji, or invisible control and formatting characters. Set original to the supplied text and addedFacts to false.",
-  "interview.plan": "Select and order only supplied question IDs. Do not invent or rewrite questions.",
+  "interview.plan": [
+    "Task: generate the final interview plan. The supplied referenceQuestions, role, skills, and jobRequirements are context only; never return a reference question as the final question.",
+    "Create exactly questionCount newly worded questions in the supplied locale. Every final question must have a unique new id that is not any reference id, generated true, source interview.plan@2.0.0, and one to eight referenceQuestionIds chosen only from supplied reference question ids.",
+    "Do not copy or lightly edit any reference prompt. Make each prompt materially different and specific to the supplied role, resume skills, job requirements, or resume story context without inventing candidate facts.",
+    "Use only the allowed category and difficulty values. Keep roleFamilies to at most eight, skills to at most twelve, scoringAnchors to two through eight concise items, and followUps at or below maxFollowUpsPerQuestion. Keep all lists unique.",
+    "Use order values 1 through questionCount exactly once, preserve durationMinutes and maxFollowUpsPerQuestion exactly, and assign a positive targetMinutes to every item.",
+    "When any referenceQuestion source starts with resume-story-context@, order 1 must be a newly generated resume-category question that references at least one such story reference id.",
+  ].join(" "),
   "answer.evaluate": "Evaluate only the supplied answer. Cited fragments must be non-empty exact substrings of the answer. Set questionId exactly to the supplied question id, return at most five cited fragments and at most eight strengths and improvements, and set overallScore to the exact sum of the five dimension scores.",
   "answer.coach": "Give concrete coaching grounded only in the supplied answer and evaluation. Return one concise headline, one to five unique actions, and two to eight improvedOutline items. Do not output any number that does not appear exactly in the answer. The factSafetyReminder must explicitly tell the candidate to use only real or verifiable facts and not invent facts. Do not invent candidate facts.",
 };
@@ -1570,6 +1813,56 @@ async function completeProviderScore(
         reasonCounts: Object.fromEntries(
           reasonCodes.map((reasonCode) => [reasonCode, 1]),
         ),
+        durationMs: Math.max(0, performance.now() - startedAt),
+      });
+      correctionReasonCodes = reasonCodes;
+    }
+  }
+  throw new ProviderGatewayError("INVALID_RESPONSE");
+}
+
+async function completeProviderInterviewPlan(
+  gateway: OpenAiCompatibleGateway,
+  input: GatewayInputMap["interview.plan"],
+  context: CapabilityContext,
+  dto: unknown,
+  piiPayload: unknown,
+) {
+  let correctionReasonCodes: string[] | undefined;
+  for (const generationAttempt of [1, 2] as const) {
+    const startedAt = performance.now();
+    try {
+      const completion = await gateway.complete({
+        capabilityId: "interview.plan",
+        context,
+        dto,
+        piiPayload,
+        outputSchema: ProviderInterviewPlanOutputSchema,
+        instruction: providerInstructions["interview.plan"],
+        generationAttempt,
+        correctionReasonCodes,
+      });
+      return {
+        data: validateInterviewPlanOutput(input, completion.data),
+        usage: completion.usage,
+      };
+    } catch (error) {
+      const reasonCodes =
+        error instanceof InterviewPlanOutputValidationError
+          ? [...error.reasonCodes]
+          : error instanceof ProviderGatewayError && error.code === "INVALID_RESPONSE"
+            ? ["INVALID_RESPONSE_SCHEMA"]
+            : null;
+      if (!reasonCodes) throw error;
+      if (generationAttempt === 2) {
+        throw new ProviderGatewayError("INVALID_RESPONSE", undefined, { cause: error });
+      }
+      gateway.recordInvalidCandidates({
+        capabilityId: "interview.plan",
+        context,
+        generationAttempt,
+        format: "json_object",
+        reasonCounts: Object.fromEntries(reasonCodes.map((reasonCode) => [reasonCode, 1])),
         durationMs: Math.max(0, performance.now() - startedAt),
       });
       correctionReasonCodes = reasonCodes;
@@ -1662,6 +1955,12 @@ function providerCapability<K extends ProviderGatewayCapabilityId>(
       try {
         projector.assertSafe(piiPayload);
       } catch (cause) {
+        console.warn("ai_provider_input_rejected", {
+          capabilityId: id,
+          reasonCode:
+            cause instanceof Error ? cause.message : "UNKNOWN_PII_PATTERN",
+          fieldPaths: sensitivePayloadPaths(piiPayload, projector).slice(0, 12),
+        });
         throw new ProviderGatewayError("UNSAFE_INPUT", undefined, { cause });
       }
       const completion =
@@ -1673,6 +1972,14 @@ function providerCapability<K extends ProviderGatewayCapabilityId>(
               projector,
               dto,
             )
+          : id === "interview.plan"
+            ? await completeProviderInterviewPlan(
+                gateway,
+                input as GatewayInputMap["interview.plan"],
+                context,
+                dto,
+                piiPayload,
+              )
           : id === "resume.score"
             ? await completeProviderScore(
                 gateway,
@@ -1690,7 +1997,7 @@ function providerCapability<K extends ProviderGatewayCapabilityId>(
               instruction: providerInstructions[id],
             });
       const data =
-        id === "resume.suggest" || id === "resume.score"
+        id === "resume.suggest" || id === "resume.score" || id === "interview.plan"
           ? (completion.data as GatewayOutputMap[K])
           : validateOutput(id, input, completion.data as GatewayOutputMap[K]);
       return {

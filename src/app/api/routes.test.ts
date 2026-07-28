@@ -34,6 +34,7 @@ import {
 import {
   invokeBaselineCapability,
   type BaselineCapabilityId,
+  type InterviewPlanInput,
 } from "@/lib/baseline";
 import {
   FeatureAvailabilitySchema,
@@ -66,6 +67,64 @@ async function successfulAiFixture(
   input: unknown,
   context: CapabilityContext,
 ) {
+  if (id === "interview.plan") {
+    const planInput = input as InterviewPlanInput;
+    const storyReference = planInput.questions.find((question) =>
+      question.source.startsWith("resume-story-context@"),
+    );
+    const references = [
+      ...(storyReference ? [storyReference] : []),
+      ...planInput.questions.filter((question) => question.id !== storyReference?.id),
+    ];
+    const items = Array.from({ length: planInput.questionCount }, (_, index) => {
+      const reference = references[index % references.length];
+      const chinesePrompt = index === 0 && storyReference
+        ? `针对这段简历经历，哪项关键取舍最能体现你的个人判断，你会如何证明结果可靠？`
+        : `结合目标岗位，请具体说明你处理第 ${index + 1} 类实际挑战时的判断依据和验证方法。`;
+      const englishPrompt = index === 0 && storyReference
+        ? "For this resume experience, which trade-off best demonstrates your individual judgment, and how would you verify the result?"
+        : `For the target role, explain your decision criteria and validation approach when handling practical challenge ${index + 1}.`;
+      return {
+        order: index + 1,
+        question: {
+          id: `ai-generated-question-${index + 1}`,
+          locale: planInput.locale,
+          prompt: planInput.locale === "en-US"
+            ? englishPrompt
+            : planInput.locale === "mixed"
+              ? `${chinesePrompt}\n${englishPrompt}`
+              : chinesePrompt,
+          category: index === 0 && storyReference ? "resume" as const : reference.category,
+          difficulty: reference.difficulty,
+          roleFamilies: planInput.role ? [planInput.role] : reference.roleFamilies.slice(0, 2),
+          skills: (planInput.skills.length ? planInput.skills : reference.skills).slice(0, 4),
+          followUps: planInput.maxFollowUpsPerQuestion > 0
+            ? [planInput.locale === "en-US" ? "What evidence supports that choice?" : "哪项证据能支持这个选择？"]
+            : [],
+          scoringAnchors: planInput.locale === "en-US"
+            ? ["Explains individual judgment", "Uses verifiable evidence"]
+            : ["说明个人判断", "使用可核实证据"],
+          source: "interview.plan@2.0.0",
+          generated: true,
+          referenceQuestionIds: [reference.id],
+        },
+        targetMinutes: planInput.durationMinutes / planInput.questionCount,
+      };
+    });
+    return {
+      data: {
+        durationMinutes: planInput.durationMinutes,
+        maxFollowUpsPerQuestion: planInput.maxFollowUpsPerQuestion,
+        items,
+      },
+      confidence: 0.9,
+      evidenceReferences: items.flatMap((item) => item.question.referenceQuestionIds),
+      warnings: [],
+      sourceVersion: "interview.plan@2.0.0",
+      durationMs: 1,
+      usedFallback: false,
+    };
+  }
   if (id !== "resume.score" && id !== "resume.suggest") {
     const baseline = await invokeBaselineForProviderFixture(id, input, context);
     return {
@@ -563,7 +622,7 @@ describe.sequential("API routes", () => {
     },
   );
 
-  it("retrieves six questions from the bilingual knowledge pack", async () => {
+  it("returns six AI-generated questions grounded in the bilingual reference pack", async () => {
     const response = await planInterview(
       new Request("http://localhost/api/interview/plan", {
         method: "POST",
@@ -580,9 +639,18 @@ describe.sequential("API routes", () => {
     expect(response.status).toBe(200);
     const result = InterviewPlanSchema.parse(await response.json());
     expect(result.questions).toHaveLength(6);
+    const planCall = requiredAiMocks.invokeRequiredAiCapability.mock.calls.find(
+      ([id]) => id === "interview.plan",
+    );
+    const planInput = planCall?.[1] as InterviewPlanInput;
+    const referenceIds = new Set(planInput.questions.map((question) => question.id));
+    expect(result.questions.every((question) => question.generated)).toBe(true);
+    expect(result.questions.every((question) => question.source === "interview.plan@2.0.0")).toBe(true);
+    expect(result.questions.every((question) => !referenceIds.has(question.id))).toBe(true);
     expect(
       result.questions.every((question) =>
-        question.source.includes("resume-assistant-editorial"),
+        question.referenceQuestionIds.length > 0 &&
+        question.referenceQuestionIds.every((id) => referenceIds.has(id)),
       ),
     ).toBe(true);
     expect(result.maxFollowUps).toBe(2);
@@ -626,7 +694,7 @@ describe.sequential("API routes", () => {
     });
   });
 
-  it("pins a resume-grounded story question first in the interview plan", async () => {
+  it("passes the resume story as context and returns a newly generated story question first", async () => {
     const response = await planInterview(
       new Request("http://localhost/api/interview/plan", {
         method: "POST",
@@ -655,12 +723,23 @@ describe.sequential("API routes", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-capability-trace")).toContain("interview.plan@");
     const result = InterviewPlanSchema.parse(await response.json());
+    const planCall = requiredAiMocks.invokeRequiredAiCapability.mock.calls.find(
+      ([id]) => id === "interview.plan",
+    );
+    const planInput = planCall?.[1] as InterviewPlanInput;
+    const storyReference = planInput.questions.find((question) =>
+      question.source === "resume-story-context@1.0.0",
+    );
+    expect(storyReference?.prompt).toContain("新用户激活率优化");
+    expect(storyReference?.prompt).toContain("7 日激活率从 42% 提升至 61%");
     expect(result.questions[0]).toMatchObject({
       category: "resume",
-      source: "derived-from-confirmed-resume-story@1.0.0",
-      referenceQuestionIds: ["claim-activation"],
+      source: "interview.plan@2.0.0",
+      generated: true,
+      referenceQuestionIds: [storyReference?.id],
     });
-    expect(result.questions[0].prompt).toContain("新用户激活率优化");
+    expect(result.questions[0].id).not.toBe(storyReference?.id);
+    expect(result.questions[0].prompt).not.toBe(storyReference?.prompt);
   });
 
   it("evaluates a redacted answer and checks resume consistency", async () => {
@@ -702,6 +781,29 @@ describe.sequential("API routes", () => {
       "answer.coach": "answer.coach@2.0.0",
     });
     expect(JSON.stringify(result)).not.toContain("UNTRUSTED_DOCUMENT_DATA");
+  });
+
+  it("accepts a short non-empty interview answer for coaching", async () => {
+    const response = await evaluateInterview(
+      new Request("http://localhost/api/interview/evaluate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          resumeId: "resume-short-answer",
+          revision: 0,
+          question: interviewQuestion("q-short", "Please introduce yourself."),
+          answer: "你好",
+          claims: [],
+        }),
+      }),
+    );
+
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(EvaluationResponseSchema.parse(await response.json())).toMatchObject({
+      sourceResumeId: "resume-short-answer",
+      sourceResumeRevision: 0,
+      evaluation: { questionId: "q-short" },
+    });
   });
 
   it("deduplicates repeated consistency findings while preserving different conflicts", async () => {

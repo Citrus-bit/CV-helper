@@ -155,13 +155,11 @@ function InterviewWorkspaceSession({
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const unregisterRecognitionDisposerRef = useRef<(() => void) | null>(null);
   const submittingQuestionIdRef = useRef<string | null>(null);
-  const sessionActiveRef = useRef(true);
   const sessionResumeId = analysis.resume.id;
   const sessionResumeRevision = analysis.resume.revision;
   const sessionPlan = plan;
 
   const isCurrentSession = () => {
-    if (!sessionActiveRef.current) return false;
     const current = useAppStore.getState();
     return Boolean(
       current.analysis?.resume.id === sessionResumeId &&
@@ -180,10 +178,17 @@ function InterviewWorkspaceSession({
         claims: analysis.claims,
         stories: analysis.stories,
         jdText: jobMatch?.job.rawText,
+      }).then((nextPlan) => {
+        // The workspace may unmount while the provider is generating the plan.
+        // Store it here so switching modules does not discard the result.
+        if (
+          isCurrentSession() &&
+          useAppStore.getState().interviewPlan === null
+        ) {
+          setPlan(nextPlan);
+        }
+        return nextPlan;
       }),
-    onSuccess: (nextPlan) => {
-      if (isCurrentSession()) setPlan(nextPlan);
-    },
   });
 
   const evaluationMutation = useMutation({
@@ -209,12 +214,13 @@ function InterviewWorkspaceSession({
       if (result.evaluation.questionId !== submission.question.id) {
         throw new Error("评审结果与当前问题不一致，请重试。");
       }
+      // Persist the completed turn through the store even when module
+      // navigation unmounts this observer before the request resolves.
+      if (isCurrentSession()) {
+        if (submission.followUpRound === 0) addEvaluation(result);
+        else updateProgress({ followUpEvaluation: result });
+      }
       return result;
-    },
-    onSuccess: (result, submission) => {
-      if (!isCurrentSession()) return;
-      if (submission.followUpRound === 0) addEvaluation(result);
-      else updateProgress({ followUpEvaluation: result });
     },
     onSettled: (_data, _error, submission) => {
       if (
@@ -333,9 +339,7 @@ function InterviewWorkspaceSession({
   }
 
   useEffect(() => {
-    sessionActiveRef.current = true;
     return () => {
-      sessionActiveRef.current = false;
       const recognition = recognitionRef.current;
       recognitionRef.current = null;
       unregisterRecognitionDisposerRef.current?.();
@@ -790,7 +794,7 @@ function InterviewWorkspaceSession({
               type="button"
               disabled={
                 Boolean(evaluation) ||
-                transcript.trim().length < 10 ||
+                transcript.trim().length === 0 ||
                 evaluationMutation.isPending ||
                 recording
               }

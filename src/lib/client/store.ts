@@ -301,6 +301,7 @@ function emptySessionState(
 }
 
 function cancelWorkspaceActivity() {
+  cancelScheduledSessionArchive();
   cancelAnalysisRequest();
   activeRevisionAnalysis?.controller.abort();
   activeRevisionAnalysis = null;
@@ -1080,6 +1081,30 @@ async function saveCurrentSessionToRecent(): Promise<RecentAnalysisSummary[]> {
   return saveRecentAnalysis(input);
 }
 
+let scheduledSessionArchive: ReturnType<typeof setTimeout> | null = null;
+
+function cancelScheduledSessionArchive() {
+  if (scheduledSessionArchive === null) return;
+  clearTimeout(scheduledSessionArchive);
+  scheduledSessionArchive = null;
+}
+
+function scheduleCurrentSessionArchive() {
+  cancelScheduledSessionArchive();
+  scheduledSessionArchive = setTimeout(() => {
+    scheduledSessionArchive = null;
+    const resumeId = useAppStore.getState().analysis?.resume.id;
+    void saveCurrentSessionToRecent().then(
+      (recentAnalyses) => {
+        const current = useAppStore.getState();
+        if (resumeId && current.analysis?.resume.id !== resumeId) return;
+        useAppStore.setState({ recentAnalyses });
+      },
+      () => undefined,
+    );
+  }, 250);
+}
+
 function scheduleRevisionAiAnalysis(resumeId: string, revision: number) {
   queueMicrotask(() => void refreshRevisionAiAnalysis(resumeId, revision));
 }
@@ -1314,7 +1339,8 @@ export const useAppStore = create<AppState>()(
       error: null,
       setStage: (stage) => set({ stage }),
       setError: (error) => set({ error }),
-      setModule: (module) =>
+      setModule: (module) => {
+        let changed = false;
         set((state) => {
           if (state.homeNavigationPending) return state;
           const progressionLocked = Boolean(
@@ -1327,8 +1353,12 @@ export const useAppStore = create<AppState>()(
                 )),
           );
           if (progressionLocked && module !== "resume") return state;
+          if (module === state.module) return state;
+          changed = true;
           return { module };
-        }),
+        });
+        if (changed) scheduleCurrentSessionArchive();
+      },
       setAnalysis: (analysis, suppliedPdfBlob) => {
         const sourcePdfBlob =
           suppliedPdfBlob ??
@@ -2247,12 +2277,14 @@ export const useAppStore = create<AppState>()(
           }
           return { resumePanel };
         }),
-      setInterviewPlan: (interviewPlan) =>
+      setInterviewPlan: (interviewPlan) => {
+        let changed = false;
         set((state) => {
           if (state.homeNavigationPending || state.stage !== "workspace")
             return state;
           if (!isInterviewPlanForAnalysis(state.analysis, interviewPlan))
             return state;
+          changed = true;
           return {
             interviewPlan,
             interviewSessionVersion: state.interviewSessionVersion + 1,
@@ -2262,8 +2294,11 @@ export const useAppStore = create<AppState>()(
               ? newInterviewProgress(state.analysis, interviewPlan, [])
               : null,
           };
-        }),
-      addEvaluation: (evaluation) =>
+        });
+        if (changed) scheduleCurrentSessionArchive();
+      },
+      addEvaluation: (evaluation) => {
+        let changed = false;
         set((state) => {
           if (state.homeNavigationPending || state.stage !== "workspace")
             return state;
@@ -2282,14 +2317,18 @@ export const useAppStore = create<AppState>()(
             )
           )
             return state;
+          changed = true;
           return {
             evaluations: [
               ...state.evaluations,
               normalizeEvaluation(evaluation),
             ],
           };
-        }),
-      setInterviewSetupStage: (interviewSetupStage) =>
+        });
+        if (changed) scheduleCurrentSessionArchive();
+      },
+      setInterviewSetupStage: (interviewSetupStage) => {
+        let changed = false;
         set((state) => {
           if (
             state.homeNavigationPending ||
@@ -2298,12 +2337,15 @@ export const useAppStore = create<AppState>()(
           ) {
             return state;
           }
-          return {
-            interviewSetupStage:
-              normalizeInterviewSetupStage(interviewSetupStage),
-          };
-        }),
-      updateInterviewProgress: (update) =>
+          const nextStage = normalizeInterviewSetupStage(interviewSetupStage);
+          if (nextStage === state.interviewSetupStage) return state;
+          changed = true;
+          return { interviewSetupStage: nextStage };
+        });
+        if (changed) scheduleCurrentSessionArchive();
+      },
+      updateInterviewProgress: (update) => {
+        let changed = false;
         set((state) => {
           if (
             state.homeNavigationPending ||
@@ -2318,8 +2360,16 @@ export const useAppStore = create<AppState>()(
             state.evaluations,
             { ...state.interviewProgress, ...update },
           );
-          return next ? { interviewProgress: next } : state;
-        }),
+          if (
+            !next ||
+            JSON.stringify(next) === JSON.stringify(state.interviewProgress)
+          )
+            return state;
+          changed = true;
+          return { interviewProgress: next };
+        });
+        if (changed) scheduleCurrentSessionArchive();
+      },
       setTemplate: (selectedTemplate) =>
         set((state) =>
           state.homeNavigationPending ? state : { selectedTemplate },

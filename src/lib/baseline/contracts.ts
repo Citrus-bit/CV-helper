@@ -400,7 +400,11 @@ export const QuestionRetrieveInputSchema = z.object({
 export const QuestionRetrieveOutputSchema = z.object({ questions: z.array(InterviewQuestionSchema) });
 
 export const InterviewPlanInputSchema = z.object({
-  questions: z.array(InterviewQuestionSchema),
+  locale: LocaleSchema,
+  role: z.string().max(200).optional(),
+  skills: z.array(z.string().min(1).max(120)).max(30).default([]),
+  jobRequirements: z.array(z.string().min(1).max(1_500)).max(40).default([]),
+  questions: z.array(InterviewQuestionSchema).min(1).max(40),
   durationMinutes: z.number().int().min(5).max(90).default(20),
   questionCount: z.number().int().min(1).max(20).default(6),
   maxFollowUpsPerQuestion: z.number().int().min(0).max(2).default(2),

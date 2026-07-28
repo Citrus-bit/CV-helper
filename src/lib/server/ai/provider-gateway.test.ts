@@ -6,8 +6,10 @@ import { z } from "zod";
 
 import type { CapabilityContext } from "@/lib/capabilities";
 import {
+  InterviewQuestionSchema,
   ResumeDocumentSchema,
   ScorecardSchema,
+  type InterviewQuestion,
   type Suggestion,
 } from "@/lib/domain";
 import { createServerCapabilityRegistry } from "@/lib/server/capability-runtime";
@@ -136,6 +138,73 @@ function completionResponse(data: unknown, status = 200): Response {
     }),
     { status, headers: { "content-type": "application/json" } },
   );
+}
+
+function interviewReferenceQuestion(): InterviewQuestion {
+  return InterviewQuestionSchema.parse({
+    id: "reference-question-delivery",
+    locale: "zh-CN",
+    prompt: "请说明一次你改善交付流程的经历。",
+    category: "behavioral",
+    difficulty: "intermediate",
+    roleFamilies: ["product"],
+    skills: ["交付"],
+    followUps: ["你如何核实结果？"],
+    scoringAnchors: ["说明个人行动", "使用可核实结果"],
+    source: "route-test-pack@1.0.0",
+    generated: false,
+    referenceQuestionIds: [],
+  });
+}
+
+function generatedInterviewQuestion(
+  index: number,
+  overrides: Partial<InterviewQuestion> = {},
+): InterviewQuestion {
+  const prompts = [
+    "面对目标岗位中的跨团队交付挑战，你会如何说明自己的判断依据、具体行动与验证方式？",
+    "当项目关键节点出现资源冲突时，你如何权衡优先级，并用哪些证据复盘决策质量？",
+  ];
+  return InterviewQuestionSchema.parse({
+    id: `ai-interview-generated-${index}`,
+    locale: "zh-CN",
+    prompt: prompts[index - 1] ?? `请说明你处理岗位挑战 ${index} 时采用的判断和验证方法。`,
+    category: "role",
+    difficulty: "intermediate",
+    roleFamilies: ["product"],
+    skills: ["交付"],
+    followUps: ["哪项证据最能支持你的判断？"],
+    scoringAnchors: ["说明个人行动", "使用可核实证据"],
+    source: "interview.plan@2.0.0",
+    generated: true,
+    referenceQuestionIds: ["reference-question-delivery"],
+    ...overrides,
+  });
+}
+
+function interviewPlanInput(questionCount = 1) {
+  return {
+    locale: "zh-CN" as const,
+    role: "产品经理",
+    skills: ["交付", "跨团队协作"],
+    jobRequirements: ["负责跨团队产品交付与效果复盘"],
+    questions: [interviewReferenceQuestion()],
+    durationMinutes: 20,
+    questionCount,
+    maxFollowUpsPerQuestion: 2,
+  };
+}
+
+function interviewPlanOutput(questions: InterviewQuestion[]) {
+  return {
+    durationMinutes: 20,
+    maxFollowUpsPerQuestion: 2,
+    items: questions.map((question, index) => ({
+      order: index + 1,
+      question,
+      targetMinutes: 20 / questions.length,
+    })),
+  };
 }
 
 describe("OpenAI-compatible provider gateway", () => {
@@ -637,6 +706,30 @@ describe("OpenAI-compatible provider gateway", () => {
     );
   });
 
+  it("does not treat role wording in a score as an ambiguous person name", async () => {
+    const roleScore = scoreOutput();
+    roleScore.summary = "产品经理岗位所需能力说明清楚，建议继续补充可核实影响。";
+    const fetchMock = vi.fn().mockResolvedValue(completionResponse(roleScore));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    await expect(
+      registry.invoke(
+        "resume.score",
+        { resume, claims },
+        context(),
+        { fallbackPolicy: "forbid" },
+      ),
+    ).resolves.toMatchObject({
+      usedFallback: false,
+      sourceVersion: "resume.score@2.0.0",
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("sends the validated score as context in a separate suggestion request", async () => {
     const fetchMock = vi
       .fn()
@@ -665,6 +758,38 @@ describe("OpenAI-compatible provider gateway", () => {
       summary: "内容基础扎实,建议继续补充可核实影响。",
     });
     expect(requestBody).not.toHaveProperty("max_tokens");
+  });
+
+  it("does not scan numeric system identifiers as natural-language PII", async () => {
+    const numericIdResume = structuredClone(resume);
+    numericIdResume.id = "resume-123456789012";
+    const numericIdScore = scoreOutput();
+    numericIdScore.resumeId = numericIdResume.id;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(completionResponse({ suggestions: [] }));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    await expect(
+      registry.invoke(
+        "resume.suggest",
+        {
+          resume: numericIdResume,
+          claims,
+          scoreContext: numericIdScore,
+        },
+        context(),
+        { fallbackPolicy: "forbid" },
+      ),
+    ).resolves.toMatchObject({
+      usedFallback: false,
+      sourceVersion: "resume.suggest@2.0.0",
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("redacts known name variants and addresses from every projected resume string", async () => {
@@ -948,6 +1073,49 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).response_format.type).toBe("json_schema");
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).response_format.type).toBe("json_object");
+  });
+
+  it("retries one transport failure when the capability deadline has enough budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError("fetch failed"))
+        .mockResolvedValueOnce(completionResponse({ ok: true }));
+      const events: ProviderGatewayLogEvent[] = [];
+      const gateway = new OpenAiCompatibleGateway(
+        loadProviderGatewayConfig(providerEnvironment)!,
+        fetchMock,
+        (event) => events.push(event),
+      );
+      const invocation = gateway.complete({
+        capabilityId: "resume.score",
+        context: {
+          ...context(),
+          deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+        dto: { safe: "input" },
+        outputSchema: z.object({ ok: z.boolean() }),
+        instruction: "Return the fixture.",
+      });
+
+      await vi.advanceTimersByTimeAsync(1_001);
+
+      await expect(invocation).resolves.toMatchObject({ data: { ok: true } });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(events).toEqual([
+        expect.objectContaining({
+          outcome: "network_error",
+          transportAttempt: 1,
+        }),
+        expect.objectContaining({
+          outcome: "success",
+          transportAttempt: 2,
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not retry a 429 even when its body mentions response_format", async () => {
@@ -1449,20 +1617,8 @@ describe("OpenAI-compatible provider gateway", () => {
   });
 
   it("uses json_object for required interview planning and coaching", async () => {
-    const question = {
-      id: "question-json-object",
-      locale: "zh-CN" as const,
-      prompt: "请说明一次你改善交付流程的经历。",
-      category: "behavioral" as const,
-      difficulty: "intermediate" as const,
-      roleFamilies: ["product"],
-      skills: ["交付"],
-      followUps: ["你如何核实结果？"],
-      scoringAnchors: ["说明个人行动"],
-      source: "test",
-      generated: false,
-      referenceQuestionIds: [],
-    };
+    const question = generatedInterviewQuestion(1, { id: "plan-q-20260728-001" });
+    const planInput = interviewPlanInput();
     const answer = "我梳理了交付流程，并通过复盘减少等待，最终按期上线。";
     const evaluation = {
       questionId: question.id,
@@ -1482,11 +1638,7 @@ describe("OpenAI-compatible provider gateway", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        completionResponse({
-          durationMinutes: 20,
-          maxFollowUpsPerQuestion: 2,
-          items: [{ order: 1, question, targetMinutes: 20 }],
-        }),
+        completionResponse(interviewPlanOutput([question])),
       )
       .mockResolvedValueOnce(
         completionResponse({
@@ -1502,29 +1654,35 @@ describe("OpenAI-compatible provider gateway", () => {
       logger: () => undefined,
     });
 
-    await expect(
-      registry.invoke(
-        "interview.plan",
-        {
-          questions: [question],
-          durationMinutes: 20,
-          questionCount: 1,
-          maxFollowUpsPerQuestion: 2,
-        },
-        {
-          ...context(),
-          grantedDataScopes: ["anonymous_metadata"],
-        },
-        { fallbackPolicy: "forbid" },
-      ),
-    ).resolves.toMatchObject({
+    const planningResult = await registry.invoke<
+      unknown,
+      { items: Array<{ question: InterviewQuestion }> }
+    >(
+      "interview.plan",
+      planInput,
+      {
+        ...context(),
+        grantedDataScopes: ["anonymous_metadata"],
+      },
+      { fallbackPolicy: "forbid" },
+    );
+    expect(planningResult).toMatchObject({
       usedFallback: false,
       sourceVersion: "interview.plan@2.0.0",
+      data: {
+        items: [{ question: { id: expect.stringMatching(/^interview_ai_a_/), generated: true } }],
+      },
     });
+    expect(planningResult.data.items[0].question.id).not.toMatch(/\d/);
+    const plannedQuestion = planningResult.data.items[0].question;
     await expect(
       registry.invoke(
         "answer.coach",
-        { question, answer, evaluation },
+        {
+          question: plannedQuestion,
+          answer,
+          evaluation: { ...evaluation, questionId: plannedQuestion.id },
+        },
         {
           ...context(),
           grantedDataScopes: ["interview_content", "evidence_graph"],
@@ -1545,6 +1703,87 @@ describe("OpenAI-compatible provider gateway", () => {
         (request) => request.response_format.type === "json_object",
       ),
     ).toBe(true);
+    const planningDto = JSON.parse(requests[0].messages[1].content);
+    expect(planningDto).toMatchObject({
+      locale: "zh-CN",
+      role: "产品经理",
+      skills: ["交付", "跨团队协作"],
+      jobRequirements: ["负责跨团队产品交付与效果复盘"],
+    });
+    expect(planningDto).toHaveProperty("referenceQuestions");
+    expect(planningDto).not.toHaveProperty("questions");
+    expect(requests[0].messages[0].content).toContain("context only");
+  });
+
+  it.each([
+    {
+      name: "a reused local question id",
+      questions: [generatedInterviewQuestion(1, { id: "reference-question-delivery" })],
+    },
+    {
+      name: "a verbatim local prompt",
+      questions: [generatedInterviewQuestion(1, { prompt: interviewReferenceQuestion().prompt })],
+    },
+    {
+      name: "missing reference ids",
+      questions: [generatedInterviewQuestion(1, { referenceQuestionIds: [] })],
+    },
+    {
+      name: "an unknown reference id",
+      questions: [generatedInterviewQuestion(1, { referenceQuestionIds: ["unknown-reference"] })],
+    },
+    {
+      name: "generated false",
+      questions: [generatedInterviewQuestion(1, { generated: false })],
+    },
+    {
+      name: "the wrong locale",
+      questions: [generatedInterviewQuestion(1, {
+        locale: "en-US",
+        prompt: "How would you explain your decision criteria and verify the outcome?",
+      })],
+    },
+    {
+      name: "PII in generated text",
+      questions: [generatedInterviewQuestion(1, {
+        prompt: "请联系 candidate@example.com 后再说明你会如何验证产品改进效果。",
+      })],
+    },
+    {
+      name: "duplicate generated ids",
+      questions: [
+        generatedInterviewQuestion(1),
+        generatedInterviewQuestion(2, { id: "ai-interview-generated-1" }),
+      ],
+    },
+    {
+      name: "duplicate generated prompts",
+      questions: [
+        generatedInterviewQuestion(1),
+        generatedInterviewQuestion(2, { prompt: generatedInterviewQuestion(1).prompt }),
+      ],
+    },
+  ])("rejects interview plans containing $name", async ({ questions }) => {
+    const output = interviewPlanOutput(questions);
+    const fetchMock = vi.fn().mockImplementation(async () => completionResponse(output));
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    await expect(
+      registry.invoke(
+        "interview.plan",
+        interviewPlanInput(questions.length),
+        {
+          ...context(),
+          grantedDataScopes: ["anonymous_metadata"],
+        },
+        { fallbackPolicy: "forbid" },
+      ),
+    ).rejects.toBeDefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("normalizes derived answer scores and rejects unsafe evaluation or coaching output", async () => {

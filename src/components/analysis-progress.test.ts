@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   beginAnalysisRequest,
+  cancelAnalysisRequest,
   hasActiveAnalysisRequest,
 } from "@/lib/client/analysis-request";
 import { useAppStore } from "@/lib/client/store";
@@ -14,6 +15,7 @@ import { AnalysisProgress } from "./analysis-progress";
 
 afterEach(() => {
   cleanup();
+  cancelAnalysisRequest();
   useAppStore.getState().reset();
   window.sessionStorage.clear();
 });
@@ -43,15 +45,37 @@ describe("AnalysisProgress", () => {
   });
 
   it("cancels the active request and returns to the upload screen", () => {
-    beginAnalysisRequest();
+    const request = beginAnalysisRequest();
     useAppStore.setState({ stage: "analyzing" });
 
     render(createElement(AnalysisProgress));
     expect(hasActiveAnalysisRequest()).toBe(true);
 
-    fireEvent.click(screen.getByRole("button", { name: "取消分析" }));
+    const cancelButton = screen.getByRole("button", { name: "取消分析" });
+    expect(cancelButton).toHaveAttribute("aria-keyshortcuts", "Escape");
+    fireEvent.click(cancelButton);
 
     expect(hasActiveAnalysisRequest()).toBe(false);
+    expect(request.signal.aborted).toBe(true);
     expect(useAppStore.getState().stage).toBe("upload");
+  });
+
+  it("cancels with Escape and removes the shortcut after unmount", () => {
+    const request = beginAnalysisRequest();
+    useAppStore.setState({ stage: "analyzing" });
+
+    const view = render(createElement(AnalysisProgress));
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(request.signal.aborted).toBe(false);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(request.signal.aborted).toBe(true);
+    expect(useAppStore.getState().stage).toBe("upload");
+
+    view.unmount();
+    const nextRequest = beginAnalysisRequest();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(nextRequest.signal.aborted).toBe(false);
   });
 });

@@ -263,6 +263,7 @@ describe("deterministic domain capability behavior", () => {
     >(
       "interview.plan",
       {
+        locale: "zh-CN",
         questions: [question],
         durationMinutes: 20,
         questionCount: 2,

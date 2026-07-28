@@ -9,7 +9,7 @@ type CatalogSeed = {
   timeoutMs?: number;
 };
 
-export const AI_CAPABILITY_TIMEOUT_MS = 7 * 60_000;
+export const AI_CAPABILITY_TIMEOUT_MS = 15 * 60_000;
 
 const seeds: Record<CapabilityId, CatalogSeed> = {
   "document.parse": { name: "PDF 原生解析", description: "提取 PDF 原生文字层及坐标。", dataScopes: ["original_pdf"] },

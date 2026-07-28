@@ -45,7 +45,7 @@ const RequestSchema = z.object({
   resumeId: z.string().min(1).max(160),
   revision: z.number().int().nonnegative(),
   question: QuestionRequestSchema,
-  answer: z.string().trim().min(10).max(20_000),
+  answer: z.string().trim().min(1).max(20_000),
   claims: z.array(ClaimSchema).max(500),
 });
 

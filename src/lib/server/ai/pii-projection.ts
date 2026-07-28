@@ -42,7 +42,7 @@ const ENGLISH_CONTEXT_NAME_PATTERN = /\b((?:I\s+(?:worked|collaborated|partnered
 const POTENTIAL_LABELED_PII_PATTERN = /(?:姓名|名字|full\s+name|candidate\s+name|地址|住址|现居地|所在地|address|location)\s*[：:]\s*(?!\[(?:NAME|ADDRESS)\])[^\n,，;；"']{1,120}/giu;
 const POTENTIAL_CHINESE_ADDRESS_PATTERN = /[\p{Script=Han}]{1,12}(?:省|自治区|特别行政区)(?:[\p{Script=Han}\p{N}-]{1,50})|[\p{Script=Han}]{2,12}市[\p{Script=Han}]{1,12}(?:自治县|区|县|旗)/gu;
 const POTENTIAL_CHINESE_CONTEXT_NAME_PATTERN = /(?:我(?:曾)?(?:与|和|跟)|同事|导师|主管|经理|推荐人|联系人|合作伙伴|汇报给)\s*(?:是|为|叫|名为)?\s*([\p{Script=Han}·]{2,12})(?=(?:在|于|共同|一起|合作|协作|负责|担任|带领|讨论|完成|推进|[，,。；;！？!?]|$))/gu;
-const NON_PERSON_CONTEXT_TERMS = /(?:客户|用户|团队|公司|部门|业务方|供应商|合作方|项目组|组织|机构|社区|平台|系统|产品|市场|岗位|职位)$/u;
+const NON_PERSON_CONTEXT_TERMS = /(?:客户|用户|团队|公司|部门|业务方|供应商|合作方|项目组|组织|机构|社区|平台|系统|产品|市场|岗位|职位|职责|能力|要求|工作)/u;
 
 export type PiiProjectionHints = Readonly<{
   names?: readonly string[];

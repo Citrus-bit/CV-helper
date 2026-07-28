@@ -27,27 +27,52 @@ const RequestSchema = z.object({
   jdText: z.string().trim().min(1).max(60_000).optional(),
 });
 
-function resumeQuestion(input: z.infer<typeof RequestSchema>): InterviewQuestion | undefined {
-  const story = input.stories[0];
-  if (!story) return undefined;
-  const english = input.ast.locale === "en-US";
-  return InterviewQuestionSchema.parse({
-    id: `resume-${story.id}`,
-    locale: input.ast.locale === "mixed" ? "zh-CN" : input.ast.locale,
-    prompt: english
-      ? `Walk me through the experience "${story.title}", focusing on your decisions, individual actions, and verifiable result.`
-      : `请围绕「${story.title}」这段经历，说明你的判断、个人行动和可核实结果。`,
-    category: "resume",
-    difficulty: "intermediate",
-    roleFamilies: [],
-    skills: story.keywords,
-    followUps: english ? ["Which evidence best supports your contribution?"] : ["哪项证据最能支持你的个人贡献？"],
-    scoringAnchors: english
-      ? ["Consistent with the resume", "Separates individual and team contribution", "Uses verifiable evidence"]
-      : ["与最终简历口径一致", "区分个人与团队贡献", "使用可核实证据"],
-    source: "derived-from-confirmed-resume-story@1.0.0",
-    generated: true,
-    referenceQuestionIds: story.claimIds,
+function compactContext(value: string, maxLength = 600) {
+  return value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function resumeQuestionReferences(input: z.infer<typeof RequestSchema>): InterviewQuestion[] {
+  return input.stories.slice(0, 3).map((story) => {
+    const details = [
+      ["Situation", "情境", story.situation],
+      ["Task", "任务", story.task],
+      ["Action", "行动", story.action],
+      ["Result", "结果", story.result],
+    ]
+      .filter(([, , value]) => value.trim().length > 0)
+      .map(([englishLabel, chineseLabel, value]) => ({
+        english: `${englishLabel}: ${compactContext(value)}`,
+        chinese: `${chineseLabel}：${compactContext(value)}`,
+      }));
+    const chinesePrompt = [
+      `简历故事参考「${compactContext(story.title, 200)}」`,
+      ...details.map((detail) => detail.chinese),
+    ].join("；");
+    const englishPrompt = [
+      `Resume story reference "${compactContext(story.title, 200)}"`,
+      ...details.map((detail) => detail.english),
+    ].join("; ");
+    const prompt = input.ast.locale === "en-US"
+      ? englishPrompt
+      : input.ast.locale === "mixed"
+        ? `${chinesePrompt}\n${englishPrompt}`
+        : chinesePrompt;
+    return InterviewQuestionSchema.parse({
+      id: `resume-story-${story.id}`,
+      locale: input.ast.locale,
+      prompt,
+      category: "resume",
+      difficulty: "intermediate",
+      roleFamilies: [],
+      skills: story.keywords.slice(0, 12),
+      followUps: [],
+      scoringAnchors: input.ast.locale === "en-US"
+        ? ["Consistent with the resume", "Separates individual and team contribution", "Uses verifiable evidence"]
+        : ["与最终简历口径一致", "区分个人与团队贡献", "使用可核实证据"],
+      source: "resume-story-context@1.0.0",
+      generated: false,
+      referenceQuestionIds: [],
+    });
   });
 }
 
@@ -72,7 +97,7 @@ export async function POST(request: Request) {
     const job = redaction
       ? await invokeRequiredAiCapability("jd.parse", { text: guard!.data.safeText, locale: input.ast.locale }, jobContext)
       : undefined;
-    const storyQuestion = resumeQuestion(input);
+    const storyReferences = resumeQuestionReferences(input);
     const skills = [
       ...new Set([
         ...input.ast.sections.flatMap((section) => section.entries.flatMap((entry) => entry.keywords)),
@@ -91,24 +116,27 @@ export async function POST(request: Request) {
         locale: input.ast.locale,
         role: job?.data.jobPosting.title,
         skills,
-        count: storyQuestion ? 5 : 6,
+        count: 6,
         catalog,
       },
       planningContext,
     );
-    const candidates = storyQuestion ? [storyQuestion, ...retrieved.data.questions] : retrieved.data.questions;
+    const references = [...storyReferences, ...retrieved.data.questions];
     const plan = await invokeRequiredAiCapability(
       "interview.plan",
-      { questions: candidates, durationMinutes: 20, questionCount: 6, maxFollowUpsPerQuestion: 2 },
+      {
+        locale: input.ast.locale,
+        role: job?.data.jobPosting.title,
+        skills,
+        jobRequirements: job?.data.requirements.map((requirement) => requirement.text) ?? [],
+        questions: references,
+        durationMinutes: 20,
+        questionCount: 6,
+        maxFollowUpsPerQuestion: 2,
+      },
       planningContext,
     );
-    const plannedQuestions = plan.data.items.map((item) => item.question);
-    const questions = storyQuestion
-      ? [
-          storyQuestion,
-          ...plannedQuestions.filter((question) => question.id !== storyQuestion.id),
-        ].slice(0, 6)
-      : plannedQuestions;
+    const questions = plan.data.items.map((item) => item.question);
     return jsonResponse(
       InterviewPlanSchema.parse({
         sourceResumeId: input.resumeId,

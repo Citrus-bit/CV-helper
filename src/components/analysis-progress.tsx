@@ -1,6 +1,7 @@
 "use client";
 
 import { FileSearch, LoaderCircle, ScanText, Sparkles } from "lucide-react";
+import { useCallback, useEffect } from "react";
 import { cancelAnalysisRequest } from "@/lib/client/analysis-request";
 import { useAppStore } from "@/lib/client/store";
 import {
@@ -29,10 +30,28 @@ const analysisContents = [
 export function AnalysisProgress() {
   const reset = useAppStore((state) => state.reset);
 
-  function cancel() {
+  const cancel = useCallback(() => {
     cancelAnalysisRequest();
     reset();
-  }
+  }, [reset]);
+
+  useEffect(() => {
+    const cancelOnEscape = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.repeat
+      ) {
+        return;
+      }
+      event.preventDefault();
+      cancel();
+    };
+
+    window.addEventListener("keydown", cancelOnEscape);
+    return () => window.removeEventListener("keydown", cancelOnEscape);
+  }, [cancel]);
 
   return (
     <main className="grid min-h-dvh place-items-center bg-canvas px-8 py-8">
@@ -128,6 +147,7 @@ export function AnalysisProgress() {
           <button
             type="button"
             onClick={cancel}
+            aria-keyshortcuts="Escape"
             className="mt-7 min-h-11 self-start rounded-[8px] px-3 text-sm font-medium text-muted transition-colors hover:bg-[#f0f1f3] hover:text-ink"
           >
             取消分析

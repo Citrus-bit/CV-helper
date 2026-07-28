@@ -188,6 +188,30 @@ afterEach(() => {
 });
 
 describe("InterviewWorkspace session identity", () => {
+  it("allows a short non-empty text answer to be submitted", async () => {
+    const interviewPlan = planFixture("短回答");
+    apiMocks.evaluateAnswer.mockResolvedValueOnce(
+      evaluation(interviewPlan.questions[0].id),
+    );
+    seedPlan(interviewPlan);
+    renderWorkspace();
+
+    const submitButton = screen.getByRole("button", { name: "提交回答" });
+    expect(submitButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("回答转写"), {
+      target: { value: "你好" },
+    });
+    expect(submitButton).toBeEnabled();
+    fireEvent.click(submitButton);
+
+    await waitFor(() =>
+      expect(apiMocks.evaluateAnswer).toHaveBeenCalledWith(
+        expect.objectContaining({ answer: "你好" }),
+      ),
+    );
+  });
+
   it("keeps full question metadata, shows complete coaching, and caps follow-ups at two rounds", async () => {
     const interviewPlan = planFixture("闭环");
     interviewPlan.questions[0] = {
@@ -464,6 +488,62 @@ describe("InterviewWorkspace session identity", () => {
 
     expect(useAppStore.getState().interviewPlan).toBeNull();
     expect(screen.queryByText("过期计划 第 1 题")).not.toBeInTheDocument();
+  });
+
+  it("keeps a generated plan when the interview workspace is unmounted during navigation", async () => {
+    let finishPlan: ((value: InterviewPlan) => void) | undefined;
+    const pendingPlan = new Promise<InterviewPlan>((resolve) => {
+      finishPlan = resolve;
+    });
+    apiMocks.createInterviewPlan.mockReturnValueOnce(pendingPlan);
+    useAppStore.getState().setAnalysis(analysisFixture());
+    const mounted = renderWorkspace();
+
+    fireEvent.click(screen.getByRole("button", { name: "进入设备检查" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始面试" }));
+    await waitFor(() => expect(apiMocks.createInterviewPlan).toHaveBeenCalledOnce());
+
+    mounted.unmount();
+    await act(async () => {
+      finishPlan?.(planFixture("导航后保留"));
+      await pendingPlan;
+    });
+
+    expect(useAppStore.getState().interviewPlan?.questions[0]).toMatchObject({
+      prompt: "导航后保留 第 1 题",
+    });
+    renderWorkspace();
+    expect(screen.getByText("导航后保留 第 1 题")).toBeInTheDocument();
+  });
+
+  it("keeps a completed evaluation when the interview workspace is unmounted during review", async () => {
+    let finishEvaluation: ((value: EvaluationResponse) => void) | undefined;
+    const pendingEvaluation = new Promise<EvaluationResponse>((resolve) => {
+      finishEvaluation = resolve;
+    });
+    apiMocks.evaluateAnswer.mockReturnValueOnce(pendingEvaluation);
+    const interviewPlan = planFixture("评审后保留");
+    seedPlan(interviewPlan);
+    const mounted = renderWorkspace();
+
+    fireEvent.change(screen.getByLabelText("回答转写"), {
+      target: { value: "这是一段会在切换模块后仍然保留的回答内容。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "提交回答" }));
+    await waitFor(() => expect(apiMocks.evaluateAnswer).toHaveBeenCalledOnce());
+
+    mounted.unmount();
+    await act(async () => {
+      finishEvaluation?.(evaluation(interviewPlan.questions[0].id));
+      await pendingEvaluation;
+    });
+
+    expect(useAppStore.getState().evaluations).toHaveLength(1);
+    expect(useAppStore.getState().evaluations[0].evaluation.strengths).toEqual([
+      "回答具体",
+    ]);
+    renderWorkspace();
+    expect(screen.getByText("评审后保留 第 1 题")).toBeInTheDocument();
   });
 
   it("restores an in-progress follow-up, its draft, and its evaluation after remount", async () => {
