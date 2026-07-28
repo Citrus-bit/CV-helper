@@ -1272,6 +1272,7 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
     "When a fact-preserving improvement is possible, return kind rewrite with a complete, ready-to-paste replacement sentence. Prefer concise action-method-result ordering and remove weak, repetitive, or vague phrasing, but do not demand a metric when the source contains none.",
     "Use ask_user or needs_proof only when a specific missing or unsupported fact materially blocks a useful edit. question must name the exact project, action, result, or phrase that needs clarification and must not be a generic request for metrics.",
     "Choose targetPath only from editableTargets.path. originalText must exactly equal that target's originalText, including punctuation and whitespace. Cite only claimIds listed in that target's validClaimIds.",
+    "Preserve meaningful line breaks, numbered-item boundaries, and structural labels such as 技术栈： or 核心职责与实现： in proposedText. Never merge visually separate modules into one sentence.",
     "Do not generate IDs, revision values, statuses, hashes, sourceBlockIds, or patches; the server creates all system fields after validation.",
     "A rewrite may only rearrange factual words already present in originalText or cited valid claims; never introduce new numbers, achievements, responsibilities, tools, credentials, ranking, business scope, or implied ownership.",
     "Omit bullets that are already strong or do not have a material, fully supported improvement; do not return use_as_is placeholders.",

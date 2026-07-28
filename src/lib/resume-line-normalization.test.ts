@@ -63,6 +63,26 @@ describe("mergeVisualResumeLines", () => {
     expect(merged).toHaveLength(3);
   });
 
+  it("keeps labeled modules and numbered responsibilities on separate lines", () => {
+    const merged = mergeVisualResumeLines([
+      line("技术栈：Spring Boot、MyBatis、MySQL、Redis、Nginx", 0),
+      line("核心职责与实现：", 1),
+      line("1. 登录认证方案设计：针对集群模式下的 Session", 2, {
+        x: 0.14,
+      }),
+      line("共享问题，采用 Redis + Token 替代传统 Session 方案。", 3, {
+        x: 0.16,
+      }),
+    ]);
+
+    expect(merged.map((item) => item.text)).toEqual([
+      "技术栈：Spring Boot、MyBatis、MySQL、Redis、Nginx",
+      "核心职责与实现：",
+      "登录认证方案设计：针对集群模式下的 Session共享问题，采用 Redis + Token 替代传统 Session 方案。",
+    ]);
+    expect(merged[2]?.explicitBullet).toBe(true);
+  });
+
   it("collapses hard returns inside one manually edited bullet", () => {
     expect(normalizeBulletText("使用 Redis 缓存热\n点数据和会话上下\n文，提高速度。"))
       .toBe("使用 Redis 缓存热点数据和会话上下文，提高速度。");

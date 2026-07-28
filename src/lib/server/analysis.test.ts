@@ -155,6 +155,76 @@ describe("analyzeParsedResume ATS audit", () => {
     ]);
   });
 
+  it("keeps project labels and numbered responsibilities as separate AST bullets", () => {
+    const structuredParsed: ParsedPdfResult = {
+      ...structuredClone(parsed),
+      text: [
+        "候选人",
+        "candidate@example.com",
+        "项目经历",
+        "分布式认证平台 2025-06 - 2025-08",
+        "技术栈：Spring Boot、MyBatis、MySQL、Redis、Nginx",
+        "核心职责与实现：",
+        "1. 登录认证方案设计：针对集群模式下的 Session",
+        "共享问题，采用 Redis + Token 替代传统 Session 方案。",
+      ].join("\n"),
+      extractionMode: "native",
+      blocks: [
+        ...parsed.blocks.slice(0, 2),
+        {
+          id: "projects-heading",
+          pageIndex: 0,
+          order: 2,
+          text: "项目经历",
+          source: "pdf",
+          confidence: 0.99,
+          bbox: { x: 0.1, y: 0.2, width: 0.2, height: 0.025 },
+        },
+        {
+          id: "project-title",
+          pageIndex: 0,
+          order: 3,
+          text: "分布式认证平台 2025-06 - 2025-08",
+          source: "pdf",
+          confidence: 0.99,
+          bbox: { x: 0.1, y: 0.24, width: 0.5, height: 0.02 },
+        },
+        ...[
+          "技术栈：Spring Boot、MyBatis、MySQL、Redis、Nginx",
+          "核心职责与实现：",
+          "1. 登录认证方案设计：针对集群模式下的 Session",
+          "共享问题，采用 Redis + Token 替代传统 Session 方案。",
+        ].map((text, index) => ({
+          id: `structured-line-${index}`,
+          pageIndex: 0,
+          order: 4 + index,
+          text,
+          source: "pdf" as const,
+          confidence: 0.99,
+          bbox: {
+            x: index >= 2 ? 0.14 : 0.1,
+            y: 0.28 + index * 0.025,
+            width: 0.72,
+            height: 0.02,
+          },
+        })),
+      ],
+    };
+
+    const resume = resumeDocumentFromParsed(structuredParsed);
+    const bullets = resume.ast.sections[0]?.entries[0]?.bullets;
+
+    expect(bullets).toEqual([
+      "技术栈：Spring Boot、MyBatis、MySQL、Redis、Nginx",
+      "核心职责与实现：",
+      "登录认证方案设计：针对集群模式下的 Session共享问题，采用 Redis + Token 替代传统 Session 方案。",
+    ]);
+    expect(
+      resume.sourceBlocks.find((block) => block.id === "structured-line-2")
+        ?.role,
+    ).toBe("list-item");
+  });
+
   it("keeps native typography on AST-linked source blocks", () => {
     const styledParsed = structuredClone(parsed);
     const heading = styledParsed.blocks.find((block) => block.id === "heading");

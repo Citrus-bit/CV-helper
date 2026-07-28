@@ -35,6 +35,7 @@ import {
   type ResumeRenderInput,
 } from "./contracts";
 import { clamp, normalizeText, stableId } from "./utils";
+import { isExplicitResumeBullet } from "@/lib/resume-line-normalization";
 
 function defineCapability<I, O>(
   id: CapabilityId,
@@ -235,7 +236,7 @@ function inferredRole(block: SourceBlock): SourceBlock["role"] {
     )
   )
     return "contact";
-  if (/^[•·●▪■\-–—]\s*/.test(text)) return "list-item";
+  if (isExplicitResumeBullet(text)) return "list-item";
   if (
     text.length <= 32 &&
     !/[。.!?？！；;，,]$/.test(text) &&

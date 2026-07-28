@@ -20,7 +20,10 @@ import {
   invokeCapability,
   invokeRequiredAiCapability,
 } from "@/lib/server/capability-runtime";
-import { mergeVisualResumeLines } from "@/lib/resume-line-normalization";
+import {
+  isExplicitResumeBullet,
+  mergeVisualResumeLines,
+} from "@/lib/resume-line-normalization";
 
 type ResumeLine = {
   text: string;
@@ -272,7 +275,11 @@ function inferAst(parsed: ParsedPdfResult) {
 
   const headingIds = new Set(seeds.flatMap((seed) => seed.headingBlockIds));
   const listItemIds = new Set(
-    seeds.flatMap((seed) => seed.lines.filter((line) => /^[•·●▪\-]/.test(line.text)).flatMap((line) => line.blockIds)),
+    seeds.flatMap((seed) =>
+      seed.lines
+        .filter((line) => isExplicitResumeBullet(line.text))
+        .flatMap((line) => line.blockIds),
+    ),
   );
   return { ast, headingIds, contactIds, listItemIds };
 }

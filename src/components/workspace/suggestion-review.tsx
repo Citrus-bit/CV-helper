@@ -433,7 +433,7 @@ export function SuggestionReview() {
           <div>
             <p className="text-xs font-medium text-muted">原文</p>
             <div className="mt-1.5 rounded-[8px] border border-line bg-[#f7f7f8] p-3">
-              <p className="text-sm leading-6 text-ink">
+              <p className="whitespace-pre-line text-sm leading-6 text-ink">
                 {suggestion.originalText || "此项为结构建议"}
               </p>
               {sourceDescription ? (
@@ -468,7 +468,7 @@ export function SuggestionReview() {
               ) : (
                 <>
                   <p className="text-xs font-medium text-muted">建议修改</p>
-                  <p className="mt-1.5 rounded-[8px] border border-[#acd0fb] bg-[#f3f8ff] p-3 text-sm leading-6 text-ink">
+                  <p className="mt-1.5 whitespace-pre-line rounded-[8px] border border-[#acd0fb] bg-[#f3f8ff] p-3 text-sm leading-6 text-ink">
                     {suggestion.proposedText}
                   </p>
                 </>

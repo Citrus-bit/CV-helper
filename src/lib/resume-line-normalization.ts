@@ -5,8 +5,13 @@ import {
   type SourceBlock,
 } from "@/lib/domain";
 
-const BULLET_PREFIX = /^[\s\u00a0]*[•·●▪■\-–—]\s*/u;
+const BULLET_PREFIX =
+  /^[\s\u00a0]*(?:[•·●▪■\-–—]|\d{1,3}[.．、)]|[（(]\d{1,3}[）)]|[一二三四五六七八九十]{1,3}[、.．])\s*/u;
 const TERMINAL_PUNCTUATION = /[。！？.!?；;:]\s*$/u;
+const STRUCTURED_LABEL_PREFIX =
+  /^[\s\u00a0]*[\p{Script=Han}A-Za-z][^：:\n]{0,17}[：:]/u;
+const STRUCTURED_LABEL_ONLY =
+  /^[\s\u00a0]*[\p{Script=Han}A-Za-z][^：:\n]{0,23}[：:]\s*$/u;
 
 export type VisualResumeLine = {
   text: string;
@@ -53,13 +58,22 @@ export function normalizeBulletText(value: string) {
     .reduce((joined, line) => joinResumeText(joined, line), "");
 }
 
+export function isExplicitResumeBullet(value: string) {
+  return BULLET_PREFIX.test(value);
+}
+
 function shouldContinueVisualLine(
   current: LogicalResumeLine,
   previousPhysicalLine: VisualResumeLine,
   next: VisualResumeLine,
   explicitBullet: boolean,
 ) {
-  if (explicitBullet || next.pageIndex !== previousPhysicalLine.pageIndex) {
+  if (
+    explicitBullet ||
+    STRUCTURED_LABEL_PREFIX.test(next.text) ||
+    STRUCTURED_LABEL_ONLY.test(current.text) ||
+    next.pageIndex !== previousPhysicalLine.pageIndex
+  ) {
     return false;
   }
   const verticalGap = next.y - (previousPhysicalLine.y + previousPhysicalLine.height);
