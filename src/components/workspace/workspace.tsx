@@ -5,10 +5,8 @@ import {
   BriefcaseBusiness,
   CircleAlert,
   FileCheck2,
-  FileSearch,
   Mic2,
   RotateCcw,
-  ShieldCheck,
   Trash2,
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -42,10 +40,12 @@ function Navigation({
 }) {
   const activeModule = useAppStore((state) => state.module);
   const setModule = useAppStore((state) => state.setModule);
-  const advanceLocked = pendingSuggestionCount > 0 || !aiReady;
+  const advanceLocked = !aiReady;
   return (
-    <>
-      <nav aria-label="工作台导航" className="space-y-1">
+      <nav
+        aria-label="求职准备流程"
+        className="flex items-center rounded-[8px] bg-[#f0f1f3] p-1"
+      >
         {navigation.map((item) => {
           const Icon = item.icon;
           const active = activeModule === item.id;
@@ -55,37 +55,25 @@ function Navigation({
               key={item.id}
               type="button"
               aria-current={active ? "page" : undefined}
-              aria-describedby={disabled ? "workflow-lock-hint" : undefined}
               disabled={disabled}
               onClick={() => setModule(item.id)}
-              className={`flex min-h-12 w-full items-center gap-2 rounded-[8px] px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+              className={`flex min-h-10 min-w-[128px] items-center justify-center gap-2 rounded-[6px] px-4 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
                 active
-                  ? "bg-[#edf5ff] text-brand"
-                  : "text-muted hover:bg-[#f0f1f3] hover:text-ink disabled:hover:bg-transparent disabled:hover:text-muted"
+                  ? "bg-white text-ink shadow-sm"
+                  : "text-muted hover:text-ink disabled:hover:text-muted"
               }`}
             >
               <Icon aria-hidden="true" size={19} />
               <span>{item.label}</span>
+              {item.id === "resume" && pendingSuggestionCount > 0 ? (
+                <span className="rounded-full bg-[#e3efff] px-1.5 text-[11px] font-semibold text-brand">
+                  {pendingSuggestionCount}
+                </span>
+              ) : null}
             </button>
           );
         })}
       </nav>
-      {advanceLocked ? (
-        <p
-          id="workflow-lock-hint"
-          className="mt-3 flex items-start gap-2 px-2 text-xs leading-5 text-muted"
-        >
-          <CircleAlert
-            aria-hidden="true"
-            size={15}
-            className="mt-0.5 shrink-0 text-warning"
-          />
-          {aiReady
-            ? `还有 ${pendingSuggestionCount} 条建议待确认，处理后可进入下一阶段。`
-            : "当前版本尚未完成 AI 分析，岗位匹配和模拟面试暂不可用。"}
-        </p>
-      ) : null}
-    </>
   );
 }
 
@@ -159,59 +147,8 @@ export function Workspace() {
         跳到主要内容
       </a>
 
-      <aside className="fixed inset-y-0 left-0 z-20 flex w-[216px] flex-col border-r border-line bg-surface px-4 py-5">
-        <Tooltip.Root>
-          <Tooltip.Trigger asChild>
-            <button
-              type="button"
-              aria-label="返回首页并保存当前分析"
-              disabled={homeNavigationPending}
-              onClick={() => void goHome()}
-              className="flex min-h-12 w-full items-center gap-3 rounded-[8px] px-2 text-left transition-colors hover:bg-[#f0f1f3]"
-            >
-              <span className="grid size-10 shrink-0 place-items-center rounded-[8px] bg-ink text-white">
-                <FileSearch aria-hidden="true" size={20} />
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate font-semibold">
-                  简历分析助手
-                </span>
-                <span className="block truncate text-xs text-muted">
-                  证据驱动工作台
-                </span>
-              </span>
-            </button>
-          </Tooltip.Trigger>
-          <Tooltip.Portal>
-            <Tooltip.Content
-              side="right"
-              sideOffset={8}
-              className="z-50 rounded-[6px] bg-ink px-2.5 py-1.5 text-xs text-white shadow-panel"
-            >
-              返回首页（自动保存）
-            </Tooltip.Content>
-          </Tooltip.Portal>
-        </Tooltip.Root>
-        <div className="mt-8">
-          <Navigation
-            pendingSuggestionCount={pendingSuggestionCount}
-            aiReady={aiReady}
-          />
-        </div>
-        <div className="mt-auto border-t border-line pt-4">
-          <div className="flex items-start gap-2 px-2 text-xs leading-5 text-muted">
-            <ShieldCheck
-              aria-hidden="true"
-              size={16}
-              className="mt-0.5 shrink-0 text-success"
-            />
-            当前会话 24 小时到期，下次打开时清理
-          </div>
-        </div>
-      </aside>
-
-      <div className="flex h-dvh min-h-0 flex-col pl-[216px]">
-        <header className="z-10 flex h-16 min-h-16 shrink-0 items-center justify-between border-b border-line bg-white/90 px-6 backdrop-blur-xl">
+      <div className="flex h-dvh min-h-0 flex-col">
+        <header className="z-10 grid h-16 min-h-16 shrink-0 grid-cols-[minmax(180px,1fr)_auto_minmax(96px,1fr)] items-center border-b border-line bg-white/95 px-5">
           <div className="flex min-w-0 items-center gap-2">
             <Tooltip.Root>
               <Tooltip.Trigger asChild>
@@ -245,7 +182,11 @@ export function Workspace() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-1">
+          <Navigation
+            pendingSuggestionCount={pendingSuggestionCount}
+            aiReady={aiReady}
+          />
+          <div className="flex items-center justify-end gap-1">
             <button
               type="button"
               disabled={undoStack.length === 0}

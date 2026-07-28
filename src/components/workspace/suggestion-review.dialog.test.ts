@@ -13,11 +13,13 @@ import type { AnalysisBundle } from "@/lib/client/contracts";
 import { useAppStore } from "@/lib/client/store";
 
 const mocks = vi.hoisted(() => ({
+  analyzeResumeRevision: vi.fn(),
   generateEvidenceRewrite: vi.fn(),
   renderResume: vi.fn(),
 }));
 
 vi.mock("@/lib/client/api", () => ({
+  analyzeResumeRevision: mocks.analyzeResumeRevision,
   generateEvidenceRewrite: mocks.generateEvidenceRewrite,
   renderResume: mocks.renderResume,
 }));
@@ -148,12 +150,13 @@ afterEach(() => {
   cleanup();
   mocks.generateEvidenceRewrite.mockReset();
   mocks.renderResume.mockReset();
+  mocks.analyzeResumeRevision.mockReset();
   useAppStore.getState().reset();
   window.sessionStorage.clear();
 });
 
 describe("evidence rewrite dialog", () => {
-  it("accepts and applies the complete safe rewrite batch without hiding it for another AI wait", async () => {
+  it("applies the safe rewrite batch and starts a real revision analysis", async () => {
     const analysis = analysisFixture();
     const originalText = analysis.resume.ast.sections[0].entries[0].bullets[0];
     const proposedText =
@@ -200,12 +203,15 @@ describe("evidence rewrite dialog", () => {
       hardGate: { passed: true, blockingCheckIds: [] },
       astContentCovered: true,
     });
+    mocks.analyzeResumeRevision.mockImplementation(
+      () => new Promise(() => undefined),
+    );
     useAppStore.getState().setAnalysis(analysis);
     const user = userEvent.setup();
     render(createElement(SuggestionReview));
 
     await user.click(
-      screen.getByRole("button", { name: "一键接受并应用 1 条" }),
+      screen.getByRole("button", { name: "一键优化 1 处" }),
     );
 
     expect(
@@ -215,16 +221,24 @@ describe("evidence rewrite dialog", () => {
     expect(useAppStore.getState().analysis?.suggestions[0].status).toBe(
       "accepted",
     );
-    expect(await screen.findByText(/已一次应用 1 条可直接修改项/)).toBeVisible();
+    expect(
+      await screen.findByText(/正在等待 AI 重新分析/),
+    ).toBeVisible();
     expect(mocks.renderResume).toHaveBeenCalledWith(
       expect.objectContaining({ revision: 1, template: "professional" }),
     );
     expect(useAppStore.getState()).toMatchObject({
       previewMode: "current",
+      resumePanel: "templates",
       renders: { professional: { sha256: "rendered-safe-batch" } },
     });
-    expect(screen.getByText(/全部处理后优化完成度自动到 100 分/)).toBeVisible();
-    expect(useAppStore.getState().analysis?.scorecard.total).toBe(100);
+    expect(useAppStore.getState().analysis?.scorecard.total).toBe(70);
+    expect(useAppStore.getState().analysis?.processing.aiAnalysis?.status).not.toBe(
+      "fresh",
+    );
+    await waitFor(() =>
+      expect(mocks.analyzeResumeRevision).toHaveBeenCalledOnce(),
+    );
     expect(screen.queryByRole("button", { name: /最终评分/ })).toBeNull();
   });
 

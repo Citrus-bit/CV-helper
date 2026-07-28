@@ -68,10 +68,10 @@ describe("ResumeWorkspace layout", () => {
       .parentElement;
 
     const suggestionPanel = screen.getByRole("tabpanel", {
-      name: "修改建议",
+      name: "优化",
     });
-    const exportTab = screen.getByRole("tab", { name: "排版预览" });
-    expect(screen.getByRole("tab", { name: "AI 编辑" })).toBeVisible();
+    const exportTab = screen.getByRole("tab", { name: "预览下载" });
+    expect(screen.getByRole("tab", { name: "问 AI" })).toBeVisible();
 
     expect(workspace).toHaveClass("absolute", "inset-0", "min-h-0");
     expect(suggestionPanel).toHaveClass("hidden", "data-[state=active]:flex");
@@ -83,12 +83,12 @@ describe("ResumeWorkspace layout", () => {
     view.rerender(createElement(ResumeWorkspace));
 
     expect(suggestionPanel).toHaveStyle({ display: "none" });
-    const exportPanel = screen.getByRole("tabpanel", { name: "排版预览" });
+    const exportPanel = screen.getByRole("tabpanel", { name: "预览下载" });
     expect(exportPanel).toHaveStyle({ display: "flex" });
 
     const draft = screen.getByRole("textbox", { name: "导出草稿" });
     await user.type(draft, "保留当前状态");
-    await user.click(screen.getByRole("tab", { name: "修改建议" }));
+    await user.click(screen.getByRole("tab", { name: "优化" }));
     view.rerender(createElement(ResumeWorkspace));
 
     expect(draft).toHaveValue("保留当前状态");

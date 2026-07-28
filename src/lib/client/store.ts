@@ -62,7 +62,6 @@ import { applySuggestion, suggestionBeforeHashMatches } from "./resume";
 import {
   ensureSuggestionScoreGains,
   safeAiRewriteSuggestions,
-  settleSuggestionScorecard,
 } from "./suggestions";
 import { clearApiSessionId } from "./privacy";
 import { reanalyzeResumeRevision } from "@/lib/resume-reanalysis";
@@ -383,34 +382,6 @@ function processingAfterLocalRevision(
       status: "stale" as const,
       analyzedRevision:
         previousAi?.analyzedRevision ?? analysis.scorecard.resumeRevision,
-      scoreSourceVersion:
-        previousAi?.scoreSourceVersion ??
-        analysis.processing.capabilityVersions["resume.score"] ??
-        analysis.scorecard.sourceVersion ??
-        "legacy.resume.score@0.0.0",
-      suggestionSourceVersion:
-        previousAi?.suggestionSourceVersion ??
-        analysis.processing.capabilityVersions["resume.suggest"] ??
-        "legacy.resume.suggest@0.0.0",
-    },
-  };
-}
-
-function processingAfterSuggestionSettlement(
-  analysis: AnalysisBundle,
-  localVersions: Record<string, string>,
-  resumeRevision: number,
-) {
-  const previousAi = analysis.processing.aiAnalysis;
-  return {
-    ...analysis.processing,
-    capabilityVersions: {
-      ...analysis.processing.capabilityVersions,
-      ...localVersions,
-    },
-    aiAnalysis: {
-      status: "fresh" as const,
-      analyzedRevision: resumeRevision,
       scoreSourceVersion:
         previousAi?.scoreSourceVersion ??
         analysis.processing.capabilityVersions["resume.score"] ??
@@ -1020,11 +991,10 @@ export function mergePersistedSessionState(
   const requestedModule = ["resume", "job", "interview"].includes(merged.module)
     ? merged.module
     : "resume";
-  const restoredModule = merged.analysis?.suggestions.some(
-    (suggestion) => suggestion.status === "pending",
-  )
-    ? "resume"
-    : requestedModule;
+  const restoredModule =
+    merged.analysis && !hasFreshRequiredAiAnalysis(merged.analysis)
+      ? "resume"
+      : requestedModule;
   const legacyAnalysis = Boolean(
     merged.analysis && !hasRequiredAiProvenance(merged.analysis),
   );
@@ -1409,10 +1379,7 @@ export const useAppStore = create<AppState>()(
             state.analysis &&
               (state.analysis.processing.aiAnalysis?.status !== "fresh" ||
                 state.analysis.processing.aiAnalysis.analyzedRevision !==
-                  state.analysis.resume.revision ||
-                state.analysis.suggestions.some(
-                  (suggestion) => suggestion.status === "pending",
-                )),
+                  state.analysis.resume.revision),
           );
           if (progressionLocked && module !== "resume") return state;
           if (module === state.module) return state;
@@ -1466,6 +1433,7 @@ export const useAppStore = create<AppState>()(
             : { selectedSuggestionId, previewMode: "original" },
         ),
       decideSuggestion: (id, status, manualText) => {
+        let reanalysisTarget: { resumeId: string; revision: number } | null = null;
         set((state) => {
           if (!state.analysis || state.homeNavigationPending) return state;
           const current = state.analysis.suggestions.find(
@@ -1567,16 +1535,14 @@ export const useAppStore = create<AppState>()(
               evidence: reanalysis.evidence,
               suggestions,
               stories: reanalysis.stories,
-              scorecard: settleSuggestionScorecard(
-                state.analysis,
-                suggestions,
-                resume.revision,
-              ),
-              processing: processingAfterSuggestionSettlement(
+              processing: processingAfterLocalRevision(
                 state.analysis,
                 reanalysis.capabilityVersions,
-                resume.revision,
               ),
+            };
+            reanalysisTarget = {
+              resumeId: resume.id,
+              revision: resume.revision,
             };
             const finalText =
               status === "manual"
@@ -1611,16 +1577,6 @@ export const useAppStore = create<AppState>()(
             ...state.analysis,
             resume,
             suggestions,
-            scorecard: settleSuggestionScorecard(
-              state.analysis,
-              suggestions,
-              resume.revision,
-            ),
-            processing: processingAfterSuggestionSettlement(
-              state.analysis,
-              {},
-              resume.revision,
-            ),
             ...(synchronizedGraph ?? {}),
           };
           return {
@@ -1642,6 +1598,7 @@ export const useAppStore = create<AppState>()(
               : {}),
           };
         });
+        scheduleRevisionAiAnalysisTarget(reanalysisTarget);
       },
       replaceAiSuggestions: (incoming, sourceVersion) =>
         set((state) => {
@@ -1687,6 +1644,7 @@ export const useAppStore = create<AppState>()(
         }),
       applyAiSuggestions: () => {
         let appliedCount = 0;
+        let reanalysisTarget: { resumeId: string; revision: number } | null = null;
         set((state) => {
           if (!state.analysis || state.homeNavigationPending) return state;
           const candidates = safeAiRewriteSuggestions(state.analysis);
@@ -1737,16 +1695,14 @@ export const useAppStore = create<AppState>()(
             evidence: reanalysis.evidence,
             suggestions,
             stories: reanalysis.stories,
-            scorecard: settleSuggestionScorecard(
-              state.analysis,
-              suggestions,
-              resume.revision,
-            ),
-            processing: processingAfterSuggestionSettlement(
+            processing: processingAfterLocalRevision(
               state.analysis,
               reanalysis.capabilityVersions,
-              resume.revision,
             ),
+          };
+          reanalysisTarget = {
+            resumeId: resume.id,
+            revision: resume.revision,
           };
           return {
             analysis: nextAnalysis,
@@ -1763,6 +1719,7 @@ export const useAppStore = create<AppState>()(
             interviewSessionVersion: state.interviewSessionVersion + 1,
           };
         });
+        scheduleRevisionAiAnalysisTarget(reanalysisTarget);
         return appliedCount;
       },
       applyManualResumeAst: (ast, changeSummary = "已直接编辑简历内容。") => {

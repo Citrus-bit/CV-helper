@@ -33,7 +33,7 @@ Next.js Node runtime
 
 未配置 `DOCUMENT_WORKER_URL` 时，PDF.js 与 Tesseract.js 运行在 Next.js Node runtime，不在浏览器执行。本地开发不要求 Docker或数据库；没有外部 AI 密钥时应用仍可启动，但上传与体验示例被禁用，不会生成本地模板分析。活动状态使用标签页级 `sessionStorage`，最近分析与可选原 PDF 使用 IndexedDB，两者在 24 小时后到期，并在应用运行期间或下次打开时清理。`TYPST_BIN` 默认指向项目内 CLI；`pnpm dev` 读取被 Git 忽略的 `.env.local`。
 
-App 顶层桌面边界在 hydration 后检查 `min-width: 1024px`。窄屏只挂载设备提示，不挂载 Upload、AnalysisProgress、Workspace 或语音组件。1024px 以上始终使用 216px 侧栏和桌面文档/建议布局，不存在底部导航或手机单列工作台。
+App 顶层桌面边界在 hydration 后检查 `min-width: 1024px`。客户端 hydration 通过首帧占位和下一动画帧切换，避免服务端访问浏览器持久化状态，也避免页面长期停留在空白占位。窄屏只挂载设备提示，不挂载 Upload、AnalysisProgress、Workspace 或语音组件。1024px 以上使用单一顶栏三步导航和桌面文档/建议布局，不存在重复侧栏、底部导航或手机单列工作台。
 
 ### 2.2 已接通的隔离文档路径
 

@@ -300,7 +300,7 @@ describe("UploadScreen file drag state", () => {
       toJSON: () => ({}),
     });
     const childHeading = screen.getByRole("heading", {
-      name: "拖入你的 PDF 简历",
+      name: "把 PDF 简历拖到这里",
     });
     const uploadIcon = dropZone.querySelector("svg");
 
@@ -309,12 +309,12 @@ describe("UploadScreen file drag state", () => {
       clientX: 420,
       clientY: 360,
     });
-    expect(screen.getByText("松开即可开始分析")).toBeInTheDocument();
+    expect(screen.getByText("松开即可开始")).toBeInTheDocument();
     expect(dropZone).toHaveAttribute("data-drag-active", "true");
     expect(dropZone.querySelector("svg")).toBe(uploadIcon);
 
     const activeHeading = screen.getByRole("heading", {
-      name: "松开即可开始分析",
+      name: "松开即可开始",
     });
     // WebKit can report 0,0 and no relatedTarget while an external file drag
     // merely crosses a child node. The event target is still inside the zone.
@@ -326,12 +326,12 @@ describe("UploadScreen file drag state", () => {
         }),
       );
     });
-    expect(screen.getByText("松开即可开始分析")).toBeInTheDocument();
+    expect(screen.getByText("松开即可开始")).toBeInTheDocument();
 
-    fireEvent.dragOver(screen.getByRole("button", { name: "选择 PDF" }), {
+    fireEvent.dragOver(screen.getByRole("button", { name: "上传简历" }), {
       dataTransfer,
     });
-    expect(screen.getByText("松开即可开始分析")).toBeInTheDocument();
+    expect(screen.getByText("松开即可开始")).toBeInTheDocument();
     expect(dataTransfer.dropEffect).toBe("copy");
   });
 
@@ -350,20 +350,20 @@ describe("UploadScreen file drag state", () => {
       name: "PDF 简历上传区",
     });
     const childHeading = screen.getByRole("heading", {
-      name: "拖入你的 PDF 简历",
+      name: "把 PDF 简历拖到这里",
     });
-    const selectButton = screen.getByRole("button", { name: "选择 PDF" });
+    const selectButton = screen.getByRole("button", { name: "上传简历" });
     const outsideHeading = screen.getByRole("heading", {
-      name: "从真实简历开始",
+      name: "上传简历，获得可投递版本",
     });
 
     fireEvent.dragOver(childHeading, { dataTransfer });
     fireEvent.dragLeave(childHeading, { dataTransfer });
     fireEvent.dragOver(selectButton, { dataTransfer });
-    expect(screen.getByText("松开即可开始分析")).toBeInTheDocument();
+    expect(screen.getByText("松开即可开始")).toBeInTheDocument();
 
     fireEvent.dragOver(outsideHeading, { dataTransfer });
-    expect(screen.getByText("拖入你的 PDF 简历")).toBeInTheDocument();
+    expect(screen.getByText("把 PDF 简历拖到这里")).toBeInTheDocument();
     expect(dropZone).toHaveAttribute("data-drag-active", "false");
     expect(dataTransfer.dropEffect).toBe("none");
   });
@@ -386,7 +386,7 @@ describe("UploadScreen file drag state", () => {
     fireEvent.dragLeave(dropZone, { dataTransfer });
     fireEvent.dragOver(dropZone, { dataTransfer });
 
-    expect(screen.getByText("松开即可开始分析")).toBeInTheDocument();
+    expect(screen.getByText("松开即可开始")).toBeInTheDocument();
     expect(dataTransfer.dropEffect).toBe("copy");
   });
 
@@ -426,7 +426,7 @@ describe("UploadScreen file drag state", () => {
       );
     });
 
-    expect(screen.getByText("松开即可开始分析")).toBeInTheDocument();
+    expect(screen.getByText("松开即可开始")).toBeInTheDocument();
     expect(dropZone).toHaveAttribute("data-drag-active", "true");
 
     act(() => {
@@ -437,7 +437,7 @@ describe("UploadScreen file drag state", () => {
         }),
       );
     });
-    expect(screen.getByText("拖入你的 PDF 简历")).toBeInTheDocument();
+    expect(screen.getByText("把 PDF 简历拖到这里")).toBeInTheDocument();
   });
 
   it("ignores non-file drag payloads", () => {
@@ -457,7 +457,7 @@ describe("UploadScreen file drag state", () => {
       },
     );
 
-    expect(screen.getByText("拖入你的 PDF 简历")).toBeInTheDocument();
+    expect(screen.getByText("把 PDF 简历拖到这里")).toBeInTheDocument();
   });
 
   it("clears a file drag when the browser cancels it without a final zone leave", () => {
@@ -475,11 +475,11 @@ describe("UploadScreen file drag state", () => {
       screen.getByRole("region", { name: "PDF 简历上传区" }),
       { dataTransfer },
     );
-    expect(screen.getByText("松开即可开始分析")).toBeInTheDocument();
+    expect(screen.getByText("松开即可开始")).toBeInTheDocument();
 
     fireEvent.dragEnd(window, { dataTransfer });
 
-    expect(screen.getByText("拖入你的 PDF 简历")).toBeInTheDocument();
+    expect(screen.getByText("把 PDF 简历拖到这里")).toBeInTheDocument();
   });
 
   it("clears a file drag after leaving the browser or pressing Escape", () => {
@@ -505,11 +505,11 @@ describe("UploadScreen file drag state", () => {
         }),
       );
     });
-    expect(screen.getByText("拖入你的 PDF 简历")).toBeInTheDocument();
+    expect(screen.getByText("把 PDF 简历拖到这里")).toBeInTheDocument();
 
     fireEvent.dragEnter(dropZone, { dataTransfer });
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.getByText("拖入你的 PDF 简历")).toBeInTheDocument();
+    expect(screen.getByText("把 PDF 简历拖到这里")).toBeInTheDocument();
   });
 
   it("clears a file drag on window blur and on a drop outside the zone", () => {
@@ -528,13 +528,13 @@ describe("UploadScreen file drag state", () => {
 
     fireEvent.dragEnter(dropZone, { dataTransfer });
     fireEvent.blur(window);
-    expect(screen.getByText("拖入你的 PDF 简历")).toBeInTheDocument();
+    expect(screen.getByText("把 PDF 简历拖到这里")).toBeInTheDocument();
 
     fireEvent.dragEnter(dropZone, { dataTransfer });
     act(() => {
       window.dispatchEvent(windowDragEvent("drop", ["Files"]));
     });
-    expect(screen.getByText("拖入你的 PDF 简历")).toBeInTheDocument();
+    expect(screen.getByText("把 PDF 简历拖到这里")).toBeInTheDocument();
   });
 
   it("submits the first PDF once and clears the active state", async () => {
@@ -561,7 +561,7 @@ describe("UploadScreen file drag state", () => {
     fireEvent.dragEnter(dropZone, { dataTransfer });
     fireEvent.drop(dropZone, { dataTransfer });
 
-    expect(screen.getByText("拖入你的 PDF 简历")).toBeInTheDocument();
+    expect(screen.getByText("把 PDF 简历拖到这里")).toBeInTheDocument();
     await waitFor(() =>
       expect(apiMocks.analyzeResume).toHaveBeenCalledTimes(1),
     );

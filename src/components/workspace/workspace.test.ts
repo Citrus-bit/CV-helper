@@ -3,7 +3,6 @@
 import "@testing-library/jest-dom/vitest";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import {
-  act,
   cleanup,
   fireEvent,
   render,
@@ -137,6 +136,12 @@ describe("Workspace archive failure recovery", () => {
       "flex-1",
       "overflow-hidden",
     );
+    expect(
+      screen.getByRole("navigation", { name: "求职准备流程" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "返回首页并保存当前分析" }),
+    ).toHaveLength(1);
   });
 
   it("announces the save failure and returns home without deleting analysis", () => {
@@ -162,25 +167,29 @@ describe("Workspace archive failure recovery", () => {
 });
 
 describe("Workspace progression gate", () => {
-  it("keeps later modules locked until every suggestion has a decision", () => {
+  it("lets users continue with pending advice when the current AI analysis is fresh", () => {
     useAppStore.getState().setAnalysis(analysisWithPendingSuggestion());
     useAppStore.getState().setModule("interview");
-    expect(useAppStore.getState().module).toBe("resume");
+    expect(useAppStore.getState().module).toBe("interview");
 
     render(createElement(Tooltip.Provider, null, createElement(Workspace)));
 
     const jobButton = screen.getByRole("button", { name: "岗位匹配" });
     const interviewButton = screen.getByRole("button", { name: "模拟面试" });
-    expect(jobButton).toBeDisabled();
-    expect(interviewButton).toBeDisabled();
-    expect(screen.getByText(/还有 1 条建议待确认/)).toBeInTheDocument();
-
-    act(() => {
-      useAppStore.getState().decideSuggestion("suggestion-pending", "rejected");
-    });
-
     expect(jobButton).toBeEnabled();
+    expect(interviewButton).toBeEnabled();
     fireEvent.click(jobButton);
     expect(useAppStore.getState().module).toBe("job");
+  });
+
+  it("locks downstream work while the current resume revision is being reanalyzed", () => {
+    const analysis = analysisWithPendingSuggestion();
+    analysis.processing.aiAnalysis!.status = "stale";
+    useAppStore.getState().setAnalysis(analysis);
+
+    render(createElement(Tooltip.Provider, null, createElement(Workspace)));
+
+    expect(screen.getByRole("button", { name: "岗位匹配" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "模拟面试" })).toBeDisabled();
   });
 });

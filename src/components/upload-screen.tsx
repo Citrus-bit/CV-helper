@@ -420,7 +420,7 @@ export function UploadScreen() {
               简历分析助手
             </h1>
             <p className="truncate text-sm text-muted">
-              有证据约束的求职工作台
+              从简历到岗位与面试
             </p>
           </div>
         </div>
@@ -431,7 +431,7 @@ export function UploadScreen() {
       </div>
 
       <section
-        className="mx-auto mt-20 w-full max-w-5xl"
+        className="mx-auto mt-14 w-full max-w-5xl"
         aria-labelledby="upload-title"
       >
         <div className="mb-7 max-w-2xl">
@@ -439,10 +439,10 @@ export function UploadScreen() {
             id="upload-title"
             className="text-[36px] font-semibold leading-tight"
           >
-            从真实简历开始
+            上传简历，获得可投递版本
           </h2>
           <p className="mt-3 max-w-xl text-base leading-7 text-muted">
-            数字 PDF 优先读取原生文字层；只有扫描页或缺失区块才会进入 OCR。
+            AI 会先找出最值得修改的内容，再生成一份可预览、可下载的新版简历。
           </p>
         </div>
 
@@ -453,7 +453,7 @@ export function UploadScreen() {
           aria-busy={busy}
           data-ai-available={aiAvailable === true ? "true" : "false"}
           data-drag-active={dragging ? "true" : "false"}
-          className={`relative grid min-h-[340px] place-items-center overflow-hidden rounded-[8px] border bg-surface px-6 py-10 shadow-panel transition-colors duration-200 ${
+          className={`relative grid min-h-[300px] place-items-center overflow-hidden rounded-[8px] border bg-surface px-6 py-9 shadow-panel transition-colors duration-200 ${
             dragging ? "border-brand bg-[#f3f8ff]" : "border-line"
           }`}
           onDragEnter={handleDragEnter}
@@ -484,7 +484,7 @@ export function UploadScreen() {
               <Upload aria-hidden="true" size={28} />
             </span>
             <h3 className="mt-6 text-xl font-semibold" aria-live="polite">
-              {dragging ? "松开即可开始分析" : "拖入你的 PDF 简历"}
+              {dragging ? "松开即可开始" : "把 PDF 简历拖到这里"}
             </h3>
             <p className="mt-2 text-sm leading-6 text-muted">
               最多 5 页、10 MB，支持中文、英文和扫描件
@@ -496,16 +496,15 @@ export function UploadScreen() {
               className="mt-7 inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#075bbf] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Upload aria-hidden="true" size={17} />
-              选择 PDF
+              上传简历
             </button>
             <button
               type="button"
               disabled={busy || aiAvailable !== true}
               onClick={() => void loadDemo()}
-              className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-[8px] px-4 py-2 text-sm font-medium text-brand transition-colors hover:bg-[#edf5ff] disabled:opacity-50"
+              className="mt-2 inline-flex min-h-10 items-center gap-2 rounded-[8px] px-3 text-sm text-muted transition-colors hover:bg-[#f0f1f3] hover:text-ink disabled:opacity-50"
             >
-              体验示例
-              <ArrowRight aria-hidden="true" size={16} />
+              没有现成简历？查看示例
             </button>
           </div>
         </div>
@@ -595,32 +594,20 @@ export function UploadScreen() {
           </aside>
         ) : null}
 
-        <div className="mt-5 grid grid-cols-3 gap-3 text-sm text-muted">
-          <p className="flex items-center justify-center gap-2">
-            <FileSearch aria-hidden="true" size={17} className="text-brand" />
-            原生解析优先
-          </p>
-          <p className="flex items-center justify-center gap-2">
-            <LockKeyhole
-              aria-hidden="true"
-              size={17}
-              className="text-warning"
-            />
-            本地处理，外部能力前脱敏
-          </p>
-          <p className="flex items-center justify-center gap-2">
-            <ShieldCheck
-              aria-hidden="true"
-              size={17}
-              className="text-success"
-            />
-            不编造经历与数字
-          </p>
-        </div>
+        <p className="mt-4 flex items-center justify-center gap-2 text-sm text-muted">
+          <LockKeyhole aria-hidden="true" size={16} className="text-success" />
+          联系方式会在发送给 AI 前脱敏；不会替你编造经历和数字
+        </p>
       </section>
 
       <section
-        className="mx-auto mt-12 w-full max-w-5xl"
+        className={`mx-auto mt-10 w-full max-w-5xl ${
+          recentAnalyses.length === 0 &&
+          !initialRecentLoadPending &&
+          !recentAnalysesLoading
+            ? "hidden"
+            : ""
+        }`}
         aria-labelledby="recent-heading"
       >
         <div className="flex min-h-11 items-center justify-between gap-6">

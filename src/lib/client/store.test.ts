@@ -575,12 +575,12 @@ describe("evidence confirmation", () => {
     const accepted = useAppStore.getState().analysis!;
     expect(accepted.resume.revision).toBe(1);
     expect(accepted.scorecard).toMatchObject({
-      resumeRevision: 1,
-      total: 100,
+      resumeRevision: 0,
+      total: 70,
     });
     expect(accepted.processing.aiAnalysis).toMatchObject({
-      status: "fresh",
-      analyzedRevision: 1,
+      status: "stale",
+      analyzedRevision: 0,
     });
     expect(accepted.resume.ast.sections[0].entries[0].bullets[0]).toBe(
       confirmedText,

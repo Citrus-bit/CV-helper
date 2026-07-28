@@ -585,7 +585,7 @@ describe("resume-derived state revisions", () => {
     expect(useAppStore.getState().analysis?.resume.revision).toBe(2);
   });
 
-  it("applies every safe AI rewrite in one revision with one undo snapshot", () => {
+  it("applies every safe AI rewrite in one revision and refreshes the AI score", async () => {
     const analysis = analysisFixture();
     analysis.processing.capabilityVersions["resume.suggest"] =
       "resume.suggest@2.0.0";
@@ -623,6 +623,9 @@ describe("resume-derived state revisions", () => {
       }),
     );
     useAppStore.getState().setAnalysis(analysis);
+    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(
+      aiRevisionResult(1, 86),
+    );
 
     const count = useAppStore.getState().applyAiSuggestions();
 
@@ -650,17 +653,24 @@ describe("resume-derived state revisions", () => {
     expect(revised.analysis?.processing.capabilityVersions["resume.suggest"])
       .toBe("resume.suggest@2.0.0");
     expect(revised.undoStack).toHaveLength(1);
-    expect(revised.analysis?.processing.aiAnalysis?.status).toBe("fresh");
-    expect(revised.analysis?.scorecard.total).toBe(100);
-    expect(
-      revised.analysis?.scorecard.dimensions.every(
-        (dimension) => dimension.score === dimension.maxScore,
-      ),
-    ).toBe(true);
-    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
+    expect(revised.analysis?.processing.aiAnalysis?.status).toBe("stale");
+    expect(revised.analysis?.scorecard.total).toBe(60);
+
+    await vi.waitFor(() =>
+      expect(
+        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+      ).toBe("fresh"),
+    );
+    expect(apiMocks.analyzeResumeRevision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resume: expect.objectContaining({ revision: 1 }),
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(useAppStore.getState().analysis?.scorecard.total).toBe(86);
   });
 
-  it("keeps the analyzed batch fresh and settles it without an AI refresh", async () => {
+  it("coalesces rapid suggestion decisions into the latest revision analysis", async () => {
     const analysis = analysisFixture();
     analysis.resume.ast.sections[0].entries.push({
       id: "entry-2",
@@ -696,24 +706,28 @@ describe("resume-derived state revisions", () => {
       }),
     );
     useAppStore.getState().setAnalysis(analysis);
+    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(
+      aiRevisionResult(2, 88),
+    );
 
     useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
     useAppStore.getState().decideSuggestion("suggestion-2", "accepted");
-    await Promise.resolve();
+    await vi.waitFor(() =>
+      expect(
+        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+      ).toBe("fresh"),
+    );
 
-    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
+    expect(apiMocks.analyzeResumeRevision).toHaveBeenCalledOnce();
     expect(useAppStore.getState().analysis).toMatchObject({
       resume: { revision: 2 },
-      suggestions: [
-        { id: "suggestion-1", status: "accepted" },
-        { id: "suggestion-2", status: "accepted" },
-      ],
-      scorecard: { total: 100 },
+      suggestions: [],
+      scorecard: { total: 88 },
       processing: { aiAnalysis: { status: "fresh", analyzedRevision: 2 } },
     });
   });
 
-  it("counts skipping as processed and completes at 100", async () => {
+  it("records a skipped suggestion without changing the AI score", async () => {
     useAppStore.getState().setAnalysis(analysisFixture(0, true));
 
     useAppStore.getState().decideSuggestion("suggestion-1", "rejected");
@@ -722,7 +736,7 @@ describe("resume-derived state revisions", () => {
     expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
     expect(useAppStore.getState().analysis).toMatchObject({
       resume: { revision: 0 },
-      scorecard: { total: 100 },
+      scorecard: { total: 60 },
       suggestions: [{ id: "suggestion-1", status: "rejected" }],
       processing: { aiAnalysis: { status: "fresh", analyzedRevision: 0 } },
     });
@@ -731,7 +745,6 @@ describe("resume-derived state revisions", () => {
   it("does not reopen a target that was already reviewed in the completed batch", async () => {
     const analysis = analysisFixture();
     useAppStore.getState().setAnalysis(analysis);
-    useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
     const repeatedTarget = SuggestionSchema.parse({
       ...analysis.suggestions[0],
       id: "suggestion-repeated-target",
@@ -753,44 +766,42 @@ describe("resume-derived state revisions", () => {
       suggestions: [repeatedTarget],
     });
 
-    useAppStore.getState().retryAiAnalysis();
+    useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
     await vi.waitFor(() =>
       expect(
         useAppStore.getState().analysis?.processing.aiAnalysis?.status,
       ).toBe("fresh"),
     );
 
-    expect(useAppStore.getState().analysis?.suggestions).toEqual([
-      expect.objectContaining({ id: "suggestion-1", status: "accepted" }),
-    ]);
-    expect(useAppStore.getState().selectedSuggestionId).toBe("suggestion-1");
+    expect(useAppStore.getState().analysis?.suggestions).toEqual([]);
+    expect(useAppStore.getState().selectedSuggestionId).toBeNull();
   });
 
-  it("settles the final item at 100 without another AI request", async () => {
+  it("uses the refreshed AI result after applying the final item", async () => {
     const analysis = analysisFixture();
     useAppStore.getState().setAnalysis(analysis);
+    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(
+      aiRevisionResult(1, 91),
+    );
     useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
-    await Promise.resolve();
+    await vi.waitFor(() =>
+      expect(
+        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+      ).toBe("fresh"),
+    );
 
-    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
+    expect(apiMocks.analyzeResumeRevision).toHaveBeenCalledOnce();
     expect(useAppStore.getState().analysis).toMatchObject({
-      scorecard: { total: 100, summary: "本次优化清单已全部处理完成。" },
-      suggestions: [{ id: "suggestion-1", status: "accepted" }],
+      scorecard: { total: 91, summary: "AI 已分析版本 1" },
+      suggestions: [],
       processing: {
         aiAnalysis: {
           status: "fresh",
           analyzedRevision: 1,
-          suggestionSourceVersion: "resume.suggest@2.0.0",
+          suggestionSourceVersion: "resume.suggest@2.1.0",
         },
       },
     });
-    expect(
-      useAppStore
-        .getState()
-        .analysis?.scorecard.dimensions.every(
-          (dimension) => dimension.score === dimension.maxScore,
-        ),
-    ).toBe(true);
   });
 
   it("replaces pending rule output with regenerated AI suggestions", () => {
@@ -825,25 +836,32 @@ describe("resume-derived state revisions", () => {
     expect(useAppStore.getState().selectedSuggestionId).toBe("suggestion-ai-1");
   });
 
-  it("settles a manual suggestion while rebuilding its evidence", () => {
+  it("reanalyzes a manual suggestion while preserving rebuilt evidence", async () => {
     const analysis = analysisFixture();
     analysis.scorecard.total = 99;
     analysis.scorecard.dimensions.forEach((dimension) => {
       dimension.evidence = ["旧评分证据"];
     });
     useAppStore.getState().setAnalysis(analysis);
+    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(
+      aiRevisionResult(1, 92),
+    );
     const manualText = "通过自动化发布流程，将交付耗时降低 30%";
 
     useAppStore
       .getState()
       .decideSuggestion("suggestion-1", "manual", manualText);
 
+    expect(useAppStore.getState().analysis?.processing.aiAnalysis?.status).toBe(
+      "stale",
+    );
+    await vi.waitFor(() =>
+      expect(
+        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+      ).toBe("fresh"),
+    );
     const revised = useAppStore.getState().analysis!;
-    expect(revised.scorecard).toMatchObject({ resumeRevision: 1, total: 100 });
-    expect(revised.processing.aiAnalysis).toMatchObject({
-      status: "fresh",
-      analyzedRevision: 1,
-    });
+    expect(revised.scorecard).toMatchObject({ resumeRevision: 1, total: 92 });
     const manualEvidence = revised.evidence.find(
       (asset) =>
         asset.kind === "user_statement" && asset.content === manualText,

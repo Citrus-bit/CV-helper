@@ -381,10 +381,11 @@ export function SuggestionReview() {
           sourcePageCount: resume.pageCount,
         });
         current.setRender(rendered);
+        current.setResumePanel("templates");
       }
       setBulkMessage(
         count > 0
-          ? `已一次应用 ${count} 条可直接修改项，并生成新版 PDF。需要补充事实的项目仍保留在本次清单中。`
+          ? `已应用 ${count} 处安全改写并生成新版 PDF。AI 正在重新检查新版；需要真实信息的项目会继续保留。`
           : "AI 已完成逐条分析，当前没有可在不补充事实的前提下自动应用的改写。",
       );
       setEditing(false);
@@ -414,7 +415,7 @@ export function SuggestionReview() {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 id="suggestions-heading" className="text-sm font-semibold">
-                本次完整问题清单
+                优化建议
               </h2>
               <span
                 className={`inline-flex items-center gap-1 rounded-[6px] px-2 py-0.5 text-[11px] font-medium ${
@@ -449,7 +450,7 @@ export function SuggestionReview() {
                 ) : (
                   <>
                     <Sparkles aria-hidden="true" size={16} />
-                    {`一键接受并应用 ${automaticSuggestions.length} 条`}
+                    {`一键优化 ${automaticSuggestions.length} 处`}
                   </>
                 )}
               </button>
@@ -500,7 +501,7 @@ export function SuggestionReview() {
         className="border-b border-line bg-[#f3f8ff] px-5 py-2 text-xs leading-5 text-[#174f8f]"
         role="status"
       >
-        本次最多 12 条。接受、手动修改或跳过都会结算该条分值；全部处理后优化完成度自动到 100 分，不再进行第二轮分析。
+        可直接改写的内容支持一键应用；涉及新增数字、职责或结果时，仍需要你补充真实信息。修改后 AI 会重新检查当前版本。
       </p>
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
@@ -523,9 +524,6 @@ export function SuggestionReview() {
               面试追问风险 {riskLabel[suggestion.interviewRisk]}
             </span>
           ) : null}
-          <span className="inline-flex items-center rounded-[6px] bg-[#eef8f2] px-2 py-1 text-xs font-semibold tabular-nums text-success">
-            处理后 +{suggestion.scoreGain} 分
-          </span>
         </div>
 
         <div className="mt-5 space-y-4">

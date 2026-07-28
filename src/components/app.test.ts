@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -61,7 +61,9 @@ describe("App analysis request lifetime", () => {
     useAppStore.setState({ stage: "analyzing" });
     const view = render(createElement(App));
 
-    expect(screen.getByText("analysis-progress")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("analysis-progress")).toBeInTheDocument(),
+    );
     expect(hasActiveAnalysisRequest()).toBe(true);
 
     await act(async () => {

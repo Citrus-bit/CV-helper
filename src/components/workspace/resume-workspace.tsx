@@ -122,7 +122,7 @@ export function ResumeWorkspace() {
               {aiStatus === "failed"
                 ? "当前版本的 AI 评分未完成，旧分数不会作为当前结论展示。"
                 : aiStatus === "stale"
-                  ? "修改已应用，本次清单会继续保留；每处理一条立即结算对应分值。"
+                  ? "修改已应用，AI 正在重新检查新版简历；完成前不会沿用旧分数。"
                   : "当前版本正在进行 AI 分析，完成前不展示旧分数。"}
             </p>
             {aiStatus === "failed" ? (
@@ -153,21 +153,21 @@ export function ResumeWorkspace() {
               className="flex min-w-0 items-center justify-center gap-2 rounded-[6px] px-3 text-sm font-medium text-muted transition-colors hover:text-ink data-[state=active]:bg-white data-[state=active]:text-ink data-[state=active]:shadow-sm"
             >
               <FilePenLine aria-hidden="true" size={17} />
-              修改建议
+              优化
             </Tabs.Trigger>
             <Tabs.Trigger
               value="chat"
               className="flex min-w-0 items-center justify-center gap-1.5 rounded-[6px] px-2 text-sm font-medium text-muted transition-colors hover:text-ink data-[state=active]:bg-white data-[state=active]:text-ink data-[state=active]:shadow-sm"
             >
               <MessagesSquare aria-hidden="true" size={16} />
-              AI 编辑
+              问 AI
             </Tabs.Trigger>
             <Tabs.Trigger
               value="templates"
               className="flex min-w-0 items-center justify-center gap-2 rounded-[6px] px-3 text-sm font-medium text-muted transition-colors hover:text-ink data-[state=active]:bg-white data-[state=active]:text-ink data-[state=active]:shadow-sm"
             >
               <LayoutTemplate aria-hidden="true" size={17} />
-              排版预览
+              预览下载
             </Tabs.Trigger>
           </Tabs.List>
           <Tabs.Content

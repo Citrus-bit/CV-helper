@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import { AnalysisProgress } from "./analysis-progress";
 import { DesktopBoundary } from "./desktop-boundary";
 import { UploadScreen } from "./upload-screen";
@@ -16,11 +16,12 @@ import { subscribeRecentAnalysisInvalidations } from "@/lib/client/recent-analys
 export function App() {
   const stage = useAppStore((state) => state.stage);
   const analysis = useAppStore((state) => state.analysis);
-  const hydrated = useSyncExternalStore(
-    () => () => undefined,
-    () => true,
-    () => false,
-  );
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setHydrated(true), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     clearLegacySession(window.localStorage);
