@@ -1652,7 +1652,12 @@ describe("OpenAI-compatible provider gateway", () => {
 
   it("uses json_object for required interview planning and coaching", async () => {
     const question = generatedInterviewQuestion(1, { id: "plan-q-20260728-001" });
-    const planInput = interviewPlanInput();
+    const planInput = {
+      ...interviewPlanInput(),
+      role: "游戏运营",
+      skills: ["版本运营", "DAU"],
+      jobRequirements: ["负责版本活动、用户留存与效果复盘"],
+    };
     const answer = "我梳理了交付流程，并通过复盘减少等待，最终按期上线。";
     const evaluation = {
       questionId: question.id,
@@ -1740,13 +1745,19 @@ describe("OpenAI-compatible provider gateway", () => {
     const planningDto = JSON.parse(requests[0].messages[1].content);
     expect(planningDto).toMatchObject({
       locale: "zh-CN",
-      role: "产品经理",
-      skills: ["交付", "跨团队协作"],
-      jobRequirements: ["负责跨团队产品交付与效果复盘"],
+      role: "游戏运营",
+      skills: ["版本运营", "DAU"],
+      jobRequirements: ["负责版本活动、用户留存与效果复盘"],
     });
     expect(planningDto).toHaveProperty("referenceQuestions");
     expect(planningDto).not.toHaveProperty("questions");
     expect(requests[0].messages[0].content).toContain("context only");
+    expect(requests[0].messages[0].content).toContain(
+      "game operations and publishing",
+    );
+    expect(requests[0].messages[0].content).toContain(
+      "not evidence about the candidate",
+    );
   });
 
   it.each([

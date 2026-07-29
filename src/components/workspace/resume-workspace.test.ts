@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const storeMock = vi.hoisted(() => ({
   resumePanel: "suggestions",
   setResumePanel: vi.fn(),
+  aiStatus: "fresh",
+  retryAiAnalysis: vi.fn(),
 }));
 
 vi.mock("@/lib/client/store", () => ({
@@ -18,7 +20,7 @@ vi.mock("@/lib/client/store", () => ({
         scorecard: {},
         resume: { id: "resume-1", revision: 0, sourceBlocks: [] },
         processing: {
-          aiAnalysis: { status: "fresh", analyzedRevision: 0 },
+          aiAnalysis: { status: storeMock.aiStatus, analyzedRevision: 0 },
         },
       },
       jobMatch: null,
@@ -26,7 +28,7 @@ vi.mock("@/lib/client/store", () => ({
       setResumeVariant: vi.fn(),
       resumePanel: storeMock.resumePanel,
       setResumePanel: storeMock.setResumePanel,
-      retryAiAnalysis: vi.fn(),
+      retryAiAnalysis: storeMock.retryAiAnalysis,
     }),
 }));
 
@@ -54,6 +56,7 @@ import { ResumeWorkspace } from "./resume-workspace";
 afterEach(() => {
   cleanup();
   storeMock.resumePanel = "suggestions";
+  storeMock.aiStatus = "fresh";
   vi.clearAllMocks();
 });
 
@@ -101,5 +104,19 @@ describe("ResumeWorkspace layout", () => {
     expect(exportPanel).toHaveAttribute("data-state", "inactive");
     expect(exportPanel).toHaveClass("hidden", "data-[state=active]:flex");
     expect(exportPanel).toHaveStyle({ display: "none" });
+  });
+
+  it("does not imply automatic reanalysis after applying suggestions", async () => {
+    storeMock.aiStatus = "stale";
+    const user = userEvent.setup();
+    render(createElement(ResumeWorkspace));
+
+    expect(
+      screen.getByText(/首轮建议仍可继续处理/),
+    ).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "重新检查当前版本" }),
+    );
+    expect(storeMock.retryAiAnalysis).toHaveBeenCalledOnce();
   });
 });

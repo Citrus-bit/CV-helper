@@ -342,7 +342,9 @@ export function SuggestionReview() {
         <p>
           {aiStatus === "failed"
             ? "当前版本的 AI 分析未完成，不会显示本地模板建议。"
-            : "当前版本正在等待 AI 重新分析，旧建议不会作为当前结论展示。"}
+            : aiStatus === "refreshing"
+              ? "当前版本正在重新检查，完成前不会展示新版建议。"
+              : "当前版本已修改，首轮建议暂不作为当前结论；需要新版建议时可手动重新检查。"}
         </p>
         {aiStatus === "failed" ? (
           <button
@@ -397,7 +399,7 @@ export function SuggestionReview() {
       }
       setBulkMessage(
         count > 0
-          ? `已应用 ${count} 处安全改写并生成新版 PDF。AI 正在重新检查新版；需要真实信息的项目会继续保留。`
+          ? `已应用 ${count} 处安全改写并生成新版 PDF；需要真实信息的项目会继续保留。`
           : "AI 已完成逐条分析，当前没有可在不补充事实的前提下自动应用的改写。",
       );
       setEditing(false);

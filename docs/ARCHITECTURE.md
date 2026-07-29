@@ -187,7 +187,13 @@ type CapabilityResult<T> = {
 7. 每个新 revision 取消旧 AI 请求；响应只有在 ID/revision 仍匹配时才能替换分数与建议。旧分数在 `stale/refreshing/failed` 时不展示，JD 和面试入口保持禁用。
 8. 结构日志只记录 capability、版本、trace、generation attempt、response format、HTTP 状态、结果码、无效原因计数、耗时和用量，不记录业务正文、完整 prompt、模型名或密钥。
 
-### 4.3 开发期 Skill 套件与运行时边界
+### 4.3 领域指导上下文
+
+`src/lib/server/ai/domain-guidance.ts` 保存从内部专家资料提炼的版本化领域指导。Gateway 在最小化并脱敏后的 DTO 上做确定性匹配，达到阈值时最多选择一个领域，将其作为服务器系统提示的审阅量表；未命中时不增加上下文。当前覆盖运营与产品运营、云商务与 GTM、游戏运营发行、全球传播和游戏音频商务拓展，来源与维护规则见 [`DOMAIN_GUIDANCE.md`](DOMAIN_GUIDANCE.md)。
+
+领域指导不是 EvidenceGraph，也不能成为候选人事实、声明引用或关键词补写依据。简历相关能力只能使用原文、有效 Claim 或用户确认事实中已有的信息；面试能力可以借用行业场景设计问题和观察点，但不能断言候选人具备对应经验，也不能把单一方法论当作唯一答案。`jd.parse` 与 `job.match` 不读取该上下文，继续分别保持原文抽取与服务端 eligible claim 约束。
+
+### 4.4 开发期 Skill 套件与运行时边界
 
 仓库内的 `plugins/resume-assistant-toolkit/` 是 Codex 开发辅助插件，由一个编排入口和六个领域 Skill 组成。它统一说明如何实现、审查和评测文档、证据、岗位文案、排版导出、面试及安全能力，但不被 Next.js 或 document worker 在产品请求路径中加载。
 

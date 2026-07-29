@@ -49,6 +49,7 @@ import {
 } from "@/lib/resume-design-guide";
 
 import { OpenAiCompatibleGateway, ProviderGatewayError } from "./provider-gateway";
+import { domainGuidanceInstruction } from "./domain-guidance";
 import { PiiProjector } from "./pii-projection";
 
 type GatewayInputMap = Pick<BaselineCapabilityInputMap, ProviderGatewayCapabilityId>;
@@ -1808,6 +1809,29 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
   "answer.coach": "Give concrete coaching grounded only in the supplied answer and evaluation. Return one concise headline, one to five unique actions, and two to eight improvedOutline items. Do not output any number that does not appear exactly in the answer. The factSafetyReminder must explicitly tell the candidate to use only real or verifiable facts and not invent facts. Do not invent candidate facts.",
 };
 
+const DOMAIN_GUIDANCE_CAPABILITIES = new Set<ProviderGatewayCapabilityId>([
+  "resume.score",
+  "resume.suggest",
+  "resume.chat",
+  "copy.rewrite.zh",
+  "copy.rewrite.en",
+  "interview.plan",
+  "answer.evaluate",
+  "answer.coach",
+]);
+
+function providerInstruction(
+  id: ProviderGatewayCapabilityId,
+  dto: unknown,
+): string {
+  if (!DOMAIN_GUIDANCE_CAPABILITIES.has(id)) return providerInstructions[id];
+  const use = id.startsWith("interview.") || id.startsWith("answer.")
+    ? "interview"
+    : "resume";
+  const guidance = domainGuidanceInstruction(dto, use);
+  return [providerInstructions[id], guidance].filter(Boolean).join("\n");
+}
+
 const schemas = {
   "resume.score": [ResumeScoreInputSchema, ResumeScoreOutputSchema],
   "resume.suggest": [ResumeSuggestInputSchema, ResumeSuggestOutputSchema],
@@ -1844,7 +1868,7 @@ async function completeProviderScore(
           projector,
         ),
         outputSchema: ResumeScoreOutputSchema,
-        instruction: providerInstructions["resume.score"],
+        instruction: providerInstruction("resume.score", dto),
         generationAttempt,
         correctionReasonCodes,
       });
@@ -1899,7 +1923,7 @@ async function completeProviderInterviewPlan(
         dto,
         piiPayload,
         outputSchema: ProviderInterviewPlanOutputSchema,
-        instruction: providerInstructions["interview.plan"],
+        instruction: providerInstruction("interview.plan", dto),
         generationAttempt,
         correctionReasonCodes,
       });
@@ -1954,7 +1978,7 @@ async function completeProviderSuggestions(
           projector,
         ),
         outputSchema: ProviderSuggestionOutputSchema,
-        instruction: providerInstructions["resume.suggest"],
+        instruction: providerInstruction("resume.suggest", dto),
         generationAttempt,
         correctionReasonCodes,
       });
@@ -2056,7 +2080,7 @@ function providerCapability<K extends ProviderGatewayCapabilityId>(
               dto,
               piiPayload,
               outputSchema,
-              instruction: providerInstructions[id],
+              instruction: providerInstruction(id, dto),
             });
       const data =
         id === "resume.suggest" || id === "resume.score" || id === "interview.plan"

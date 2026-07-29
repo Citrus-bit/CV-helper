@@ -1461,7 +1461,6 @@ export const useAppStore = create<AppState>()(
             : { selectedSuggestionId, previewMode: "original" },
         ),
       decideSuggestion: (id, status, manualText) => {
-        let reanalysisTarget: { resumeId: string; revision: number } | null = null;
         set((state) => {
           if (!state.analysis || state.homeNavigationPending) return state;
           const current = state.analysis.suggestions.find(
@@ -1568,10 +1567,6 @@ export const useAppStore = create<AppState>()(
                 reanalysis.capabilityVersions,
               ),
             };
-            reanalysisTarget = {
-              resumeId: resume.id,
-              revision: resume.revision,
-            };
             const finalText =
               status === "manual"
                 ? normalizedManualText
@@ -1626,7 +1621,6 @@ export const useAppStore = create<AppState>()(
               : {}),
           };
         });
-        scheduleRevisionAiAnalysisTarget(reanalysisTarget);
       },
       replaceAiSuggestions: (incoming, sourceVersion) =>
         set((state) => {
@@ -1672,7 +1666,6 @@ export const useAppStore = create<AppState>()(
         }),
       applyAiSuggestions: () => {
         let appliedCount = 0;
-        let reanalysisTarget: { resumeId: string; revision: number } | null = null;
         set((state) => {
           if (!state.analysis || state.homeNavigationPending) return state;
           const candidates = safeAiRewriteSuggestions(state.analysis);
@@ -1728,10 +1721,6 @@ export const useAppStore = create<AppState>()(
               reanalysis.capabilityVersions,
             ),
           };
-          reanalysisTarget = {
-            resumeId: resume.id,
-            revision: resume.revision,
-          };
           return {
             analysis: nextAnalysis,
             resumeChat: resumeChatAfterRevision(
@@ -1747,7 +1736,6 @@ export const useAppStore = create<AppState>()(
             interviewSessionVersion: state.interviewSessionVersion + 1,
           };
         });
-        scheduleRevisionAiAnalysisTarget(reanalysisTarget);
         return appliedCount;
       },
       applyManualResumeAst: (ast, changeSummary = "已直接编辑简历内容。") => {

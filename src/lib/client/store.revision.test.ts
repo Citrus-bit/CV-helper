@@ -635,7 +635,7 @@ describe("resume-derived state revisions", () => {
     expect(useAppStore.getState().analysis?.resume.revision).toBe(2);
   });
 
-  it("applies every safe AI rewrite in one revision and refreshes the AI score", async () => {
+  it("applies every safe AI rewrite without starting a second AI analysis", async () => {
     const analysis = analysisFixture();
     analysis.processing.capabilityVersions["resume.suggest"] =
       "resume.suggest@2.0.0";
@@ -673,10 +673,6 @@ describe("resume-derived state revisions", () => {
       }),
     );
     useAppStore.getState().setAnalysis(analysis);
-    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(
-      aiRevisionResult(1, 86),
-    );
-
     const count = useAppStore.getState().applyAiSuggestions();
 
     const revised = useAppStore.getState();
@@ -706,21 +702,11 @@ describe("resume-derived state revisions", () => {
     expect(revised.analysis?.processing.aiAnalysis?.status).toBe("stale");
     expect(revised.analysis?.scorecard.total).toBe(60);
 
-    await vi.waitFor(() =>
-      expect(
-        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
-      ).toBe("fresh"),
-    );
-    expect(apiMocks.analyzeResumeRevision).toHaveBeenCalledWith(
-      expect.objectContaining({
-        resume: expect.objectContaining({ revision: 1 }),
-      }),
-      expect.any(AbortSignal),
-    );
-    expect(useAppStore.getState().analysis?.scorecard.total).toBe(86);
+    await Promise.resolve();
+    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
   });
 
-  it("coalesces rapid suggestion decisions into the latest revision analysis", async () => {
+  it("keeps rapid suggestion decisions local until reanalysis is requested", async () => {
     const analysis = analysisFixture();
     analysis.resume.ast.sections[0].entries.push({
       id: "entry-2",
@@ -756,24 +742,19 @@ describe("resume-derived state revisions", () => {
       }),
     );
     useAppStore.getState().setAnalysis(analysis);
-    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(
-      aiRevisionResult(2, 88),
-    );
-
     useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
     useAppStore.getState().decideSuggestion("suggestion-2", "accepted");
-    await vi.waitFor(() =>
-      expect(
-        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
-      ).toBe("fresh"),
-    );
+    await Promise.resolve();
 
-    expect(apiMocks.analyzeResumeRevision).toHaveBeenCalledOnce();
+    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
     expect(useAppStore.getState().analysis).toMatchObject({
       resume: { revision: 2 },
-      suggestions: [],
-      scorecard: { total: 88 },
-      processing: { aiAnalysis: { status: "fresh", analyzedRevision: 2 } },
+      suggestions: [
+        { id: "suggestion-1", status: "accepted" },
+        { id: "suggestion-2", status: "accepted" },
+      ],
+      scorecard: { total: 60 },
+      processing: { aiAnalysis: { status: "stale", analyzedRevision: 0 } },
     });
   });
 
@@ -792,7 +773,7 @@ describe("resume-derived state revisions", () => {
     });
   });
 
-  it("does not reopen a target that was already reviewed in the completed batch", async () => {
+  it("does not reopen a reviewed target after a requested reanalysis", async () => {
     const analysis = analysisFixture();
     useAppStore.getState().setAnalysis(analysis);
     const repeatedTarget = SuggestionSchema.parse({
@@ -817,6 +798,8 @@ describe("resume-derived state revisions", () => {
     });
 
     useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
+    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
+    useAppStore.getState().retryAiAnalysis();
     await vi.waitFor(() =>
       expect(
         useAppStore.getState().analysis?.processing.aiAnalysis?.status,
@@ -827,13 +810,15 @@ describe("resume-derived state revisions", () => {
     expect(useAppStore.getState().selectedSuggestionId).toBeNull();
   });
 
-  it("uses the refreshed AI result after applying the final item", async () => {
+  it("uses the refreshed AI result only after the user requests it", async () => {
     const analysis = analysisFixture();
     useAppStore.getState().setAnalysis(analysis);
     apiMocks.analyzeResumeRevision.mockResolvedValueOnce(
       aiRevisionResult(1, 91),
     );
     useAppStore.getState().decideSuggestion("suggestion-1", "accepted");
+    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
+    useAppStore.getState().retryAiAnalysis();
     await vi.waitFor(() =>
       expect(
         useAppStore.getState().analysis?.processing.aiAnalysis?.status,
@@ -886,16 +871,13 @@ describe("resume-derived state revisions", () => {
     expect(useAppStore.getState().selectedSuggestionId).toBe("suggestion-ai-1");
   });
 
-  it("reanalyzes a manual suggestion while preserving rebuilt evidence", async () => {
+  it("keeps rebuilt evidence for a manual suggestion without automatic reanalysis", async () => {
     const analysis = analysisFixture();
     analysis.scorecard.total = 99;
     analysis.scorecard.dimensions.forEach((dimension) => {
       dimension.evidence = ["旧评分证据"];
     });
     useAppStore.getState().setAnalysis(analysis);
-    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(
-      aiRevisionResult(1, 92),
-    );
     const manualText = "通过自动化发布流程，将交付耗时降低 30%";
 
     useAppStore
@@ -905,13 +887,10 @@ describe("resume-derived state revisions", () => {
     expect(useAppStore.getState().analysis?.processing.aiAnalysis?.status).toBe(
       "stale",
     );
-    await vi.waitFor(() =>
-      expect(
-        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
-      ).toBe("fresh"),
-    );
+    await Promise.resolve();
+    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
     const revised = useAppStore.getState().analysis!;
-    expect(revised.scorecard).toMatchObject({ resumeRevision: 1, total: 92 });
+    expect(revised.scorecard).toMatchObject({ resumeRevision: 0, total: 99 });
     const manualEvidence = revised.evidence.find(
       (asset) =>
         asset.kind === "user_statement" && asset.content === manualText,

@@ -124,16 +124,16 @@ export function ResumeWorkspace() {
               {aiStatus === "failed"
                 ? "当前版本的 AI 评分未完成，旧分数不会作为当前结论展示。"
                 : aiStatus === "stale"
-                  ? "修改已应用，AI 正在重新检查新版简历；完成前不会沿用旧分数。"
+                  ? "修改已应用。首轮建议仍可继续处理；上方分数对应修改前版本。"
                   : "当前版本正在进行 AI 分析，完成前不展示旧分数。"}
             </p>
-            {aiStatus === "failed" ? (
+            {aiStatus === "failed" || aiStatus === "stale" ? (
               <button
                 type="button"
                 onClick={retryAiAnalysis}
                 className="mt-3 min-h-11 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf]"
               >
-                重新进行 AI 分析
+                {aiStatus === "stale" ? "重新检查当前版本" : "重新进行 AI 分析"}
               </button>
             ) : null}
           </div>

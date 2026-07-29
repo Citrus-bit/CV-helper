@@ -99,6 +99,7 @@ Python 测试需要先安装对应锁定依赖；Docker 构建会在镜像内安
 
 - [产品需求](docs/PRD.md)
 - [技术架构](docs/ARCHITECTURE.md)
+- [行业领域指导上下文](docs/DOMAIN_GUIDANCE.md)
 - [Codex 项目约束与 Skill Registry](.codex/PROJECT.md)
 - [统一 Codex Skill 套件入口](plugins/resume-assistant-toolkit/skills/resume-assistant-orchestrator/SKILL.md)
 - [31 项 Capability 归属映射](plugins/resume-assistant-toolkit/skills/resume-assistant-orchestrator/references/capability-map.md)

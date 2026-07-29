@@ -156,7 +156,7 @@ afterEach(() => {
 });
 
 describe("evidence rewrite dialog", () => {
-  it("applies the safe rewrite batch and starts a real revision analysis", async () => {
+  it("applies the safe rewrite batch without starting a second AI analysis", async () => {
     const analysis = analysisFixture();
     const originalText = analysis.resume.ast.sections[0].entries[0].bullets[0];
     const proposedText =
@@ -203,9 +203,6 @@ describe("evidence rewrite dialog", () => {
       hardGate: { passed: true, blockingCheckIds: [] },
       astContentCovered: true,
     });
-    mocks.analyzeResumeRevision.mockImplementation(
-      () => new Promise(() => undefined),
-    );
     useAppStore.getState().setAnalysis(analysis);
     const user = userEvent.setup();
     render(createElement(SuggestionReview));
@@ -222,7 +219,7 @@ describe("evidence rewrite dialog", () => {
       "accepted",
     );
     expect(
-      await screen.findByText(/正在等待 AI 重新分析/),
+      await screen.findByText(/已应用 1 处安全改写并生成新版 PDF/),
     ).toBeVisible();
     expect(mocks.renderResume).toHaveBeenCalledWith(
       expect.objectContaining({ revision: 1, template: "professional" }),
@@ -236,9 +233,7 @@ describe("evidence rewrite dialog", () => {
     expect(useAppStore.getState().analysis?.processing.aiAnalysis?.status).not.toBe(
       "fresh",
     );
-    await waitFor(() =>
-      expect(mocks.analyzeResumeRevision).toHaveBeenCalledOnce(),
-    );
+    expect(mocks.analyzeResumeRevision).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /最终评分/ })).toBeNull();
   });
 
