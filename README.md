@@ -24,6 +24,56 @@
 - 桌面版 Chrome 或 Safari
 - 可选：Docker Engine 与 Compose，用于隔离 PDFium/pdfplumber/Tesseract worker；FunASR 增强转写需要额外的 Docker 构建
 
+## 交给 AI 的初始化流程
+
+解压或克隆项目后，用 AI 编程工具打开仓库根目录，将下面这段话发给它即可：
+
+```text
+请完整阅读 README 中的“AI 初始化执行协议”，在当前仓库中完成环境检查、
+本地配置、依赖和工具安装、服务启动与健康检查。不要改变产品功能，不要覆盖已有私密配置。
+遇到可以自行修复的本机环境问题时继续处理；只在需要 API Key、系统级安装权限或其他必须由我决定的信息时停下说明。
+完成后告诉我访问地址、运行模式、健康检查结果，以及是否已具备真实 AI 分析条件。
+```
+
+### AI 初始化执行协议
+
+> 以下内容是给接管本仓库的 AI 编程代理的操作指令。
+
+1. 先阅读本 README、`package.json` 和 `.env.example`，并查看当前工作区状态。不因启动任务改写业务代码，不要覆盖用户已有的 `.env.local` 或 `.env`，不要删除未提交文件。
+2. 默认选择“本地 Node 运行”；这条路径不需要 Docker、数据库、Redis 或对象存储。只有用户明确要求隔离文档 worker 或 FunASR 时才启动 Compose。
+3. 检查操作系统与 CPU 架构，然后确认 `node --version` 为 `22.x`、`pnpm --version` 为 `10.26.2`。如果已有 Node 22 但没有正确的 pnpm，优先执行：
+
+   ```bash
+   corepack enable
+   corepack prepare pnpm@10.26.2 --activate
+   ```
+
+   如果 Node 22 也不存在，优先使用机器已有的版本管理器安装；不得未经说明便改动系统级运行时。
+4. 仅在 `.env.local` 不存在时从示例创建：
+
+   ```bash
+   test -f .env.local || cp .env.example .env.local
+   ```
+
+   真实上传分析必须在 `.env.local` 中增加 `AI_API_KEY`，并保留 `AI_PROVIDER=provider_gateway`、代码允许的 `AI_API_BASE=https://yunwu.ai/v1` 与可用模型名。不要要求用户把 Key 粘贴到聊天中，不要读出、回显、记录或提交 Key；如果 Key 未配置，完成其余步骤后明确告知用户只剩这一项人工操作。
+5. 安装锁定依赖、Typst 和中英文 OCR 模型：
+
+   ```bash
+   pnpm install --frozen-lockfile
+   ./scripts/bootstrap-tools.sh
+   ```
+
+6. 执行 `pnpm typecheck` 和 `pnpm docs:check`。如果因本机环境失败，先根据完整错误修复环境后重试；不得为了让检查变绿而放宽 AI 来源、revision、证据或导出约束。
+7. 使用可持续的终端会话启动 `pnpm dev`，并保持进程运行。若 `3000` 端口已被占用，先确认占用者；只能停止明确属于本项目的旧进程，否则执行 `pnpm exec next dev -p 3001` 并使用新端口。
+8. 访问 `GET /api/health` 并验收：
+
+   ```bash
+   curl --fail --silent http://127.0.0.1:3000/api/health
+   ```
+
+   如果使用了备用端口，同步替换命令中的 `3000`。`document` 应为 `ready`；未配置 Key 时，`ai` 的 `degraded` 是预期状态；配置了有效 AI 环境变量时，`ai` 应为 `{"status":"ready","mode":"enhanced"}`。`baseline/ready` 只说明应用可启动，不表示可进行真实 AI 分析；`enhanced/ready` 也只证明配置被识别，最终仍需用户上传一份简历，确认评分和建议同时来自当前 revision 的 `@2.x+` AI。
+9. 最后报告实际执行的命令、访问 URL、健康状态、未完成项和后续人工操作。不得把“页面能打开”或“健康接口返回 200”误报为真实 AI 调用已成功。
+
 ## 本地启动
 
 ### 本地 Node 运行

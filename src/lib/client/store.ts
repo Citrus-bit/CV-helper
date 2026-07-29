@@ -1670,6 +1670,8 @@ export const useAppStore = create<AppState>()(
         }),
       applyAiSuggestions: () => {
         let appliedCount = 0;
+        let appliedRevisionTarget: { resumeId: string; revision: number } | null =
+          null;
         set((state) => {
           if (!state.analysis || state.homeNavigationPending) return state;
           const candidates = safeAiRewriteSuggestions(state.analysis);
@@ -1725,6 +1727,10 @@ export const useAppStore = create<AppState>()(
               reanalysis.capabilityVersions,
             ),
           };
+          appliedRevisionTarget = {
+            resumeId: resume.id,
+            revision: resume.revision,
+          };
           return {
             analysis: nextAnalysis,
             resumeChat: resumeChatAfterRevision(
@@ -1740,6 +1746,7 @@ export const useAppStore = create<AppState>()(
             interviewSessionVersion: state.interviewSessionVersion + 1,
           };
         });
+        scheduleRevisionAiAnalysisTarget(appliedRevisionTarget);
         return appliedCount;
       },
       applyManualResumeAst: (ast, changeSummary = "已直接编辑简历内容。") => {

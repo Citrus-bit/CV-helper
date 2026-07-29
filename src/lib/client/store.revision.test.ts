@@ -635,7 +635,7 @@ describe("resume-derived state revisions", () => {
     expect(useAppStore.getState().analysis?.resume.revision).toBe(2);
   });
 
-  it("applies every safe AI rewrite without starting a second AI analysis", async () => {
+  it("applies every safe AI rewrite and refreshes the new revision", async () => {
     const analysis = analysisFixture();
     analysis.processing.capabilityVersions["resume.suggest"] =
       "resume.suggest@2.0.0";
@@ -673,6 +673,9 @@ describe("resume-derived state revisions", () => {
       }),
     );
     useAppStore.getState().setAnalysis(analysis);
+    apiMocks.analyzeResumeRevision.mockResolvedValueOnce(
+      aiRevisionResult(1, 86),
+    );
     const count = useAppStore.getState().applyAiSuggestions();
 
     const revised = useAppStore.getState();
@@ -702,8 +705,18 @@ describe("resume-derived state revisions", () => {
     expect(revised.analysis?.processing.aiAnalysis?.status).toBe("stale");
     expect(revised.analysis?.scorecard.total).toBe(60);
 
-    await Promise.resolve();
-    expect(apiMocks.analyzeResumeRevision).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(apiMocks.analyzeResumeRevision).toHaveBeenCalledOnce(),
+    );
+    await vi.waitFor(() =>
+      expect(
+        useAppStore.getState().analysis?.processing.aiAnalysis?.status,
+      ).toBe("fresh"),
+    );
+    expect(useAppStore.getState().analysis).toMatchObject({
+      scorecard: { resumeRevision: 1, total: 86 },
+      processing: { aiAnalysis: { analyzedRevision: 1 } },
+    });
   });
 
   it("keeps rapid suggestion decisions local until reanalysis is requested", async () => {
