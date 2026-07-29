@@ -12,6 +12,7 @@
 - `Professional`、`Minimal`、`Compact` 三套 Typst 模板。
 - 原版/新版真实 PDF 预览、导出质量报告和下载硬门。
 - 60 个双语面试问题单元，以及由 `interview.plan@2.x+`、`answer.evaluate@2.x+`、`answer.coach@2.x+` 驱动的出题、回答评审和教练反馈。
+- 可选的本机 FunASR `SenseVoiceSmall` 增强转写；未配置时自动回退浏览器语音识别。
 - 当前设备最近分析记录；24 小时到期，最多 10 条、总计最多 50 MB。
 - 版本化的 31 项 Capability Registry；简历分析、持续编辑、岗位分析和面试推理都禁止 baseline 冒充真实 AI。
 
@@ -21,7 +22,7 @@
 - pnpm `10.26.2`
 - macOS 或 Linux
 - 桌面版 Chrome 或 Safari
-- 可选：Docker Engine 与 Compose，用于隔离 PDFium/pdfplumber/Tesseract worker
+- 可选：Docker Engine 与 Compose，用于隔离 PDFium/pdfplumber/Tesseract worker；FunASR 增强转写需要额外的 Docker 构建
 
 ## 本地启动
 
@@ -36,6 +37,19 @@ pnpm dev
 ```
 
 打开 [http://127.0.0.1:3000](http://127.0.0.1:3000)。`bootstrap-tools.sh` 会校验后下载 Typst `0.15.1` 与本地中英文 OCR 模型到被 Git 忽略的 `.tools/`。
+
+### 启用本机 FunASR 增强转写
+
+基础 Docker Compose 仍只启动浏览器转写。需要 FunASR 时使用 Compose override：
+
+```bash
+docker compose \
+  -f infra/docker-compose.yml \
+  -f infra/docker-compose.funasr.yml \
+  up --build
+```
+
+首次构建会下载并预载 FunASR `SenseVoiceSmall`、FSMN-VAD 和 CPU PyTorch 模型，镜像体积和构建时间都会明显增加。运行中的 speech worker 只加入内部 Docker 网络，不发布宿主端口；录音在转写后释放，不写入应用历史。也可以在本机另行运行 FunASR OpenAI 兼容服务，并在被 Git 忽略的 `.env.local` 中设置 `FUNASR_API_BASE=http://127.0.0.1:8000`。
 
 ### 隔离文档 worker
 
@@ -70,7 +84,7 @@ AI 只接收 10 项白名单能力的最小化 DTO。真实简历评分与建议
 - 最近分析和可选原 PDF 保存在当前浏览器的 IndexedDB，24 小时到期；应用运行期间或下次打开时执行物理清理。
 - 新记录只有在评分与建议都来自当前 revision 的 `@2.x+` AI 时才会写入。旧 baseline 记录保留并标为“旧版本地分析”，有原 PDF 时可重新提交 AI，没有原 PDF 时要求重新上传。
 - 首页支持删除单条记录和“清空本机记录”；清空会释放对象 URL 并移除当前会话与本地历史。
-- 浏览器语音识别不创建应用侧音频文件；用户可在提交评审前编辑转写文字。
+- 录音只在当前请求内以受限 Blob/字节流存在；配置本机 FunASR 后由内部 worker 转写，处理后立即释放，不进入历史或日志。未配置时仍可使用浏览器语音识别；所有转写文字都可在提交评审前编辑。
 - 联系方式等无关 PII 会在进入外部 AI 前脱敏；日志不记录简历、JD、回答正文、完整提示或密钥。
 - 对话中曾出现过的 Key 应视为泄露并立即在供应商后台撤销。
 

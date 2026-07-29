@@ -12,6 +12,7 @@ import {
   generateEvidenceRewrite,
   loadDemoAnalysis,
   matchJob,
+  transcribeRecordedSpeech,
 } from "./api";
 import { ResumeASTSchema } from "@/lib/domain";
 
@@ -42,6 +43,35 @@ afterEach(() => {
 });
 
 describe("version-bound client requests", () => {
+  it("sends recorded interview audio as multipart without setting a manual content type", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        transcript: "Enhanced transcript",
+        locale: "mixed",
+        isFinal: true,
+        source: "funasr",
+        audioProcessed: true,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const audio = new Blob(["audio bytes"], { type: "audio/webm" });
+
+    await expect(
+      transcribeRecordedSpeech({
+        audio,
+        locale: "mixed",
+        browserTranscript: "browser draft",
+      }),
+    ).resolves.toMatchObject({ source: "funasr", audioProcessed: true });
+
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(request.headers).toBeUndefined();
+    expect(request.body).toBeInstanceOf(FormData);
+    const form = request.body as FormData;
+    expect(form.get("browserTranscript")).toBe("browser draft");
+    expect(form.get("audio")).toBeInstanceOf(File);
+  });
+
   it("sends the PDF and optional JD in the same analysis request", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: "stop after request capture" }), {

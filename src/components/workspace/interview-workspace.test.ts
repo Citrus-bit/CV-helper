@@ -28,6 +28,7 @@ const apiMocks = vi.hoisted(() => ({
   createInterviewPlan: vi.fn(),
   evaluateAnswer: vi.fn(),
   transcribeBrowserSpeech: vi.fn(),
+  transcribeRecordedSpeech: vi.fn(),
 }));
 
 vi.mock("@/lib/client/api", () => apiMocks);
@@ -359,6 +360,129 @@ describe("InterviewWorkspace session identity", () => {
     ).toBeInTheDocument();
   });
 
+  it("uses the explicitly selected language for browser live transcription", () => {
+    const recognition: SpeechRecognitionLike = {
+      lang: "",
+      continuous: false,
+      interimResults: false,
+      onresult: null,
+      onerror: null,
+      onend: null,
+      onstart: null,
+      start() {
+        recognition.onstart?.();
+      },
+      stop() {
+        recognition.onend?.();
+      },
+      abort() {},
+    };
+    vi.stubGlobal("SpeechRecognition", function MockSpeechRecognition() {
+      return recognition;
+    });
+    seedPlan(planFixture("语言"));
+    renderWorkspace();
+
+    fireEvent.click(screen.getByRole("button", { name: "English" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始录音" }));
+
+    expect(recognition?.lang).toBe("en-US");
+    expect(screen.getByRole("button", { name: "English" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("replaces an untouched browser draft with the local FunASR transcript", async () => {
+    const stopTrack = vi.fn();
+    const recognition: SpeechRecognitionLike = {
+      lang: "",
+      continuous: false,
+      interimResults: false,
+      onresult: null,
+      onerror: null,
+      onend: null,
+      onstart: null,
+      start() {
+        recognition.onstart?.();
+      },
+      stop() {
+        recognition.onend?.();
+      },
+      abort() {},
+    };
+    const recorderStarted = vi.fn();
+    class MockMediaRecorder {
+      static isTypeSupported() {
+        return true;
+      }
+      readonly mimeType = "audio/webm;codecs=opus";
+      state: RecordingState = "inactive";
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: ((event: Event) => void) | null = null;
+      start() {
+        this.state = "recording";
+        recorderStarted();
+      }
+      stop() {
+        this.state = "inactive";
+        this.ondataavailable?.({
+          data: new Blob(["audio bytes"], { type: this.mimeType }),
+        } as BlobEvent);
+        this.onstop?.(new Event("stop"));
+      }
+    }
+    vi.stubGlobal("SpeechRecognition", function MockSpeechRecognition() {
+      return recognition;
+    });
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getUserMedia: vi.fn().mockResolvedValue({
+          getTracks: () => [{ stop: stopTrack }],
+        }),
+      },
+    });
+    apiMocks.transcribeRecordedSpeech.mockResolvedValueOnce({
+      transcript: "I improved activation by nineteen percent.",
+      locale: "en-US",
+      isFinal: true,
+      source: "funasr",
+      audioProcessed: true,
+    });
+    seedPlan(planFixture("增强转写"));
+    renderWorkspace();
+
+    fireEvent.click(screen.getByRole("button", { name: "English" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始录音" }));
+    await waitFor(() => expect(recorderStarted).toHaveBeenCalledOnce());
+    act(() => {
+      recognition.onresult?.({
+        results: [
+          {
+            isFinal: true,
+            0: { transcript: "browser draft", confidence: 0.7 },
+          },
+        ],
+      } as unknown as SpeechRecognitionEventLike);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "停止录音" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("回答转写")).toHaveValue(
+        "I improved activation by nineteen percent.",
+      ),
+    );
+    expect(apiMocks.transcribeRecordedSpeech).toHaveBeenCalledWith(
+      expect.objectContaining({
+        locale: "en-US",
+        browserTranscript: "browser draft",
+        browserConfidence: 0.7,
+      }),
+    );
+    expect(stopTrack).toHaveBeenCalledOnce();
+  });
+
   it("resets the question, transcript, and mutation error for a new plan without breaking next-question navigation", async () => {
     const firstPlan = planFixture("旧计划");
     seedPlan(firstPlan, firstPlan.questions[0].id);
@@ -467,7 +591,7 @@ describe("InterviewWorkspace session identity", () => {
     renderWorkspace();
 
     expect(screen.getByText(/可以直接输入回答/)).toBeInTheDocument();
-    expect(screen.getByText(/本应用只接收转写文字/)).toBeInTheDocument();
+    expect(screen.getByText(/本机 FunASR 增强转写/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "开始面试" }));
     await waitFor(() =>
       expect(apiMocks.createInterviewPlan).toHaveBeenCalledOnce(),

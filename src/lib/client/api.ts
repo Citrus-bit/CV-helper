@@ -354,6 +354,36 @@ export async function transcribeBrowserSpeech(input: {
   return TranscriptionResponseSchema.parse(await response.json());
 }
 
+export async function transcribeRecordedSpeech(input: {
+  audio: Blob;
+  locale: "zh-CN" | "en-US" | "zh-TW" | "mixed";
+  browserTranscript: string;
+  browserConfidence?: number;
+  signal?: AbortSignal;
+}): Promise<TranscriptionResponse> {
+  const extension = input.audio.type.includes("mp4")
+    ? "m4a"
+    : input.audio.type.includes("ogg")
+      ? "ogg"
+      : input.audio.type.includes("wav")
+        ? "wav"
+        : "webm";
+  const form = new FormData();
+  form.set("audio", input.audio, `interview-answer.${extension}`);
+  form.set("locale", input.locale);
+  form.set("browserTranscript", input.browserTranscript);
+  if (input.browserConfidence !== undefined) {
+    form.set("browserConfidence", String(input.browserConfidence));
+  }
+  const response = await trackedFetch("/api/interview/transcribe", {
+    method: "POST",
+    body: form,
+    signal: input.signal,
+  });
+  if (!response.ok) throw await apiError(response);
+  return TranscriptionResponseSchema.parse(await response.json());
+}
+
 export async function renderResume(input: {
   resumeId: string;
   revision: number;

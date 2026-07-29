@@ -254,13 +254,21 @@ export const InterviewProgressSchema = z
   .strict();
 export type InterviewProgress = z.infer<typeof InterviewProgressSchema>;
 
-export const TranscriptionResponseSchema = z.object({
+const TranscriptionResponseBaseSchema = z.object({
   transcript: z.string(),
   locale: z.enum(["zh-CN", "en-US", "zh-TW", "mixed"]),
   isFinal: z.boolean(),
-  source: z.literal("browser-speech-recognition"),
-  audioProcessed: z.literal(false),
 });
+export const TranscriptionResponseSchema = z.discriminatedUnion("source", [
+  TranscriptionResponseBaseSchema.extend({
+    source: z.literal("browser-speech-recognition"),
+    audioProcessed: z.literal(false),
+  }),
+  TranscriptionResponseBaseSchema.extend({
+    source: z.literal("funasr"),
+    audioProcessed: z.literal(true),
+  }),
+]);
 export type TranscriptionResponse = z.infer<typeof TranscriptionResponseSchema>;
 
 export const LayoutRecommendationSchema = z.object({

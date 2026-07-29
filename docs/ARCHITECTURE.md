@@ -19,7 +19,8 @@ Browser
   ├─ Next.js UI
   ├─ sessionStorage active state
   ├─ IndexedDB 24h history / local PDF Blob
-  └─ Web Speech recognition or editable text
+  ├─ Web Speech recognition + optional local FunASR enhancement
+  └─ editable text
         │ HTTP
 Next.js Node runtime
   ├─ API routes
@@ -27,8 +28,10 @@ Next.js Node runtime
   ├─ offline Tesseract.js for scan/mixed pages
   ├─ static Capability Registry + deterministic baselines
   ├─ server provider gateway for ten allowlisted capabilities
-  └─ local Typst compilation
-       └─ .tools/typst/typst (0.15.1)
+  ├─ local Typst compilation
+  │    └─ .tools/typst/typst (0.15.1)
+  └─ optional FUNASR_API_BASE
+       └─ internal FunASR SenseVoice worker
 ```
 
 未配置 `DOCUMENT_WORKER_URL` 时，PDF.js 与 Tesseract.js 运行在 Next.js Node runtime，不在浏览器执行。本地开发不要求 Docker 或数据库；没有外部 AI 密钥时应用仍可启动，但上传和其他严格 AI 流程被禁用。体验示例单独使用本地 baseline 生成隔离、只读且不持久化的模板会话。活动状态使用标签页级 `sessionStorage`，最近分析与可选原 PDF 使用 IndexedDB，两者在 24 小时后到期，并在应用运行期间或下次打开时清理。`TYPST_BIN` 默认指向项目内 CLI；`pnpm dev` 读取被 Git 忽略的 `.env.local`。
@@ -66,10 +69,10 @@ Compose 默认只启动 Web、隔离 worker 和仅发布到宿主 `127.0.0.1` �
 | Binary objects | IndexedDB Blob / object URLs  | MinIO/S3 signed object keys（本轮不实施）         |
 | Document parse | PDF.js + offline Tesseract.js | **已接通**：`services/document-worker` Python API |
 | Render         | 项目内 Typst                  | **已接通**：优先 worker Typst，失败回退本地 Typst |
-| Speech         | Web Speech or editable text   | approved ASR adapter                              |
+| Speech         | Web Speech or editable text   | **已接通**：optional local FunASR OpenAI-compatible adapter |
 | AI generation | 用户分析流程要求 server gateway | reviewed provider；八项严格能力要求 `@2.x+`，禁止 fallback |
 
-所有切换均通过环境配置和 adapter 注入完成，Resume AST 以及 Claim/EvidenceAsset/SourceBlock 的关联语义不变化。文档 parse/OCR/render 与 AI gateway 已接通；上传、岗位和面试分析要求 gateway 处于 `enhanced/ready`，并在每次响应中再次验证能力来源。数据库、队列、对象存储和服务端 ASR 仍是未来目标。
+所有切换均通过环境配置和 adapter 注入完成，Resume AST 以及 Claim/EvidenceAsset/SourceBlock 的关联语义不变化。文档 parse/OCR/render、可选本地 ASR 与 AI gateway 已接通；上传、岗位和面试分析要求 gateway 处于 `enhanced/ready`，并在每次响应中再次验证能力来源。数据库、队列和对象存储仍是未来目标。
 
 ## 3. 核心数据流水线
 
@@ -224,7 +227,7 @@ type CapabilityResult<T> = {
 - `POST /api/render`：接收 Resume AST、revision 与模板，返回 PDF base64、SHA-256 和质量报告。
 - `POST /api/export/download`：接收已预览产物及期望 SHA，服务器重跑 `export.audit` 后直接返回 PDF 字节。
 - `POST /api/interview/plan`：从本地题库、简历和可选 JD 生成训练计划；有 JD 时同时要求 `jd.parse@2.x+`，计划要求 `interview.plan@2.x+`。
-- `POST /api/interview/transcribe`：只标准化浏览器已识别的文字，不接收或保存音频。
+- `POST /api/interview/transcribe`：接受旧版浏览器文字 JSON；配置 `FUNASR_API_BASE` 时也接受有界 `multipart` 音频，转发到仅允许本机/Compose 地址的 FunASR OpenAI 兼容端点。音频不写入应用历史，FunASR 成功时返回 `source: funasr`，服务不可用且已有浏览器文字时回退 `source: browser-speech-recognition`。
 - `POST /api/interview/evaluate`：以 `answer.evaluate@2.x+` 和 `answer.coach@2.x+` 原子评审回答，再执行确定性的简历口径检查。
 
 当前 API 通过 Zod 校验输入并把 `request.signal` 传入 CapabilityContext；隔离文档响应另经 Zod 校验。简历、岗位和面试的严格 AI 响应必须由 provider gateway 返回各自 `@2.x+` 来源；服务端写入来源，客户端再次按能力、简历 ID/revision 和问题 ID 校验。没有有效配置或任一严格能力失败时返回 503 而不是 baseline。真实供应商连续验收、持久化幂等键、资源所有权和队列 worker 恢复仍需按部署环境验证。
@@ -284,7 +287,7 @@ baseline 检索先按语言、领域、岗位族、级别、题型和技能过�
 - Prompt：系统指令与简历/JD/题库分通道；不可信文本先经 guard，不能产生工具或权限请求。
 - 权限：Capability 使用声明式最小 scope；安全文本能力只获 `selected_text`，题库检索只获匿名角色/技能元数据。默认 Registry 拒绝任意 extension，provider 模式另受固定能力名单约束。
 - PII：provider DTO 删除姓名、电话、邮箱、链接、原 PDF、页面图片和无关证据正文；本地投影同时识别普通叙述中的姓名及无标签中英文地址。复检只扫描原文、改写、依据、问题和 Claim 等自然语言，不扫描哈希、revision、技术 ID 或 JSON Pointer。严格评分/建议发现残留 PII 时 fail closed 并使整个请求失败，不回退 baseline。
-- 数据生命周期：MVP Web Speech 不向应用产生或保存音频 Blob；转写文字仅存于设备会话。活动状态使用 `sessionStorage`，最近分析及可选原 PDF 使用 IndexedDB；最多 10 条/50 MB，24 小时后过期，并在应用运行期间或下次打开时清理。生产 ASR 若接收音频，必须在转写后删除并记录无正文删除回执。
+- 数据生命周期：语音 Blob 只在当前请求内存在，不进入设备历史；转写文字仍仅存于设备会话。活动状态使用 `sessionStorage`，最近分析及可选原 PDF 使用 IndexedDB；最多 10 条/50 MB，24 小时后过期，并在应用运行期间或下次打开时清理。FunASR worker 在转写后删除临时音频，不记录正文。
 - 供应链：依赖锁定，候选 Skill 审查许可证和依赖；生产镜像固定 digest，禁止运行时下载代码。
 
 ## 9. 可观测性和故障策略

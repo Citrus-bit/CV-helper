@@ -113,11 +113,12 @@ export async function parseJsonBodyLimited<T>(
 export async function parseFormDataBodyLimited(
   request: Request,
   maxBytes: number,
+  tooLargeMessage = "PDF 超过 10 MB，请压缩后重试。",
 ): Promise<FormData> {
   const body = await readBodyLimited(
     request,
     maxBytes,
-    "PDF 超过 10 MB，请压缩后重试。",
+    tooLargeMessage,
   );
 
   try {

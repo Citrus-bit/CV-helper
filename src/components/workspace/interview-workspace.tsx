@@ -27,6 +27,7 @@ import {
   createInterviewPlan,
   evaluateAnswer,
   transcribeBrowserSpeech,
+  transcribeRecordedSpeech,
 } from "@/lib/client/api";
 import { registerClientRuntimeDisposer } from "@/lib/client/runtime-resources";
 import {
@@ -104,6 +105,16 @@ function abortSpeechRecognition(recognition: SpeechRecognitionLike | null) {
   }
 }
 
+function preferredAudioMimeType() {
+  if (typeof MediaRecorder === "undefined") return undefined;
+  return [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus",
+  ].find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+}
+
 export function InterviewWorkspace() {
   const resume = useAppStore((state) => state.analysis?.resume);
   const plan = useAppStore((state) => state.interviewPlan);
@@ -137,8 +148,12 @@ function InterviewWorkspaceSession({
     (state) => state.updateInterviewProgress,
   );
   const [recording, setRecording] = useState(false);
+  const [transcribingAudio, setTranscribingAudio] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [speechLocale, setSpeechLocale] = useState<"zh-CN" | "en-US">(
+    analysis.resume.locale === "en-US" ? "en-US" : "zh-CN",
+  );
   const questionIndex = progress?.questionIndex ?? 0;
   const transcript = progress?.transcript ?? "";
   const followUpRound = progress?.followUpRound ?? 0;
@@ -147,6 +162,11 @@ function InterviewWorkspaceSession({
   const transcriptSource = progress?.transcriptSource ?? "text";
   const speechConfidenceRef = useRef<number | undefined>(undefined);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const discardAudioRef = useRef(false);
+  const transcriptionAbortRef = useRef<AbortController | null>(null);
   const unregisterRecognitionDisposerRef = useRef<(() => void) | null>(null);
   const submittingQuestionIdRef = useRef<string | null>(null);
   const sessionResumeId = analysis.resume.id;
@@ -232,6 +252,8 @@ function InterviewWorkspaceSession({
       setSeconds((value) => {
         if (value >= 179) {
           recognitionRef.current?.stop();
+          const recorder = mediaRecorderRef.current;
+          if (recorder && recorder.state !== "inactive") recorder.stop();
           setRecording(false);
           return 180;
         }
@@ -240,6 +262,103 @@ function InterviewWorkspaceSession({
     }, 1000);
     return () => window.clearInterval(timer);
   }, [recording]);
+
+  function releaseMediaStream() {
+    for (const track of mediaStreamRef.current?.getTracks() ?? []) track.stop();
+    mediaStreamRef.current = null;
+  }
+
+  async function enhanceCapturedAudio(audio: Blob) {
+    const currentProgress = useAppStore.getState().interviewProgress;
+    const browserTranscript = currentProgress?.transcript ?? "";
+    const controller = new AbortController();
+    transcriptionAbortRef.current?.abort();
+    transcriptionAbortRef.current = controller;
+    setTranscribingAudio(true);
+    try {
+      const result = await transcribeRecordedSpeech({
+        audio,
+        locale: speechLocale,
+        browserTranscript,
+        browserConfidence: speechConfidenceRef.current,
+        signal: controller.signal,
+      });
+      const latest = useAppStore.getState().interviewProgress;
+      if (
+        result.source === "funasr" &&
+        isCurrentSession() &&
+        latest?.transcriptSource === "speech" &&
+        latest.transcript === browserTranscript
+      ) {
+        updateProgress({ transcript: result.transcript });
+      }
+    } catch (error) {
+      if (!controller.signal.aborted && !browserTranscript.trim()) {
+        setPermissionError(
+          error instanceof Error
+            ? error.message
+            : "本地增强语音转写暂时不可用，请直接输入文字回答。",
+        );
+      }
+    } finally {
+      if (transcriptionAbortRef.current === controller) {
+        transcriptionAbortRef.current = null;
+        if (isCurrentSession()) setTranscribingAudio(false);
+      }
+    }
+  }
+
+  async function startAudioCapture() {
+    if (
+      typeof MediaRecorder === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      return;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    });
+    if (!isCurrentSession()) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    const mimeType = preferredAudioMimeType();
+    const recorder = mimeType
+      ? new MediaRecorder(stream, { mimeType })
+      : new MediaRecorder(stream);
+    mediaStreamRef.current = stream;
+    mediaRecorderRef.current = recorder;
+    audioChunksRef.current = [];
+    discardAudioRef.current = false;
+    recorder.ondataavailable = (event) => {
+      if (event.data.size) audioChunksRef.current.push(event.data);
+    };
+    recorder.onstop = () => {
+      const chunks = audioChunksRef.current;
+      const discard = discardAudioRef.current;
+      audioChunksRef.current = [];
+      mediaRecorderRef.current = null;
+      releaseMediaStream();
+      if (!discard && chunks.length) {
+        const audio = new Blob(chunks, {
+          type: recorder.mimeType || chunks[0].type,
+        });
+        if (audio.size) void enhanceCapturedAudio(audio);
+      }
+    };
+    recorder.start(1_000);
+  }
+
+  function stopAudioCapture(discard: boolean) {
+    const recorder = mediaRecorderRef.current;
+    discardAudioRef.current ||= discard;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+    else releaseMediaStream();
+  }
 
   async function startRecording() {
     setPermissionError(null);
@@ -255,8 +374,9 @@ function InterviewWorkspaceSession({
       unregisterRecognitionDisposerRef.current?.();
       unregisterRecognitionDisposerRef.current = null;
       abortSpeechRecognition(previousRecognition);
+      stopAudioCapture(true);
       const recognition = new Recognition();
-      recognition.lang = analysis.resume.locale === "en-US" ? "en-US" : "zh-CN";
+      recognition.lang = speechLocale;
       recognition.continuous = true;
       recognition.interimResults = true;
       recognition.onstart = () => {
@@ -292,6 +412,7 @@ function InterviewWorkspaceSession({
         unregisterRecognitionDisposerRef.current = null;
         setRecording(false);
         abortSpeechRecognition(recognition);
+        stopAudioCapture(false);
         setPermissionError(
           "实时转写已停止，请检查浏览器权限，或直接输入文字回答。",
         );
@@ -302,6 +423,7 @@ function InterviewWorkspaceSession({
         unregisterRecognitionDisposerRef.current?.();
         unregisterRecognitionDisposerRef.current = null;
         setRecording(false);
+        stopAudioCapture(false);
       };
       recognitionRef.current = recognition;
       unregisterRecognitionDisposerRef.current = registerClientRuntimeDisposer(
@@ -311,9 +433,20 @@ function InterviewWorkspaceSession({
           unregisterRecognitionDisposerRef.current = null;
           setRecording(false);
           abortSpeechRecognition(recognition);
+          stopAudioCapture(true);
+          transcriptionAbortRef.current?.abort();
+          transcriptionAbortRef.current = null;
+          setTranscribingAudio(false);
         },
       );
       recognition.start();
+      void startAudioCapture()
+        .then(() => {
+          if (recognitionRef.current !== recognition) stopAudioCapture(true);
+        })
+        .catch(() => {
+          // Browser speech remains available when enhanced audio capture fails.
+        });
     } catch {
       const recognition = recognitionRef.current;
       recognitionRef.current = null;
@@ -321,6 +454,7 @@ function InterviewWorkspaceSession({
       unregisterRecognitionDisposerRef.current = null;
       setRecording(false);
       abortSpeechRecognition(recognition);
+      stopAudioCapture(true);
       setPermissionError(
         "无法使用麦克风。请检查浏览器权限，或直接输入文字回答。",
       );
@@ -329,6 +463,7 @@ function InterviewWorkspaceSession({
 
   function stopRecording() {
     recognitionRef.current?.stop();
+    stopAudioCapture(false);
     setRecording(false);
   }
 
@@ -339,6 +474,17 @@ function InterviewWorkspaceSession({
       unregisterRecognitionDisposerRef.current?.();
       unregisterRecognitionDisposerRef.current = null;
       abortSpeechRecognition(recognition);
+      discardAudioRef.current = true;
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+      else {
+        for (const track of mediaStreamRef.current?.getTracks() ?? []) {
+          track.stop();
+        }
+        mediaStreamRef.current = null;
+      }
+      transcriptionAbortRef.current?.abort();
+      transcriptionAbortRef.current = null;
     };
   }, [sessionIdentity]);
 
@@ -376,7 +522,7 @@ function InterviewWorkspaceSession({
                   size={18}
                   className="mt-1 shrink-0 text-success"
                 />
-                本应用只接收转写文字，不保存音频；使用麦克风时，浏览器供应商可能处理语音。
+                麦克风回答会优先由本机 FunASR 增强转写；服务不可用时保留浏览器转写，文字仍可编辑。
               </p>
             </div>
             <button
@@ -604,6 +750,33 @@ function InterviewWorkspaceSession({
           </div>
 
           <div className="p-6">
+            <fieldset
+              disabled={
+                recording ||
+                transcribingAudio ||
+                Boolean(evaluation) ||
+                evaluationMutation.isPending
+              }
+              className="mb-4 flex justify-center"
+            >
+              <legend className="sr-only">实时识别语言</legend>
+              <div className="inline-flex rounded-[8px] border border-line bg-[#f7f7f8] p-1">
+                {([
+                  ["zh-CN", "中文"],
+                  ["en-US", "English"],
+                ] as const).map(([locale, label]) => (
+                  <button
+                    key={locale}
+                    type="button"
+                    aria-pressed={speechLocale === locale}
+                    onClick={() => setSpeechLocale(locale)}
+                    className={`min-h-9 min-w-24 rounded-[6px] px-4 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${speechLocale === locale ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
             <div
               className={`flex min-h-24 items-center justify-center gap-1.5 rounded-[8px] border ${recording ? "border-brand bg-[#f3f8ff]" : "border-line bg-[#f7f7f8]"}`}
             >
@@ -637,7 +810,11 @@ function InterviewWorkspaceSession({
                   recording ? stopRecording : () => void startRecording()
                 }
                 aria-label={recording ? "停止录音" : "开始录音"}
-                disabled={Boolean(evaluation) || evaluationMutation.isPending}
+                disabled={
+                  Boolean(evaluation) ||
+                  evaluationMutation.isPending ||
+                  transcribingAudio
+                }
                 className={`grid size-14 place-items-center rounded-full text-white shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${recording ? "bg-danger hover:bg-[#a82b26]" : "bg-brand hover:bg-[#075bbf]"}`}
               >
                 {recording ? (
@@ -648,8 +825,21 @@ function InterviewWorkspaceSession({
               </button>
             </div>
             <p className="mx-auto mt-3 max-w-xl text-center text-xs leading-5 text-muted">
-              语音识别由浏览器提供，可能由浏览器供应商处理；本应用只接收转写文字，不保存音频。
+              录音停止后可由本机 FunASR 增强转写，处理完成即释放音频；实时字幕仍可能由浏览器供应商处理。
             </p>
+            {transcribingAudio ? (
+              <p
+                role="status"
+                className="mt-3 flex items-center justify-center gap-2 text-sm text-muted"
+              >
+                <LoaderCircle
+                  aria-hidden="true"
+                  size={16}
+                  className="animate-spin"
+                />
+                正在优化转写
+              </p>
+            ) : null}
             {permissionError ? (
               <p
                 role="alert"
@@ -691,7 +881,8 @@ function InterviewWorkspaceSession({
                 Boolean(evaluation) ||
                 transcript.trim().length === 0 ||
                 evaluationMutation.isPending ||
-                recording
+                recording ||
+                transcribingAudio
               }
               onClick={() => {
                 if (evaluation || submittingQuestionIdRef.current) return;
