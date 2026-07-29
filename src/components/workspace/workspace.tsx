@@ -2,7 +2,6 @@
 
 import {
   ArrowLeft,
-  BriefcaseBusiness,
   CircleAlert,
   FileCheck2,
   Mic2,
@@ -19,16 +18,14 @@ import {
   estimatedDurations,
 } from "../estimated-progress";
 import { ResumeWorkspace } from "./resume-workspace";
-import { JobWorkspace } from "./job-workspace";
 import { InterviewWorkspace } from "./interview-workspace";
 
 const navigation: Array<{
-  id: WorkspaceModule;
+  id: Exclude<WorkspaceModule, "job">;
   label: string;
   icon: typeof FileCheck2;
 }> = [
   { id: "resume", label: "简历优化", icon: FileCheck2 },
-  { id: "job", label: "岗位匹配", icon: BriefcaseBusiness },
   { id: "interview", label: "模拟面试", icon: Mic2 },
 ];
 
@@ -39,7 +36,9 @@ function Navigation({
   pendingSuggestionCount: number;
   aiReady: boolean;
 }) {
-  const activeModule = useAppStore((state) => state.module);
+  const activeModule = useAppStore((state) =>
+    state.module === "job" ? "resume" : state.module,
+  );
   const setModule = useAppStore((state) => state.setModule);
   const advanceLocked = !aiReady;
   return (
@@ -79,7 +78,9 @@ function Navigation({
 }
 
 export function Workspace() {
-  const activeModule = useAppStore((state) => state.module);
+  const storedModule = useAppStore((state) => state.module);
+  const activeModule = storedModule === "job" ? "resume" : storedModule;
+  const setModule = useAppStore((state) => state.setModule);
   const analysis = useAppStore((state) => state.analysis)!;
   const pendingSuggestionCount = analysis.suggestions.filter(
     (suggestion) => suggestion.status === "pending",
@@ -108,6 +109,11 @@ export function Workspace() {
   const [deletingCurrent, setDeletingCurrent] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const archiveSaveFailed = error?.startsWith("无法安全保存当前会话");
+
+  useEffect(() => {
+    // Old local sessions may still point at the retired standalone job page.
+    if (storedModule === "job") setModule("resume");
+  }, [setModule, storedModule]);
 
   async function deleteCurrentSession() {
     setDeletingCurrent(true);
@@ -314,7 +320,6 @@ export function Workspace() {
           }`}
         >
           {activeModule === "resume" ? <ResumeWorkspace /> : null}
-          {activeModule === "job" ? <JobWorkspace /> : null}
           {activeModule === "interview" ? <InterviewWorkspace /> : null}
         </div>
       </div>

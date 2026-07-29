@@ -2,7 +2,7 @@
 
 版本：`0.1.0`  
 Capability contract：`1.0`；builtin implementation：`1.0.0`  
-日期：2026-07-27
+日期：2026-07-29
 
 ## 1. 架构目标
 
@@ -31,9 +31,9 @@ Next.js Node runtime
        └─ .tools/typst/typst (0.15.1)
 ```
 
-未配置 `DOCUMENT_WORKER_URL` 时，PDF.js 与 Tesseract.js 运行在 Next.js Node runtime，不在浏览器执行。本地开发不要求 Docker或数据库；没有外部 AI 密钥时应用仍可启动，但上传与体验示例被禁用，不会生成本地模板分析。活动状态使用标签页级 `sessionStorage`，最近分析与可选原 PDF 使用 IndexedDB，两者在 24 小时后到期，并在应用运行期间或下次打开时清理。`TYPST_BIN` 默认指向项目内 CLI；`pnpm dev` 读取被 Git 忽略的 `.env.local`。
+未配置 `DOCUMENT_WORKER_URL` 时，PDF.js 与 Tesseract.js 运行在 Next.js Node runtime，不在浏览器执行。本地开发不要求 Docker 或数据库；没有外部 AI 密钥时应用仍可启动，但上传和其他严格 AI 流程被禁用。体验示例单独使用本地 baseline 生成隔离、只读且不持久化的模板会话。活动状态使用标签页级 `sessionStorage`，最近分析与可选原 PDF 使用 IndexedDB，两者在 24 小时后到期，并在应用运行期间或下次打开时清理。`TYPST_BIN` 默认指向项目内 CLI；`pnpm dev` 读取被 Git 忽略的 `.env.local`。
 
-App 顶层桌面边界在 hydration 后检查 `min-width: 1024px`。客户端 hydration 通过首帧占位和下一事件循环切换，避免服务端访问浏览器持久化状态，也避免后台标签页因动画帧不调度而长期空白。窄屏只挂载设备提示，不挂载 Upload、AnalysisProgress、Workspace 或语音组件。1024px 以上使用单一顶栏三步导航和桌面文档/建议布局，不存在重复侧栏、底部导航或手机单列工作台。
+App 顶层桌面边界在 hydration 后检查 `min-width: 1024px`。客户端 hydration 通过首帧占位和下一事件循环切换，避免服务端访问浏览器持久化状态，也避免后台标签页因动画帧不调度而长期空白。窄屏只挂载设备提示，不挂载 Upload、AnalysisProgress、Workspace 或语音组件。1024px 以上使用单一顶栏承载“简历优化 / 模拟面试”两项导航和桌面文档/建议布局，不存在重复侧栏、底部导航或手机单列工作台。旧持久化状态中的 `module: job` 在工作区挂载后迁回 `resume`。
 
 ### 2.2 已接通的隔离文档路径
 
@@ -59,15 +59,15 @@ Node 侧 `AbortSignal` 能停止等待 worker 响应并阻止陈旧结果提交�
 
 Compose 默认只启动 Web、隔离 worker 和仅发布到宿主 `127.0.0.1` 的受限 loopback proxy；proxy 设 5 秒上游连接超时、240 秒整体空闲超时和默认 32 个并发连接上限。PostgreSQL、Redis 和 MinIO 放在 `future-infra` profile，当前业务状态仍在 sessionStorage/IndexedDB，队列和对象存储 adapter 尚未接入。Compose 自动读取被 Git 忽略的 `.env`；`pnpm dev` 则读取 `.env.local`，两个私有文件都只能保存轮换后的本地 Secret。当前本地版不实施 Vercel、Private Blob、Hosted 模式或其他云对象存储/部署路径；embedding 与服务端 ASR provider 也未接入。当前与目标的边界如下：
 
-| Concern        | Local baseline                | Production adapter                                |
-| -------------- | ----------------------------- | ------------------------------------------------- |
+| Concern | Local baseline | Production adapter |
+| --- | --- | --- |
 | Domain state   | sessionStorage + IndexedDB    | PostgreSQL + pgvector                             |
 | Async work     | in-process task runner        | Redis + BullMQ workers                            |
 | Binary objects | IndexedDB Blob / object URLs  | MinIO/S3 signed object keys（本轮不实施）         |
 | Document parse | PDF.js + offline Tesseract.js | **已接通**：`services/document-worker` Python API |
 | Render         | 项目内 Typst                  | **已接通**：优先 worker Typst，失败回退本地 Typst |
 | Speech         | Web Speech or editable text   | approved ASR adapter                              |
-| AI generation  | 用户分析流程要求 server gateway | reviewed provider；八项严格能力要求 `@2.x+`，禁止 fallback |
+| AI generation | 用户分析流程要求 server gateway | reviewed provider；八项严格能力要求 `@2.x+`，禁止 fallback |
 
 所有切换均通过环境配置和 adapter 注入完成，Resume AST 以及 Claim/EvidenceAsset/SourceBlock 的关联语义不变化。文档 parse/OCR/render 与 AI gateway 已接通；上传、岗位和面试分析要求 gateway 处于 `enhanced/ready`，并在每次响应中再次验证能力来源。数据库、队列、对象存储和服务端 ASR 仍是未来目标。
 
@@ -177,12 +177,12 @@ type CapabilityResult<T> = {
 
 ### 4.2 调用与回退
 
-1. 未配置 AI 时 Registry 仍保留内置 baseline 供评测和兼容能力使用，但上传页禁用上传与体验示例；严格调用器不会选择 baseline。
-2. `provider_gateway` 只增强十项能力：`resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate` 和 `answer.coach`。除两项 copy 能力外，八项用户可见推理能力都通过 `invokeRequiredAiCapability()` 统一验证 `usedFallback === false`、Capability ID/来源一致、来源主版本不低于 2 及业务 Schema；copy 仍按兼容策略校验原文、术语、数字与事实。
+1. 未配置 AI 时 Registry 仍保留内置 baseline 供评测、确定性能力和隔离体验示例使用，但上传页禁用真实简历提交；严格调用器不会选择 baseline。
+2. `provider_gateway` 只增强十项能力：`resume.score`、`resume.suggest`、`resume.chat`、`jd.parse`、`job.match`、`copy.rewrite.zh`、`copy.rewrite.en`、`interview.plan`、`answer.evaluate` 和 `answer.coach`。评分、建议、JD、岗位、面试和证据补写通过 `invokeRequiredAiCapability()` 禁止 fallback 并验证来源；`resume.chat` 由路由在发布响应前独立拒绝 `usedFallback: true` 或非 `@2.x+` 来源。两项 copy 在 Registry 通用调用中保留兼容能力，但当前证据补写接口只接受 `@2.x+`。
 3. Gateway 在 Next.js 服务端完成字段投影与 PII 清理，只从环境变量注入 URL、Key 和模型。前端 bundle、FeatureAvailability、日志与响应不包含供应商细节。
    Base URL 还必须命中代码内静态批准列表；系统不读取可配置的 `AI_API_ALLOWLIST`，避免部署者通过环境变量无审查扩权。
-4. Gateway 按能力选择响应格式：当前八项严格用户流程优先使用供应商已验证可用的 `json_object`，两项 copy 默认使用 JSON Schema；仅在供应商明确报告格式不支持时执行一次兼容格式重试。所有返回值仍通过 canonical Zod Schema、引用、JSON Pointer、数字新增和事实证据检查。
-5. 任一严格能力遇到未配置、超时、429/5xx、网络错误、非法输出或事实安全失败时统一转为 `AI_ANALYSIS_UNAVAILABLE`，原子接口不包含部分结果；只有显式 `allow` 的非严格能力可回退 `builtin.<capabilityId>@1.0.0`。用户取消直接传播。
+4. Gateway 按能力选择响应格式：八项核心推理能力优先使用供应商已验证可用的 `json_object`，两项 copy 默认使用 JSON Schema；仅在供应商明确报告格式不支持时执行一次兼容格式重试。所有返回值仍通过 canonical Zod Schema、引用、JSON Pointer、数字新增和事实证据检查。
+5. 任一严格能力遇到未配置、超时、429/5xx、网络错误、非法输出或事实安全失败时统一转为 `AI_ANALYSIS_UNAVAILABLE`，超时返回 504，其余常见上游失败返回 503；原子接口不包含部分结果。只有显式 `allow` 的非严格能力可回退 `builtin.<capabilityId>@1.0.0`。用户取消直接传播。
 6. Provider 建议只返回精简候选；服务端根据 `editableTargets` 生成 ID、revision、状态、hash、来源块和 patch。部分无效候选丢弃，显式空数组成功；全部无效时携带安全原因代码纠错一次，第二次仍无效则严格失败。
 7. 每个新 revision 取消旧 AI 请求；响应只有在 ID/revision 仍匹配时才能替换分数与建议。旧分数在 `stale/refreshing/failed` 时不展示，JD 和面试入口保持禁用。
 8. 结构日志只记录 capability、版本、trace、generation attempt、response format、HTTP 状态、结果码、无效原因计数、耗时和用量，不记录业务正文、完整 prompt、模型名或密钥。
@@ -207,10 +207,12 @@ type CapabilityResult<T> = {
 
 - `GET /api/capabilities`：返回静态白名单能力的 `FeatureAvailability`。
 - `GET /api/health`：返回本地运行所需的抽象健康状态；`document`、`ai`、`storage` 仅包含 `ready | degraded` 与 `baseline | isolated | enhanced | client_local`，不返回 URL、供应商、模型、密钥、容器名或错误正文。
-- `GET /api/demo`：生成内置真实 PDF，并使用与上传相同的严格 AI 原子契约；没有 AI 时不可用。
-- `POST /api/analyze`：接收 multipart PDF；完成解析、必要 OCR、分块、证据与 ATS 后，原子调用严格 AI 评分和建议。两项都成功才返回 `AnalysisBundle`。
+- `GET /api/demo`：生成内置真实 PDF，并以本地 baseline 生成显式标记的 `demo-template` 会话；不要求 AI 配置，也不进入持久化、岗位、面试或 AI 对话链路。
+- `POST /api/analyze`：接收 multipart PDF 和可选 `jdText`；完成解析、必要 OCR、分块、证据与 ATS 后，原子调用严格 AI 评分和建议。有 JD 时继续执行 `jd.parse`、`job.match` 和岗位分支构建；全部成功才返回包含可选 `jobMatch` 的初始分析结果。
 - `POST /api/resume-analysis`：最多 512 KB，接收当前 `ResumeDocument + Claim[]`，为同一 ID/revision 原子返回新的 AI `Scorecard + Suggestion[]`。
 - `POST /api/resume-suggestions`：兼容接口，内部复用同一严格评分/建议服务；当前前端 revision 流程不依赖它恢复本地建议。
+- `POST /api/evidence-rewrite`：接收用户补充的事实与当前建议，调用受证据约束的真实 AI 改写并返回可校验 patch。
+- `POST /api/resume-chat`：接收当前 ID/revision、有界会话上下文和消息，返回 `resume.chat@2.x+` 回复及可审阅建议。
 - `POST /api/job-match`：接收 Resume/Evidence/JD DTO；`jd.parse` 与 `job.match` 原子成功后返回要求到证据矩阵及两项 `@2.x+` 来源。服务端以最终岗位标题更新分支求职意向，并基于已映射证据稳定重排 section、entry 和 bullet；`headline_update` 与各级 reorder 都进入 `ResumeVariantChange`，不改写经历事实。
 - `POST /api/layout-recommend`：按 AST 内容量、目标页数和可选偏好返回三模板排序与推荐理由。
 - `POST /api/render`：接收 Resume AST、revision 与模板，返回 PDF base64、SHA-256 和质量报告。
@@ -291,7 +293,7 @@ baseline 检索先按语言、领域、岗位族、级别、题型和技能过�
 
 ## 10. 测试策略
 
-阶段 9 自动化验证通过 `typecheck`、lint、44 个文件 / 259 项 Vitest、34 项 document-worker pytest、3 项 loopback proxy pytest、生产构建和 `git diff --check`。浏览器回归覆盖：1024/1280/1440/1920px 首页与工作区无横向滚动或底部空洞；375/768/1023px 只显示设备提示且不挂载工作台；顶栏返回、历史恢复、流程门、JD 草稿/证据矩阵、面试开始/回答/追问恢复和 Professional 100/100、18/18 质量门均通过。拖拽状态以窗口级文件 `dragover` 的目标归属与真实坐标边界为真值，页面离开、`Escape`、drop、dragend 与 blur 负责收尾；激活重渲染、多次跨子元素、窗口目标、框外移动、真实 PDF 单次提交和监听器卸载由组件事件序列验证。Mac 锁定时 Finder 物理拖拽保留为人工验收项。Gitleaks 对历史、差异、未跟踪源码和提交消息均无发现。该结论仅覆盖固定 fixture、构建与 smoke，不等同生产 OCR 准确率、第三方安全认证或外部 AI 质量。
+发布验证由 `pnpm typecheck`、`pnpm lint`、`pnpm docs:check`、`pnpm test`、`pnpm build`、document-worker pytest、infra pytest 和 `git diff --check` 组成；测试数量以当次命令输出为准，不在架构文档中固化。
 
 - 安全健康端点：4 项 Vitest 覆盖自包含 baseline 不发起 worker 探测、可用 isolated/enhanced 仅返回抽象字段、显式配置失效时 fail closed，以及 HTTP 响应为 `no-store` 且通过 Schema。当前本地 Docker 路径可用；Vercel 验证仍延期。
 - 契约：31 个 Capability 的 Zod/JSON Schema、权限、超时、取消、非法输出和 fallback/显式失败测试。
@@ -299,14 +301,14 @@ baseline 检索先按语言、领域、岗位族、级别、题型和技能过�
 - 事实安全：数字、日期、角色、团队成果、`needs_proof` 和 revision 冲突 fixture。
 - 导出：三模板内容哈希、字体、搜索文本、阅读顺序、裁切、重叠、缺字和预览下载一致性。
 - 面试：60 个知识单元 Schema、领域配额、检索、两次追问上限、转写修正和一致性误报。
-- 产品：当前以 Vitest 覆盖领域逻辑，并用应用内 Browser 做 1024/1280/1440/1920px 桌面交互与视觉验收；375/768/1023px 只验证设备提示且工作台不挂载。生产 CI 仍需补 Playwright 的 Chrome/Safari 权限与无障碍回归。
+- 产品：当前以 Vitest 覆盖领域逻辑，并用应用内 Browser 做 1024/1280/1440/1920px 桌面交互与视觉验收；覆盖上传后可选 JD、岗位版本切换、简历优化和模拟面试两项导航，375/768/1023px 只验证设备提示且工作台不挂载。生产 CI 仍需补 Playwright 的 Chrome/Safari 权限与无障碍回归。
 - 安全：提示注入、越权对象键、伪装 PDF、超限、日志脱敏、主动删除和 TTL。
 
 ## 11. 关键架构决策
 
-| 决策                       | 结论                                                                                                                                           |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| PDF 是否统一 OCR           | 否；原生解析优先。隔离 worker 对 scan 整页、mixed 缺失图片区 OCR；TypeScript fallback 对 scan/mixed 整页 OCR并过滤 mixed 覆盖与重复块。        |
+| 决策 | 结论 |
+| --- | --- |
+| PDF 是否统一 OCR | 否；原生解析优先。隔离 worker 对 scan 整页、mixed 缺失图片区 OCR；TypeScript fallback 对 scan/mixed 整页 OCR 并过滤 mixed 覆盖与重复块。 |
 | 是否 PDF → LaTeX 往返      | 否；先标准化为 Resume AST，再用受控模板渲染。                                                                                                  |
 | 本地是否强依赖基础设施     | 否；未配置 `DOCUMENT_WORKER_URL` 时 TypeScript baseline 完整运行；生产解析/OCR 可切到已接通的 Python worker，PostgreSQL/Redis/MinIO 仍待接入。 |
 | Skill 是否可由用户上传执行 | 否；服务器静态白名单、版本锁定、评测后启用。                                                                                                   |

@@ -1,6 +1,6 @@
 # 简历分析助手
 
-面向电脑浏览器的简历分析工作台。它优先在本地读取 PDF 原生文字层，只对扫描页或缺失区块调用 OCR；随后建立 Resume AST 与证据关系，并强制使用真实 AI 完成简历评分和逐条建议，再提供 JD 证据匹配、三套真实 PDF 预览、导出质检和模拟面试。
+面向电脑浏览器的简历分析工作台。它优先在本地读取 PDF 原生文字层，只对扫描页或缺失区块调用 OCR；随后建立 Resume AST 与证据关系，并强制使用真实 AI 完成简历评分和逐条建议，再提供三套真实 PDF 预览、导出质检和模拟面试。用户选完 PDF 后可选填一份 JD，同一次分析会额外生成证据约束的岗位分支。
 
 当前版本只支持宽度不小于 1024px 的桌面浏览器。Vercel、账号、云端对象存储和长期历史不在本地 MVP 范围内。
 
@@ -8,7 +8,7 @@
 
 - PDF 原生解析、必要 OCR、低置信度提醒和原稿定位。
 - 来自 `resume.score@2.x+` 的六维质量评分，以及来自 `resume.suggest@2.x+` 的证据约束修改建议。
-- 来自 `jd.parse@2.x+` 与 `job.match@2.x+` 的可恢复 JD 解析、要求-证据-缺口矩阵和岗位定制分支。
+- 来自 `jd.parse@2.x+` 与 `job.match@2.x+` 的可选 JD 解析、要求-证据-缺口矩阵和岗位定制分支；当前 UI 在选定 PDF 后、提交分析前收集 JD，并在简历区提供通用版/岗位版切换，不再设置独立岗位页面。
 - `Professional`、`Minimal`、`Compact` 三套 Typst 模板。
 - 原版/新版真实 PDF 预览、导出质量报告和下载硬门。
 - 60 个双语面试问题单元，以及由 `interview.plan@2.x+`、`answer.evaluate@2.x+`、`answer.coach@2.x+` 驱动的出题、回答评审和教练反馈。
@@ -27,7 +27,7 @@
 
 ### 本地 Node 运行
 
-该路径不要求 Docker或数据库。解析运行在 Next.js Node 进程中，使用 PDF.js 原生提取和离线 Tesseract.js 补充 OCR；上传分析仍需要下节的服务端 AI 配置。
+该路径不要求 Docker 或数据库。解析运行在 Next.js Node 进程中，使用 PDF.js 原生提取和离线 Tesseract.js 补充 OCR；上传分析仍需要下节的服务端 AI 配置。
 
 ```bash
 pnpm install --frozen-lockfile
@@ -58,9 +58,9 @@ AI_API_KEY=<rotated-server-only-key>
 AI_MODEL=gpt-5.5
 ```
 
-Docker 模式使用仓库根部被忽略的 `.env`，变量名相同。Key 只能进入服务端环境，不要添加 `NEXT_PUBLIC_` 前缀，也不要写入代码、README、`.env.example` 或日志。
+其余本地配置项及默认值见 [`.env.example`](.env.example)，包括四类 AI 请求限流、反向代理信任开关、文档 worker OCR provider 和 Typst 路径。Docker 模式使用仓库根部被忽略的 `.env`，实际透传项以 [`infra/docker-compose.yml`](infra/docker-compose.yml) 为准。Key 只能进入服务端环境，不要添加 `NEXT_PUBLIC_` 前缀，也不要写入代码、README、`.env.example` 或日志。
 
-AI 只接收 10 项白名单能力的最小化 DTO。真实简历评分与建议、持续编辑、JD 解析、岗位匹配、面试计划、回答评估和教练反馈都必须获得各自 `@2.x+` 结果；未配置、超时、限流、网络失败、非法结构或事实检查失败时，对应用户操作直接失败，不返回 baseline 模板或部分 AI 结果。体验示例是显式标记且不持久化的本地模板会话，不会进入真实分析、岗位匹配、面试或 AI 对话链路。双语文案改写仍保留受事实校验约束的兼容路径；PDF 解析、OCR、证据图、PII 清理、ATS、题库检索、渲染与导出审计是确定性基础设施，不会冒充 AI 推理。
+AI 只接收 10 项白名单能力的最小化 DTO。真实简历评分与建议、持续编辑、证据补写、JD 解析、岗位匹配、面试计划、回答评估和教练反馈都必须获得各自 `@2.x+` 结果；未配置、超时、限流、网络失败、非法结构或事实检查失败时，对应用户操作直接失败，不返回 baseline 模板或部分 AI 结果。体验示例是显式标记且不持久化的本地模板会话，不会进入真实分析、岗位匹配、面试或 AI 对话链路。PDF 解析、OCR、证据图、PII 清理、ATS、题库检索、渲染与导出审计是确定性基础设施，不会冒充 AI 推理。
 
 用户修改当前 Resume AST 后，旧 AI 结果会进入 `stale/refreshing` 状态；只有 `/api/resume-analysis` 为同一 ID/revision 返回新的评分与建议后才重新标记为 `fresh`。等待或失败期间不会展示本地评分，JD 匹配和模拟面试也会保持禁用。
 
@@ -78,13 +78,14 @@ AI 只接收 10 项白名单能力的最小化 DTO。真实简历评分与建议
 
 下载复用用户实际预览过的 PDF 二进制。服务器自动审计只以当前最新 revision 的 Resume AST 为内容基准；原稿和历史版本仅供用户人工对照，不参与自动质量分。只有服务器审计、浏览器首屏像素检查、原稿对照和用户确认全部通过时才允许下载；任何裁切、重叠、缺字、当前内容遗漏、字体、搜索性、ATS 顺序或哈希检查失败都会阻断导出。
 
-自动检查不能替代审美判断，因此产品提供原版与新版真实 PDF 对照，而不承诺对所有输入都自动生成主观上更美的版本。
+自动检查不能替代审美判断，因此产品提供原版与新版真实 PDF 切换对照，而不承诺对所有输入都自动生成主观上更美的版本。
 
 ## 验证命令
 
 ```bash
 pnpm typecheck
 pnpm lint
+pnpm docs:check
 pnpm test
 pnpm build
 python3 -m pytest services/document-worker/tests

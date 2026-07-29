@@ -7,6 +7,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -16,9 +17,6 @@ import { useAppStore } from "@/lib/client/store";
 
 vi.mock("./resume-workspace", () => ({
   ResumeWorkspace: () => createElement("div", null, "简历工作区"),
-}));
-vi.mock("./job-workspace", () => ({
-  JobWorkspace: () => createElement("div", null, "岗位工作区"),
 }));
 vi.mock("./interview-workspace", () => ({
   InterviewWorkspace: () => createElement("div", null, "面试工作区"),
@@ -174,12 +172,13 @@ describe("Workspace progression gate", () => {
 
     render(createElement(Tooltip.Provider, null, createElement(Workspace)));
 
-    const jobButton = screen.getByRole("button", { name: "岗位匹配" });
     const interviewButton = screen.getByRole("button", { name: "模拟面试" });
-    expect(jobButton).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "岗位匹配" }),
+    ).not.toBeInTheDocument();
     expect(interviewButton).toBeEnabled();
-    fireEvent.click(jobButton);
-    expect(useAppStore.getState().module).toBe("job");
+    fireEvent.click(interviewButton);
+    expect(useAppStore.getState().module).toBe("interview");
   });
 
   it("locks downstream work while the current resume revision is being reanalyzed", () => {
@@ -189,7 +188,22 @@ describe("Workspace progression gate", () => {
 
     render(createElement(Tooltip.Provider, null, createElement(Workspace)));
 
-    expect(screen.getByRole("button", { name: "岗位匹配" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "岗位匹配" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "模拟面试" })).toBeDisabled();
+  });
+
+  it("opens legacy job-workspace sessions on resume optimization", async () => {
+    useAppStore.getState().setAnalysis(analysisFixture());
+    useAppStore.setState({ module: "job" });
+
+    render(createElement(Tooltip.Provider, null, createElement(Workspace)));
+
+    expect(screen.getByText("简历工作区")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "岗位匹配" }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(useAppStore.getState().module).toBe("resume"));
   });
 });

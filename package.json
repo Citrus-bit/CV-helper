@@ -5,12 +5,13 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "docs:check": "node scripts/check-docs.mjs",
     "start": "node scripts/start-standalone.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
+    "verify": "pnpm typecheck && pnpm lint && pnpm docs:check && pnpm test && pnpm build"
   },
   "dependencies": {
     "@napi-rs/canvas": "latest",
