@@ -7,6 +7,7 @@ import {
 import {
   exportBlockingCheckIds,
   normalizeExportCheckSeverity,
+  onePagePreferenceCheck,
   qualityThresholdCheck,
 } from "@/lib/export-quality";
 import {
@@ -886,14 +887,7 @@ export async function auditRenderedPdf(
           ? `有 ${marginViolations.length} 个文本对象进入 24pt 安全边界。`
           : "左右安全边界保留完整。",
       ),
-      check(
-        "pagination",
-        "分页密度",
-        pageCount > 5 ? "fail" : pageCount > 2 ? "warn" : "pass",
-        pageCount > 2
-          ? `当前为 ${pageCount} 页，建议确认内容密度。`
-          : `当前为 ${pageCount} 页。`,
-      ),
+      onePagePreferenceCheck(pageCount),
       check(
         "revision-reference",
         "内容检查基准",

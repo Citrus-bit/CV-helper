@@ -15,8 +15,15 @@
 #set document(title: value(profile, "name"), author: value(profile, "name"))
 #set page(
   paper: "a4",
-  margin: (x: 22mm, top: 18mm, bottom: 18mm),
-  footer: context align(center, text(size: 7pt, fill: muted)[#counter(page).display("1")]),
+  margin: (x: 21mm, top: 16mm, bottom: 16mm),
+  footer: context {
+    let total = counter(page).final().at(0)
+    if total > 1 {
+      align(center, text(size: 7pt, fill: muted)[
+        #counter(page).display("1") / #total
+      ])
+    }
+  },
 )
 #set text(
   font: ("Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", "Arial"),
@@ -45,14 +52,14 @@
 ]
 
 #for section in sections [
-  #v(12pt)
+  #v(10pt)
   #block(sticky: true)[
     #text(size: 10.5pt, weight: "bold", fill: accent)[#upper(value(section, "title"))]
     #v(2pt)
     #line(length: 28mm, stroke: 1.1pt + accent)
   ]
   #for item in section.at("items", default: ()) [
-    #v(7pt)
+    #v(6pt)
     #block(sticky: true)[
       #grid(
         columns: (1fr, auto),
@@ -69,12 +76,12 @@
     ]
     #for bullet in item.at("bullets", default: ()) [
       #if present(bullet) [
-        #v(3pt)
+        #v(2.5pt)
         #grid(
           columns: (8pt, 1fr),
           gutter: 3pt,
           align: top,
-          text(size: 7pt, fill: accent)[■],
+          text(size: 7pt, fill: accent)[•],
           [#bullet],
         )
       ]

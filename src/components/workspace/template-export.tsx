@@ -1,59 +1,27 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import {
-  Check,
   ChevronDown,
-  CircleAlert,
   Download,
   FileOutput,
   LoaderCircle,
   RefreshCw,
   ShieldCheck,
-  Sparkles,
 } from "lucide-react";
 import { useState } from "react";
 import {
   EstimatedProgressText,
   estimatedDurations,
 } from "../estimated-progress";
-import {
-  downloadVerifiedResume,
-  recommendLayout,
-  renderResume,
-} from "@/lib/client/api";
+import { downloadVerifiedResume, renderResume } from "@/lib/client/api";
 import { useAppStore, type TemplateId } from "@/lib/client/store";
 import type { AuditCheck } from "@/lib/domain";
-
-const templates: Array<{ id: TemplateId; name: string; description: string }> =
-  [
-    {
-      id: "professional",
-      name: "Professional",
-      description: "层级清晰，适合大多数岗位",
-    },
-    {
-      id: "minimal",
-      name: "Minimal",
-      description: "留白舒展，适合经历较精炼的简历",
-    },
-    {
-      id: "compact",
-      name: "Compact",
-      description: "信息紧凑，适合项目与经历较多的候选人",
-    },
-  ];
 
 const auditStatusLabel = {
   pass: "通过",
   warn: "警告",
   fail: "失败",
-} as const;
-
-const densityLabel = {
-  light: "精简内容",
-  balanced: "均衡密度",
-  dense: "高信息密度",
 } as const;
 
 export function exportConfirmationBlocker(input: {
@@ -69,10 +37,9 @@ export function exportConfirmationBlocker(input: {
     const blockingCheck = input.blockingChecks?.find(
       (check) => check.status === "fail",
     );
-    if (blockingCheck) {
-      return `当前 PDF 未通过“${blockingCheck.label}”：${blockingCheck.details ?? "请调整内容后重新生成。"}`;
-    }
-    return "当前 PDF 存在致命导出错误，请重新生成或调整内容。";
+    if (blockingCheck)
+      return `后台自动排版未通过“${blockingCheck.label}”，请重新生成。`;
+    return "后台未能生成通过完整性检查的 PDF，请重新生成。";
   }
   if (!input.previewed) return "等待新版 PDF 预览完成像素验证后确认。";
   return null;
@@ -85,7 +52,6 @@ export function TemplateExport() {
     (state) => state.activeResumeVariantId,
   );
   const selectedTemplate = useAppStore((state) => state.selectedTemplate);
-  const setTemplate = useAppStore((state) => state.setTemplate);
   const renders = useAppStore((state) => state.renders);
   const previewedRenderHashes = useAppStore(
     (state) => state.previewedRenderHashes,
@@ -110,16 +76,6 @@ export function TemplateExport() {
         name: "通用版",
       };
 
-  const recommendation = useQuery({
-    queryKey: ["layout-recommendation", target.id, target.revision],
-    queryFn: () =>
-      recommendLayout({
-        ast: target.ast,
-        targetPages: Math.min(2, Math.max(1, analysis.resume.pageCount)),
-      }),
-    staleTime: Infinity,
-  });
-
   const mutation = useMutation({
     mutationFn: (template: TemplateId) =>
       renderResume({
@@ -143,14 +99,6 @@ export function TemplateExport() {
   }
 
   const current = renderForTarget(selectedTemplate);
-  const selectedTemplateMeta = templates.find(
-    (template) => template.id === selectedTemplate,
-  )!;
-  const recommendedTemplateMeta = recommendation.data
-    ? templates.find(
-        (template) => template.id === recommendation.data.recommendedTemplate,
-      )
-    : null;
   const renderKey = current
     ? `${current.report.resumeId}:${current.report.resumeRevision}:${selectedTemplate}:${current.sha256}`
     : null;
@@ -169,7 +117,7 @@ export function TemplateExport() {
           current.hardGate.blockingCheckIds.includes(check.id),
         ),
       })
-    : "请先生成当前模板的真实 PDF。";
+    : "请先生成最终 PDF。";
   const canConfirm = confirmationBlocker === null;
   const passedCheckCount = current
     ? current.report.checks.filter((check) => check.status === "pass").length
@@ -194,161 +142,39 @@ export function TemplateExport() {
   const templateSelectionLocked =
     mutation.isPending || downloadMutation.isPending;
 
-  function choose(template: TemplateId) {
-    if (templateSelectionLocked) return;
-    setTemplate(template);
-  }
-
   return (
     <section
       className="flex min-h-0 flex-1 flex-col"
       aria-labelledby="template-heading"
     >
-      <div className="border-b border-line px-5 py-3.5">
-        <h2 id="template-heading" className="text-sm font-semibold">
-          PDF 排版与导出
-        </h2>
-        <p className="mt-1 text-xs leading-5 text-muted">
-          正在处理{target.name}，预览和下载来自同一份真实 PDF，不调用 AI。
-        </p>
-        <p className="mt-1 text-xs leading-5 text-muted">
-          检查基准：当前最新版本 r{target.revision}。原 PDF 只用于人工对照，
-          不参与自动质量判定。
-        </p>
+      <div className="flex min-h-[58px] items-center justify-between gap-3 border-b border-line px-5 py-2.5">
+        <div className="min-w-0">
+          <h2 id="template-heading" className="text-sm font-semibold">
+            导出 PDF
+          </h2>
+          <p className="mt-0.5 truncate text-xs text-muted">
+            {target.name} · 版本 {target.revision + 1}
+          </p>
+        </div>
+        <span className="shrink-0 text-xs text-muted">自动排版</span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
-        {recommendation.data ? (
-          <div
-            className="mb-4 flex items-start gap-2.5 rounded-[8px] border border-[#cfe2f8] bg-[#f5f9fe] px-3 py-2.5 text-xs leading-5"
-            aria-label="排版推荐"
-          >
-            <Sparkles
-              aria-hidden="true"
-              size={16}
-              className="mt-0.5 shrink-0 text-brand"
-            />
-            <div className="min-w-0 flex-1">
-              <p className="font-medium text-ink">
-                推荐 {recommendedTemplateMeta?.name}
-                <span className="font-normal text-muted">
-                  {` · ${densityLabel[recommendation.data.density]} · ${recommendation.data.estimatedPages} 页`}
-                </span>
-              </p>
-              {recommendation.data.reasons[0] ? (
-                <p className="mt-0.5 text-muted">
-                  {recommendation.data.reasons[0]}
-                </p>
-              ) : null}
-            </div>
-            {recommendedTemplateMeta?.id !== selectedTemplate ? (
-              <button
-                type="button"
-                disabled={templateSelectionLocked}
-                onClick={() => choose(recommendation.data.recommendedTemplate)}
-                className="min-h-10 shrink-0 rounded-[6px] px-2.5 font-medium text-brand transition-colors hover:bg-[#e6f1fd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-45"
-              >
-                选用
-              </button>
-            ) : null}
-          </div>
-        ) : recommendation.isError ? (
-          <div
-            className="mb-4 flex items-center gap-2 rounded-[8px] bg-[#fff7df] px-3 py-2 text-xs leading-5 text-[#72510b]"
-            role="alert"
-          >
-            <CircleAlert aria-hidden="true" size={15} className="shrink-0" />
-            <span className="min-w-0 flex-1">暂时无法计算模板推荐。</span>
-            <button
-              type="button"
-              onClick={() => void recommendation.refetch()}
-              className="min-h-9 shrink-0 rounded-[6px] px-2 font-medium hover:bg-[#f8edcf]"
-            >
-              重试
-            </button>
-          </div>
-        ) : (
-          <p
-            className="mb-4 flex items-center gap-2 text-xs leading-5 text-muted"
-            role="status"
-          >
-            <span>正在计算模板与密度建议</span>
-            <EstimatedProgressText
-              expectedDurationMs={estimatedDurations.layoutRecommendation}
-              label="排版建议预估进度"
-            />
-          </p>
-        )}
-        <div>
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-medium text-ink">排版模板</p>
-            <p className="text-[11px] text-muted">
-              当前：{selectedTemplateMeta.name}
-            </p>
-          </div>
-          <div
-            className="mt-2 grid grid-cols-3 gap-1 rounded-[8px] bg-[#eff0f2] p-1"
-            role="group"
-            aria-label="简历排版模板"
-          >
-            {templates.map((template) => {
-              const active = selectedTemplate === template.id;
-              const generated = renderForTarget(template.id);
-              const recommended =
-                recommendation.data?.recommendedTemplate === template.id;
-              return (
-                <button
-                  key={template.id}
-                  type="button"
-                  aria-pressed={active}
-                  disabled={templateSelectionLocked}
-                  onClick={() => choose(template.id)}
-                  className={`min-h-[54px] min-w-0 rounded-[6px] px-1.5 py-1.5 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-55 ${
-                    active
-                      ? "bg-white text-brand shadow-sm"
-                      : "text-muted hover:bg-white/65 hover:text-ink"
-                  }`}
-                >
-                  <span className="block truncate text-xs font-semibold">
-                    {template.name}
-                  </span>
-                  <span
-                    className={`mt-0.5 block min-h-4 text-[11px] leading-4 ${recommended ? "text-success" : "text-muted"}`}
-                  >
-                    {recommended ? "推荐" : generated ? "已生成" : "\u00a0"}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="mt-2 flex min-h-8 items-start justify-between gap-3 px-1 text-xs leading-5">
-            <p className="min-w-0 text-muted">
-              {selectedTemplateMeta.description}
-            </p>
-            <span
-              className={`inline-flex shrink-0 items-center gap-1 font-medium ${current ? "text-success" : "text-muted"}`}
-            >
-              {current ? <Check aria-hidden="true" size={14} /> : null}
-              {current ? "已生成" : "待生成"}
-            </span>
-          </div>
-        </div>
-
         {!current ? (
           <div
-            className="mt-4 flex items-center gap-3 border-t border-line pt-4 text-xs leading-5 text-muted"
+            className="flex items-center gap-3 text-xs leading-5 text-muted"
             role="status"
           >
             <FileOutput aria-hidden="true" size={19} className="shrink-0" />
             <p>
               <strong className="font-medium text-ink">
-                {selectedTemplateMeta.name} 尚未生成
+                最终 PDF 尚未生成
               </strong>
-              <span className="block">生成后将进入导出质量检查。</span>
+              <span className="block">生成时会自动完成排版与导出检查。</span>
             </p>
           </div>
         ) : (
-          <div className="mt-4 border-t border-line pt-4">
+          <div>
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <ShieldCheck
@@ -370,7 +196,7 @@ export function TemplateExport() {
               </div>
               <button
                 type="button"
-                aria-label="重新生成预览"
+                aria-label="重新生成最终 PDF"
                 onClick={() => mutation.mutate(selectedTemplate)}
                 disabled={templateSelectionLocked}
                 className="grid size-11 place-items-center rounded-[8px] text-muted hover:bg-[#f0f1f3] disabled:opacity-40"
@@ -469,8 +295,8 @@ export function TemplateExport() {
               <span className={canConfirm ? "" : "text-muted"}>
                 {canConfirm
                   ? warningCount > 0
-                    ? `已查看预览，确认在 ${warningCount} 项排版提示下下载当前文件。`
-                    : "已对照原版，确认将当前模板用于最终下载。"
+                    ? `已查看预览，确认在 ${warningCount} 项提示下下载当前文件。`
+                    : "已对照原版，确认下载当前最终版本。"
                   : confirmationBlocker}
               </span>
             </label>
@@ -525,7 +351,7 @@ export function TemplateExport() {
             )}
             {mutation.isPending ? (
               <>
-                <span>正在生成 {selectedTemplateMeta.name}</span>
+                <span>正在自动排版</span>
                 <EstimatedProgressText
                   expectedDurationMs={estimatedDurations.pdfGeneration}
                   label="PDF 生成预估进度"
@@ -533,7 +359,7 @@ export function TemplateExport() {
                 />
               </>
             ) : (
-              `生成 ${selectedTemplateMeta.name} PDF`
+              "生成最终 PDF"
             )}
           </button>
         )}

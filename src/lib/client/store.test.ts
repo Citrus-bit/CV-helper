@@ -270,6 +270,37 @@ afterEach(() => {
   useAppStore.getState().reset();
 });
 
+describe("demo template isolation", () => {
+  it("keeps demo sessions out of AI modules and persisted state", () => {
+    const demo = analysisFixture();
+    demo.processing.analysisSource = "demo-template";
+    demo.processing.capabilityVersions["resume.score"] =
+      "resume.score@1.0.0";
+    demo.processing.capabilityVersions["resume.suggest"] =
+      "resume.suggest@1.0.0";
+    demo.processing.aiAnalysis = {
+      status: "failed",
+      analyzedRevision: 0,
+      scoreSourceVersion: "resume.score@1.0.0",
+      suggestionSourceVersion: "resume.suggest@1.0.0",
+    };
+
+    useAppStore.getState().setAnalysis(demo);
+    useAppStore.getState().setModule("job");
+
+    expect(useAppStore.getState().module).toBe("resume");
+    expect(useAppStore.getState().beginResumeChatTurn("测试消息")).toBeNull();
+    const persisted = JSON.parse(
+      sessionStorage.getItem(SESSION_STORAGE_KEY_V3) ?? "{}",
+    );
+    expect(persisted.state).toMatchObject({
+      stage: "upload",
+      module: "resume",
+      analysis: null,
+    });
+  });
+});
+
 describe("suggestion source navigation", () => {
   it("opens the original PDF whenever a suggestion is selected", () => {
     useAppStore.getState().setAnalysis(analysisFixture());

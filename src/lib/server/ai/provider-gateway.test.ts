@@ -219,6 +219,9 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(instruction).toContain("Do not reuse stock rationales");
     expect(instruction).toContain("do not return use_as_is placeholders");
     expect(instruction).toContain("do not demand a metric when the source contains none");
+    expect(instruction).toContain("one-page-first editorial standard");
+    expect(instruction).toContain("single-column hierarchy");
+    expect(instruction).toContain("never invent facts or silently discard");
   });
 
   it("forbids personal information in score output", () => {
@@ -308,6 +311,17 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(result.sourceVersion).toBe("resume.suggest@2.0.0");
     expect(result.data.suggestions).toEqual([]);
     expect(fetchMock).toHaveBeenCalledOnce();
+    const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const providerInput = JSON.parse(request.messages[1].content);
+    expect(providerInput.layoutGoal).toMatchObject({
+      targetPages: 1,
+      sourcePages: resume.pageCount,
+      priority: "prefer",
+      styleGuideVersion: "resume-design@2026-07-29",
+    });
+    expect(providerInput.layoutGoal.principles).toContain(
+      "Prefer concise one- or two-line bullets and remove repetition before shrinking type.",
+    );
   });
 
   it("retries once with safe rejection codes when every candidate is invalid", async () => {

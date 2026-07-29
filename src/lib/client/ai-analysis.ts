@@ -1,5 +1,11 @@
 import type { AnalysisBundle } from "./contracts";
 
+export function isDemoTemplateAnalysis(
+  analysis: AnalysisBundle | null | undefined,
+) {
+  return analysis?.processing.analysisSource === "demo-template";
+}
+
 export function isRequiredAiSource(
   capabilityId: "resume.score" | "resume.suggest",
   source: string | undefined,

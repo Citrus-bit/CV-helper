@@ -699,22 +699,11 @@ export function ResumeContentEditor() {
       <Dialog.Trigger asChild>
         <button
           type="button"
-          className="flex min-h-11 w-full items-center justify-between gap-3 rounded-[8px] border border-[#acd0fb] bg-[#f5f9fe] px-4 text-left transition-colors hover:bg-[#edf5ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+          className="inline-flex size-10 shrink-0 items-center justify-center rounded-[8px] text-muted transition-colors hover:bg-[#edf5ff] hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+          aria-label="直接编辑简历内容"
+          title="直接编辑简历内容"
         >
-          <span className="flex items-center gap-3">
-            <span className="grid size-8 place-items-center rounded-[7px] bg-brand text-white">
-              <FilePenLine aria-hidden="true" size={17} />
-            </span>
-            <span>
-              <span className="block text-sm font-semibold text-ink">
-                直接编辑简历内容
-              </span>
-              <span className="mt-0.5 block text-xs text-muted">
-                不调用 AI，保存后自动生成一次 PDF
-              </span>
-            </span>
-          </span>
-          <span className="text-xs font-medium text-brand">打开编辑器</span>
+          <FilePenLine aria-hidden="true" size={18} />
         </button>
       </Dialog.Trigger>
       <Dialog.Portal>

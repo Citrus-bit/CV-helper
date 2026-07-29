@@ -57,6 +57,7 @@ import {
 import {
   hasFreshRequiredAiAnalysis,
   hasRequiredAiProvenance,
+  isDemoTemplateAnalysis,
 } from "./ai-analysis";
 import { applySuggestion, suggestionBeforeHashMatches } from "./resume";
 import {
@@ -921,6 +922,9 @@ export function mergePersistedSessionState(
     recentAnalysesLoading: false,
     homeNavigationPending: false,
   } as AppState;
+  // Demo sessions are intentionally ephemeral and never hydrate into the
+  // user's real analysis workspace after a reload.
+  if (isDemoTemplateAnalysis(merged.analysis)) return currentState;
   if (merged.analysis) {
     const suggestions = ensureSuggestionScoreGains(
       merged.analysis.suggestions,
@@ -1130,6 +1134,14 @@ function scheduleCurrentSessionArchive() {
 }
 
 function scheduleRevisionAiAnalysis(resumeId: string, revision: number) {
+  const analysis = useAppStore.getState().analysis;
+  if (
+    isDemoTemplateAnalysis(analysis) &&
+    analysis?.resume.id === resumeId &&
+    analysis.resume.revision === revision
+  ) {
+    return;
+  }
   queueMicrotask(() => void refreshRevisionAiAnalysis(resumeId, revision));
 }
 
@@ -1147,7 +1159,8 @@ async function refreshRevisionAiAnalysis(resumeId: string, revision: number) {
   const state = useAppStore.getState();
   if (
     state.analysis?.resume.id !== resumeId ||
-    state.analysis.resume.revision !== revision
+    state.analysis.resume.revision !== revision ||
+    isDemoTemplateAnalysis(state.analysis)
   ) {
     activeRevisionAnalysis = null;
     return;
@@ -1375,6 +1388,9 @@ export const useAppStore = create<AppState>()(
         let changed = false;
         set((state) => {
           if (state.homeNavigationPending) return state;
+          if (isDemoTemplateAnalysis(state.analysis) && module !== "resume") {
+            return state;
+          }
           const progressionLocked = Boolean(
             state.analysis &&
               (state.analysis.processing.aiAnalysis?.status !== "fresh" ||
@@ -1803,6 +1819,7 @@ export const useAppStore = create<AppState>()(
       beginResumeChatTurn: (content) => {
         const normalized = content.trim();
         if (!normalized || normalized.length > 4_000) return null;
+        if (isDemoTemplateAnalysis(get().analysis)) return null;
         let created: ResumeChatMessage | null = null;
         set((state) => {
           if (!state.analysis || state.homeNavigationPending) return state;
@@ -2309,6 +2326,12 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           if (state.homeNavigationPending) return state;
           if (
+            resumePanel === "chat" &&
+            isDemoTemplateAnalysis(state.analysis)
+          ) {
+            return state;
+          }
+          if (
             resumePanel === "suggestions" &&
             state.activeResumeVariantId !== null
           ) {
@@ -2444,6 +2467,9 @@ export const useAppStore = create<AppState>()(
           accepted = true;
           return {
             renders: { ...state.renders, [render.template]: render },
+            // The server owns layout fallback; keep preview and download bound
+            // to the artifact that actually passed export verification.
+            selectedTemplate: render.template,
             previewMode: "current",
           };
         });
@@ -2806,30 +2832,40 @@ export const useAppStore = create<AppState>()(
       version: 3,
       storage: createJSONStorage(migratingSessionStorage),
       migrate: (persistedState) => migratePersistedSessionState(persistedState),
-      partialize: (state) => ({
-        stage: state.analysis ? state.stage : "upload",
-        module: state.module,
-        expiresAt: state.expiresAt,
-        analysis: state.analysis
-          ? {
-              ...state.analysis,
-              originalPdfBase64: undefined,
-            }
-          : null,
-        jobDraft: state.jobDraft,
-        jobMatch: state.jobMatch,
-        interviewPlan: state.interviewPlan,
-        evaluations: state.evaluations,
-        interviewSetupStage: state.interviewSetupStage,
-        interviewProgress: state.interviewProgress,
-        resumeChat: state.resumeChat,
-        selectedSuggestionId: state.selectedSuggestionId,
-        activeResumeVariantId: state.activeResumeVariantId,
-        resumePanel: state.resumePanel,
-        selectedTemplate: state.selectedTemplate,
-        undoStack: state.undoStack.map(persistedSnapshot),
-        archiveSuppressedForResumeId: state.archiveSuppressedForResumeId,
-      }),
+      partialize: (state) => {
+        if (isDemoTemplateAnalysis(state.analysis)) {
+          return {
+            stage: "upload" as const,
+            module: "resume" as const,
+            expiresAt: null,
+            analysis: null,
+          };
+        }
+        return {
+          stage: state.analysis ? state.stage : "upload",
+          module: state.module,
+          expiresAt: state.expiresAt,
+          analysis: state.analysis
+            ? {
+                ...state.analysis,
+                originalPdfBase64: undefined,
+              }
+            : null,
+          jobDraft: state.jobDraft,
+          jobMatch: state.jobMatch,
+          interviewPlan: state.interviewPlan,
+          evaluations: state.evaluations,
+          interviewSetupStage: state.interviewSetupStage,
+          interviewProgress: state.interviewProgress,
+          resumeChat: state.resumeChat,
+          selectedSuggestionId: state.selectedSuggestionId,
+          activeResumeVariantId: state.activeResumeVariantId,
+          resumePanel: state.resumePanel,
+          selectedTemplate: state.selectedTemplate,
+          undoStack: state.undoStack.map(persistedSnapshot),
+          archiveSuppressedForResumeId: state.archiveSuppressedForResumeId,
+        };
+      },
       merge: mergePersistedSessionState,
       onRehydrateStorage: () => (state) => {
         if (!state) return;

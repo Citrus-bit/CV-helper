@@ -127,6 +127,42 @@ afterEach(() => {
 });
 
 describe("UploadScreen current session recovery", () => {
+  it("opens the local demo even when enhanced AI is unavailable", async () => {
+    const demo = analysisFixture();
+    demo.processing.analysisSource = "demo-template";
+    demo.processing.capabilityVersions["resume.score"] =
+      "resume.score@1.0.0";
+    demo.processing.capabilityVersions["resume.suggest"] =
+      "resume.suggest@1.0.0";
+    demo.processing.aiAnalysis = {
+      status: "failed",
+      analyzedRevision: 0,
+      scoreSourceVersion: "resume.score@1.0.0",
+      suggestionSourceVersion: "resume.suggest@1.0.0",
+    };
+    apiMocks.aiAnalysisAvailable.mockResolvedValue(false);
+    apiMocks.loadDemoAnalysis.mockResolvedValue(demo);
+    useAppStore.setState({
+      refreshRecentSessions: vi.fn(async () => undefined),
+    });
+
+    render(createElement(UploadScreen));
+
+    const demoButton = screen.getByRole("button", {
+      name: "没有现成简历？查看示例",
+    });
+    await waitFor(() => expect(demoButton).toBeEnabled());
+    fireEvent.click(demoButton);
+
+    await waitFor(() =>
+      expect(useAppStore.getState()).toMatchObject({
+        stage: "workspace",
+        analysis: { processing: { analysisSource: "demo-template" } },
+      }),
+    );
+    expect(apiMocks.loadDemoAnalysis).toHaveBeenCalledOnce();
+  });
+
   it("continues an in-memory analysis when no recent record exists", () => {
     useAppStore.setState({
       refreshRecentSessions: vi.fn(async () => undefined),

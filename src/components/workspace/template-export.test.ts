@@ -16,7 +16,6 @@ import { useAppStore } from "@/lib/client/store";
 
 const api = vi.hoisted(() => ({
   downloadVerifiedResume: vi.fn(),
-  recommendLayout: vi.fn(),
   renderResume: vi.fn(),
 }));
 
@@ -133,7 +132,7 @@ describe("exportConfirmationBlocker", () => {
     );
     expect(
       exportConfirmationBlocker({ ...valid, hardGatePassed: false }),
-    ).toMatch(/致命导出错误/);
+    ).toMatch(/完整性检查/);
     expect(
       exportConfirmationBlocker({
         ...valid,
@@ -147,9 +146,7 @@ describe("exportConfirmationBlocker", () => {
           },
         ],
       }),
-    ).toBe(
-      "当前 PDF 未通过“字形完整性”：发现非原文的缺失字形标记。",
-    );
+    ).toBe("后台自动排版未通过“字形完整性”，请重新生成。");
   });
 });
 
@@ -270,17 +267,6 @@ describe("TemplateExport resume target", () => {
       selectedTemplate: "professional",
       renders: {},
     });
-    api.recommendLayout.mockResolvedValue({
-      recommendedTemplate: "professional",
-      estimatedPages: 1,
-      density: "balanced",
-      reasons: ["测试"],
-      rankings: [
-        { template: "professional", score: 90, estimatedPages: 1 },
-        { template: "minimal", score: 80, estimatedPages: 1 },
-        { template: "compact", score: 70, estimatedPages: 1 },
-      ],
-    });
     api.renderResume.mockReturnValue(new Promise(() => undefined));
     const client = new QueryClient({
       defaultOptions: {
@@ -297,13 +283,11 @@ describe("TemplateExport resume target", () => {
         createElement(TemplateExport),
       ),
     );
-    expect(screen.getByText(/正在处理产品经理定制版/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/检查基准：当前最新版本 r0/),
-    ).toBeInTheDocument();
-    expect(await screen.findByText("测试")).toBeInTheDocument();
+    expect(screen.getByText("产品经理定制版 · 版本 1")).toBeInTheDocument();
+    expect(screen.getByText("自动排版")).toBeInTheDocument();
+    expect(screen.queryByText("排版模板")).not.toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "生成 Professional PDF" }),
+      screen.getByRole("button", { name: "生成最终 PDF" }),
     );
 
     await waitFor(() =>
@@ -318,14 +302,12 @@ describe("TemplateExport resume target", () => {
     expect(api.renderResume).not.toHaveBeenCalledWith(
       expect.objectContaining({ sourcePageCount: expect.anything() }),
     );
-    expect(screen.getByRole("button", { name: /^Minimal/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /^Compact/ })).toBeDisabled();
     expect(
       screen.getByRole("progressbar", { name: "PDF 生成预估进度" }),
     ).toBeInTheDocument();
   });
 
-  it("locks template and regeneration controls while download review is pending", async () => {
+  it("locks regeneration while download review is pending", async () => {
     const analysis = downloadableAnalysisFixture();
     const renderResult = downloadableRenderFixture();
     useAppStore.setState({
@@ -337,17 +319,6 @@ describe("TemplateExport resume target", () => {
       selectedTemplate: "professional",
       renders: { professional: renderResult },
       previewedRenderHashes: [renderResult.sha256],
-    });
-    api.recommendLayout.mockResolvedValue({
-      recommendedTemplate: "professional",
-      estimatedPages: 1,
-      density: "balanced",
-      reasons: ["测试"],
-      rankings: [
-        { template: "professional", score: 90, estimatedPages: 1 },
-        { template: "minimal", score: 80, estimatedPages: 1 },
-        { template: "compact", score: 70, estimatedPages: 1 },
-      ],
     });
     api.downloadVerifiedResume.mockReturnValue(new Promise(() => undefined));
     const client = new QueryClient({
@@ -367,21 +338,21 @@ describe("TemplateExport resume target", () => {
     );
     await user.click(
       screen.getByRole("checkbox", {
-        name: /已对照原版，确认将当前模板用于最终下载/,
+        name: /已对照原版，确认下载当前最终版本/,
       }),
     );
     await user.click(screen.getByRole("button", { name: "下载最终 PDF" }));
 
     await waitFor(() => expect(api.downloadVerifiedResume).toHaveBeenCalled());
-    expect(screen.getByRole("button", { name: "重新生成预览" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /^Minimal/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /^Compact/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "重新生成最终 PDF" }),
+    ).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "正在校验文件" }),
     ).toBeDisabled();
     expect(
       screen.getByRole("checkbox", {
-        name: /已对照原版，确认将当前模板用于最终下载/,
+        name: /已对照原版，确认下载当前最终版本/,
       }),
     ).toBeDisabled();
   });

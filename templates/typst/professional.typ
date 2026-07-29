@@ -16,41 +16,46 @@
 #set document(title: value(profile, "name"), author: value(profile, "name"))
 #set page(
   paper: "a4",
-  margin: (x: 18mm, top: 15mm, bottom: 16mm),
-  footer: context align(right, text(size: 7.5pt, fill: muted)[
-    #counter(page).display("1") / #counter(page).final().at(0)
-  ]),
+  margin: (x: 17mm, top: 12mm, bottom: 13mm),
+  footer: context {
+    let total = counter(page).final().at(0)
+    if total > 1 {
+      align(right, text(size: 7.5pt, fill: muted)[
+        #counter(page).display("1") / #total
+      ])
+    }
+  },
 )
 #set text(
   font: ("Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", "Arial"),
   fallback: true,
   lang: "zh",
-  size: 9.4pt,
+  size: 9.2pt,
   fill: ink,
 )
-#set par(justify: false, leading: 0.55em)
+#set par(justify: false, leading: 0.5em)
 
 #align(center)[
-  #text(size: 22pt, weight: "bold", fill: ink)[#value(profile, "name")]
+  #text(size: 21pt, weight: "bold", fill: ink)[#value(profile, "name")]
   #if present(value(profile, "headline")) [
     #v(3pt)
     #text(size: 10.5pt, weight: "medium", fill: accent)[#value(profile, "headline")]
   ]
   #if contacts.len() > 0 [
-    #v(4pt)
+    #v(3.5pt)
     #text(size: 8.3pt, fill: muted)[#contacts.join("  |  ")]
   ]
 ]
+#v(6pt)
+#line(length: 100%, stroke: 0.9pt + accent)
 
 #if present(value(profile, "summary")) [
-  #v(8pt)
-  #block(width: 100%, inset: (x: 9pt, y: 7pt), fill: rgb("#F2F7F5"), radius: 3pt)[
-    #text(size: 9pt)[#value(profile, "summary")]
-  ]
+  #v(6pt)
+  #text(size: 8.9pt, fill: ink)[#value(profile, "summary")]
 ]
 
 #for section in sections [
-  #v(10pt)
+  #v(8pt)
   #block(sticky: true)[
     #grid(
       columns: (auto, 1fr),
@@ -61,7 +66,7 @@
     )
   ]
   #for item in section.at("items", default: ()) [
-    #v(5.5pt)
+    #v(4.5pt)
     #block(sticky: true)[
       #grid(
         columns: (1fr, auto),
@@ -78,7 +83,7 @@
     ]
     #for bullet in item.at("bullets", default: ()) [
       #if present(bullet) [
-        #v(2.5pt)
+        #v(2pt)
         #grid(
           columns: (7pt, 1fr),
           gutter: 2pt,

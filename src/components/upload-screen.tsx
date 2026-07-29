@@ -29,6 +29,7 @@ import { useAppStore } from "@/lib/client/store";
 import {
   hasFreshRequiredAiAnalysis,
   hasRequiredAiProvenance,
+  isDemoTemplateAnalysis,
 } from "@/lib/client/ai-analysis";
 import { getRecentAnalysis } from "@/lib/client/recent-analysis";
 import {
@@ -112,7 +113,9 @@ export function UploadScreen() {
     ),
   );
   const hasLegacyCurrentAnalysis = Boolean(
-    analysis && !hasRequiredAiProvenance(analysis),
+    analysis &&
+      !isDemoTemplateAnalysis(analysis) &&
+      !hasRequiredAiProvenance(analysis),
   );
 
   useEffect(() => {
@@ -376,10 +379,6 @@ export function UploadScreen() {
 
   async function loadDemo() {
     setError(null);
-    if (aiAvailable !== true) {
-      setError("AI 服务尚未配置，体验示例当前不可分析。");
-      return;
-    }
     const request = beginAnalysisRequest();
     setBusy(true);
     setStage("analyzing");
@@ -500,7 +499,7 @@ export function UploadScreen() {
             </button>
             <button
               type="button"
-              disabled={busy || aiAvailable !== true}
+              disabled={busy}
               onClick={() => void loadDemo()}
               className="mt-2 inline-flex min-h-10 items-center gap-2 rounded-[8px] px-3 text-sm text-muted transition-colors hover:bg-[#f0f1f3] hover:text-ink disabled:opacity-50"
             >
@@ -533,7 +532,7 @@ export function UploadScreen() {
             className="mt-4 rounded-[8px] border border-[#f0b8b4] bg-[#fff7f6] px-4 py-3 text-sm text-danger"
             role="status"
           >
-            AI 服务尚未配置，当前不会提供本地模板分析。
+            AI 服务尚未配置，上传分析暂不可用；仍可查看本地体验示例。
           </p>
         ) : null}
 

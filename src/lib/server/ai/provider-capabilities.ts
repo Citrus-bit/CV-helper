@@ -43,6 +43,10 @@ import {
   type Suggestion,
 } from "@/lib/domain";
 import { resumeTextSafetyError } from "@/lib/resume-text-safety";
+import {
+  RESUME_AI_EDITOR_BRIEF,
+  resumeLayoutGoal,
+} from "@/lib/resume-design-guide";
 
 import { OpenAiCompatibleGateway, ProviderGatewayError } from "./provider-gateway";
 import { PiiProjector } from "./pii-projection";
@@ -412,6 +416,7 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
           revision: projected.resume.revision,
           locale: projected.resume.locale,
         },
+        layoutGoal: resumeLayoutGoal(suggestionInput.resume.pageCount),
         claims: projected.claims,
         scoreContext: suggestionInput.scoreContext
           ? projectedScoreContext(suggestionInput.scoreContext, sanitize)
@@ -430,6 +435,7 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
       const chatInput = input as GatewayInputMap["resume.chat"];
       return {
         ...minimalResume(chatInput, projector),
+        layoutGoal: resumeLayoutGoal(chatInput.resume.pageCount),
         conversation: {
           summary: sanitize(chatInput.summary),
           confirmedFacts: chatInput.confirmedFacts.map(sanitize),
@@ -1760,6 +1766,8 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
   ].join(" "),
   "resume.suggest": [
     "Task: act as a senior resume editor. Inspect every supplied editableTarget as one complete review batch before writing the response, aggregate all material actionable findings, order them by recruiter impact, and return at most 12 suggestions.",
+    RESUME_AI_EDITOR_BRIEF,
+    "layoutGoal is a preference, not permission to remove unique supported evidence. When sourcePages exceeds targetPages, prioritize concise rewrites that remove filler, duplicated meaning, and weak setup while preserving distinct facts.",
     "The response is the complete editing batch for this resume revision. Do not intentionally defer a visible issue to a later review pass, and do not split one target into multiple suggestions.",
     "scoreContext is the validated result of the immediately preceding independent resume.score request. Use it as read-only context to prioritize suggestions and avoid contradicting that assessment.",
     "Assign every suggestion a positive integer scoreGain from 1 to 100 that represents its relative recruiter impact. The server will proportionally normalize these weights so the complete batch covers the gap from scoreContext.total to 100.",
@@ -1775,6 +1783,8 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
   ].join(" "),
   "resume.chat": [
     "Task: continue an editing conversation about the supplied current resume. The conversation.latestUserMessage is the user's current request; use the summary, recent messages, confirmed facts, recent changes, resume sections, and claims as context.",
+    RESUME_AI_EDITOR_BRIEF,
+    "Use layoutGoal when the user asks about length, formatting, prioritization, or visual quality. Treat one page as the preferred outcome, but explain when preserving material evidence makes a second page more honest and readable.",
     "Reply directly and specifically in the resume locale. Explain what you understood, answer questions about the resume, ask one precise clarification only when a missing fact blocks the requested edit, and never use generic resume-advice boilerplate.",
     "Return a concise updated summary that preserves durable user preferences, unresolved questions, confirmed facts, and important editing decisions from the previous summary and this turn. Do not copy the whole transcript.",
     "confirmedFacts may contain only exact verbatim substrings of latestUserMessage that are affirmative first-person facts supplied by the user. Do not treat hypotheticals, examples, questions, negations, or instructions to omit content as facts.",

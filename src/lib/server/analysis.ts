@@ -378,6 +378,7 @@ export async function analyzeParsedResume(
     originalPdfBase64?: string;
     documentCapabilityVersions?: Record<string, string>;
     requireAi?: boolean;
+    analysisSource?: "ai" | "demo-template";
   } = {},
 ): Promise<AnalysisBundle> {
   const startedAt = performance.now();
@@ -420,9 +421,12 @@ export async function analyzeParsedResume(
   // Provider gateways commonly enforce token budgets across concurrent requests.
   // Keep the two large structured completions serial so one analysis cannot
   // reject both enhancements at once while the local ATS audit runs in parallel.
-  const invokeResumeCapability = options.requireAi
-    ? invokeRequiredAiCapability
-    : invokeCapability;
+  const invokeResumeCapability =
+    options.analysisSource === "demo-template"
+      ? invokeBaselineCapability
+      : options.requireAi
+        ? invokeRequiredAiCapability
+        : invokeCapability;
   const scoreResult = await invokeResumeCapability(
     "resume.score",
     { resume, claims },
@@ -453,6 +457,7 @@ export async function analyzeParsedResume(
     stories: storyResults.map((result) => result.data),
     originalPdfBase64: options.originalPdfBase64,
     processing: {
+      analysisSource: options.analysisSource ?? "ai",
       extractionMode: parsed.extractionMode,
       durationMs: performance.now() - startedAt,
       capabilityVersions: {

@@ -16,7 +16,14 @@
 #set page(
   paper: "a4",
   margin: (x: 14mm, top: 10mm, bottom: 10mm),
-  footer: context align(right, text(size: 7pt, fill: muted)[#counter(page).display("1")]),
+  footer: context {
+    let total = counter(page).final().at(0)
+    if total > 1 {
+      align(right, text(size: 7pt, fill: muted)[
+        #counter(page).display("1") / #total
+      ])
+    }
+  },
 )
 #set text(
   font: ("Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", "Arial"),

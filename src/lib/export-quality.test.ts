@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   exportBlockingCheckIds,
   normalizeExportCheckSeverity,
+  onePagePreferenceCheck,
   qualityThresholdCheck,
 } from "./export-quality";
 
@@ -47,5 +48,19 @@ describe("export quality policy", () => {
       "overlap",
       "sha256",
     ]);
+  });
+
+  it("treats one page as the preferred non-blocking length target", () => {
+    expect(onePagePreferenceCheck(1)).toEqual({
+      id: "pagination",
+      label: "页面长度",
+      status: "pass",
+      details: "当前为 1 页，符合一页优先目标。",
+    });
+
+    const longerResume = onePagePreferenceCheck(2);
+    expect(longerResume.status).toBe("warn");
+    expect(longerResume.details).toContain("未达到一页优先目标");
+    expect(exportBlockingCheckIds([longerResume])).toEqual([]);
   });
 });

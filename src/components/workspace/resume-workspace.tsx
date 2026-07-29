@@ -15,6 +15,7 @@ import { ResumeChat } from "./resume-chat";
 import { ResumeContentEditor } from "./resume-content-editor";
 import { TemplateExport } from "./template-export";
 import { useAppStore, type ResumePanel } from "@/lib/client/store";
+import { isDemoTemplateAnalysis } from "@/lib/client/ai-analysis";
 
 export function ResumeWorkspace() {
   const analysis = useAppStore((state) => state.analysis)!;
@@ -36,6 +37,7 @@ export function ResumeWorkspace() {
     ? `${jobVariant!.id}:${jobVariant!.revision}`
     : `${analysis.resume.id}:${analysis.resume.revision}`;
   const aiStatus = analysis.processing.aiAnalysis?.status ?? "failed";
+  const demoTemplate = isDemoTemplateAnalysis(analysis);
   const aiFresh =
     aiStatus === "fresh" &&
     analysis.processing.aiAnalysis?.analyzedRevision ===
@@ -61,7 +63,7 @@ export function ResumeWorkspace() {
   }
 
   return (
-    <div className="absolute inset-0 grid min-h-0 grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)] xl:grid-cols-[minmax(480px,1.25fr)_minmax(390px,0.75fr)]">
+    <div className="absolute inset-0 grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(400px,34vw)] xl:grid-cols-[minmax(0,1fr)_minmax(440px,30vw)]">
       <h1 data-module-heading tabIndex={-1} className="sr-only">
         简历优化
       </h1>
@@ -110,7 +112,7 @@ export function ResumeWorkspace() {
             ) : null}
           </div>
         ) : null}
-        {aiFresh ? (
+        {aiFresh || demoTemplate ? (
           <ScorePanel
             scorecard={analysis.scorecard}
             atsAudit={analysis.atsAudit}
@@ -136,40 +138,41 @@ export function ResumeWorkspace() {
             ) : null}
           </div>
         )}
-        <div className="shrink-0 border-b border-line px-4 py-3">
-          <ResumeContentEditor />
-        </div>
         <Tabs.Root
           value={resumePanel}
           onValueChange={changePanel}
           className="flex min-h-0 flex-1 flex-col"
         >
-          <Tabs.List
-            className="mx-4 my-3 grid h-10 shrink-0 grid-cols-3 rounded-[8px] bg-[#eff0f2] p-1"
-            aria-label="简历审阅视图"
-          >
-            <Tabs.Trigger
-              value="suggestions"
-              className="flex min-w-0 items-center justify-center gap-2 rounded-[6px] px-3 text-sm font-medium text-muted transition-colors hover:text-ink data-[state=active]:bg-white data-[state=active]:text-ink data-[state=active]:shadow-sm"
+          <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
+            <Tabs.List
+              className="grid h-10 min-w-0 flex-1 grid-cols-3 rounded-[8px] bg-[#eff0f2] p-1"
+              aria-label="简历审阅视图"
             >
-              <FilePenLine aria-hidden="true" size={17} />
-              优化
-            </Tabs.Trigger>
-            <Tabs.Trigger
-              value="chat"
-              className="flex min-w-0 items-center justify-center gap-1.5 rounded-[6px] px-2 text-sm font-medium text-muted transition-colors hover:text-ink data-[state=active]:bg-white data-[state=active]:text-ink data-[state=active]:shadow-sm"
-            >
-              <MessagesSquare aria-hidden="true" size={16} />
-              问 AI
-            </Tabs.Trigger>
-            <Tabs.Trigger
-              value="templates"
-              className="flex min-w-0 items-center justify-center gap-2 rounded-[6px] px-3 text-sm font-medium text-muted transition-colors hover:text-ink data-[state=active]:bg-white data-[state=active]:text-ink data-[state=active]:shadow-sm"
-            >
-              <LayoutTemplate aria-hidden="true" size={17} />
-              预览下载
-            </Tabs.Trigger>
-          </Tabs.List>
+              <Tabs.Trigger
+                value="suggestions"
+                className="flex min-w-0 items-center justify-center gap-1.5 rounded-[6px] px-2 text-sm font-medium text-muted transition-colors hover:text-ink data-[state=active]:bg-white data-[state=active]:text-ink data-[state=active]:shadow-sm"
+              >
+                <FilePenLine aria-hidden="true" size={16} />
+                建议
+              </Tabs.Trigger>
+              <Tabs.Trigger
+                value="chat"
+                disabled={demoTemplate}
+                className="flex min-w-0 items-center justify-center gap-1.5 rounded-[6px] px-2 text-sm font-medium text-muted transition-colors hover:text-ink disabled:cursor-not-allowed disabled:opacity-45 data-[state=active]:bg-white data-[state=active]:text-ink data-[state=active]:shadow-sm"
+              >
+                <MessagesSquare aria-hidden="true" size={16} />
+                问 AI
+              </Tabs.Trigger>
+              <Tabs.Trigger
+                value="templates"
+                className="flex min-w-0 items-center justify-center gap-1.5 rounded-[6px] px-2 text-sm font-medium text-muted transition-colors hover:text-ink data-[state=active]:bg-white data-[state=active]:text-ink data-[state=active]:shadow-sm"
+              >
+                <LayoutTemplate aria-hidden="true" size={16} />
+                导出
+              </Tabs.Trigger>
+            </Tabs.List>
+            {demoTemplate ? null : <ResumeContentEditor />}
+          </div>
           <Tabs.Content
             value="suggestions"
             {...(mountedPanels.has("suggestions")

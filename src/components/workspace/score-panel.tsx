@@ -45,28 +45,53 @@ export function ScorePanel({
   );
   return (
     <section
-      className="border-b border-line px-5 py-4"
+      className="border-b border-line px-4 py-3"
       aria-labelledby="score-heading"
     >
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p id="score-heading" className="text-xs font-medium text-muted">
-            {showsChecklistProgress ? "本次优化完成度" : "简历内容评分"}
+      <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-baseline gap-1 border-r border-line pr-3">
+          <strong className="text-[28px] font-semibold tabular-nums leading-none">
+            {Math.round(scorecard.total)}
+          </strong>
+          <span className="text-xs text-muted">分</span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <p id="score-heading" className="text-sm font-semibold text-ink">
+            {showsChecklistProgress ? "优化完成" : "简历评估"}
           </p>
-          <div className="mt-1 flex items-baseline gap-1">
-            <strong className="text-[30px] font-semibold tabular-nums leading-none">
-              {Math.round(scorecard.total)}
-            </strong>
-            <span className="text-sm text-muted">/ 100</span>
-          </div>
+          {atsAudit ? (
+            <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
+              {atsAudit.passed ? (
+                <CheckCircle2
+                  aria-hidden="true"
+                  size={14}
+                  className="shrink-0 text-success"
+                />
+              ) : (
+                <CircleAlert
+                  aria-hidden="true"
+                  size={14}
+                  className="shrink-0 text-danger"
+                />
+              )}
+              <span className="truncate">
+                ATS {Math.round(atsAudit.score)} 分 ·{" "}
+                {atsAudit.passed ? "已通过" : "需处理"}
+              </span>
+            </p>
+          ) : (
+            <p className="mt-0.5 truncate text-xs text-muted">
+              旧记录暂无 ATS 审计
+            </p>
+          )}
         </div>
         <button
           type="button"
           aria-expanded={expanded}
           onClick={() => setExpanded((value) => !value)}
-          className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-sm font-medium text-brand hover:bg-[#edf5ff]"
+          className="flex min-h-10 shrink-0 items-center gap-1 rounded-[8px] px-2.5 text-xs font-medium text-muted hover:bg-[#f0f1f3] hover:text-ink"
         >
-          评分依据
+          诊断
           <ChevronDown
             aria-hidden="true"
             size={16}
@@ -75,74 +100,8 @@ export function ScorePanel({
         </button>
       </div>
 
-      {atsAudit ? (
-        <div className="mt-3 flex min-h-10 items-center justify-between gap-3 border-y border-line py-2 text-xs">
-          <div className="flex items-center gap-2">
-            {atsAudit.passed ? (
-              <CheckCircle2
-                aria-hidden="true"
-                size={17}
-                className="shrink-0 text-success"
-              />
-            ) : (
-              <CircleAlert
-                aria-hidden="true"
-                size={17}
-                className="shrink-0 text-danger"
-              />
-            )}
-            <span className="font-medium text-ink">ATS 专项审计</span>
-            <span className="tabular-nums text-muted">
-              {Math.round(atsAudit.score)} / 100
-            </span>
-          </div>
-          <span
-            className={`font-medium ${atsAudit.passed ? "text-success" : "text-danger"}`}
-          >
-            {atsAudit.passed ? "通过" : "需处理"}
-          </span>
-        </div>
-      ) : (
-        <p className="mt-3 border-y border-line py-2 text-xs text-muted">
-          ATS 专项审计：旧记录未包含此结果
-        </p>
-      )}
-
-      <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3">
-        {scorecard.dimensions.map((dimension) => {
-          const percent = Math.round(
-            (dimension.score / dimension.maxScore) * 100,
-          );
-          return (
-            <div key={dimension.id}>
-              <div className="flex items-center justify-between gap-3 text-xs">
-                <span className="font-medium text-muted">
-                  {dimension.label}
-                </span>
-                <span className="tabular-nums text-ink">
-                  {Math.round(dimension.score)}/{dimension.maxScore}
-                </span>
-              </div>
-              <div
-                role="meter"
-                aria-label={`${dimension.label} ${Math.round(dimension.score)} 分，满分 ${dimension.maxScore} 分`}
-                aria-valuenow={dimension.score}
-                aria-valuemin={0}
-                aria-valuemax={dimension.maxScore}
-                className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[#e8eaed]"
-              >
-                <div
-                  className="h-full rounded-full bg-brand"
-                  style={{ width: `${percent}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
       {expanded ? (
-        <div className="mt-4 max-h-60 overflow-y-auto rounded-[8px] bg-[#f6f7f9] p-3 text-xs leading-5 text-muted">
+        <div className="mt-3 max-h-72 overflow-y-auto border-t border-line pt-3 text-xs leading-5 text-muted">
           <p className="text-ink">{scorecard.summary}</p>
           <div className="mt-3 space-y-3">
             {atsAudit ? (

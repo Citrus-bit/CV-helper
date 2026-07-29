@@ -471,6 +471,29 @@ describe("resume-derived state revisions", () => {
     expect(useAppStore.getState().renders).toEqual({});
   });
 
+  it("selects the layout that the server actually verified", () => {
+    useAppStore.getState().setAnalysis(analysisFixture(2));
+    useAppStore.setState({ selectedTemplate: "compact" });
+    const verifiedRender = {
+      template: "minimal",
+      sha256: "c".repeat(64),
+      report: {
+        resumeId: "resume-1",
+        resumeRevision: 2,
+        template: "minimal",
+        artifactSha256: "c".repeat(64),
+      },
+    } as RenderResponse;
+
+    useAppStore.getState().setRender(verifiedRender);
+
+    expect(useAppStore.getState()).toMatchObject({
+      selectedTemplate: "minimal",
+      renders: { minimal: verifiedRender },
+      previewMode: "current",
+    });
+  });
+
   it("keeps current derived results when a decision does not change the AST", () => {
     useAppStore.getState().setAnalysis(analysisFixture());
     seedDerived(0);

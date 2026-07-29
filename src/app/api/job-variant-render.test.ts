@@ -112,7 +112,7 @@ describe("job variant PDF rendering", () => {
     expect(variantRender.report).toMatchObject({
       resumeId: "resume-algorithm-variant",
       resumeRevision: 0,
-      template: "professional",
+      template: variantRender.template,
     });
     expect(Buffer.from(variantRender.pdfBase64, "base64").subarray(0, 5).toString("ascii")).toBe(
       "%PDF-",

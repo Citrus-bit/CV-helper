@@ -28,6 +28,7 @@ export const AnalysisBundleSchema = z.object({
   stories: z.array(InterviewStorySchema),
   originalPdfBase64: z.string().min(1).optional(),
   processing: z.object({
+    analysisSource: z.enum(["ai", "demo-template"]).optional(),
     extractionMode: z.enum(["native", "hybrid", "ocr"]),
     durationMs: z.number().nonnegative(),
     capabilityVersions: z.record(z.string(), z.string()),

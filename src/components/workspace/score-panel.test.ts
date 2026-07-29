@@ -88,7 +88,7 @@ afterEach(cleanup);
 describe("ScorePanel", () => {
   it("shows every deduction and available evidence without growing unbounded", () => {
     render(createElement(ScorePanel, { scorecard }));
-    fireEvent.click(screen.getByRole("button", { name: /评分依据/ }));
+    fireEvent.click(screen.getByRole("button", { name: /诊断/ }));
 
     expect(screen.getByText("扣分：缺少影响范围")).toBeInTheDocument();
     expect(screen.getByText("扣分：结果缺少外部佐证")).toBeInTheDocument();
@@ -97,7 +97,7 @@ describe("ScorePanel", () => {
       screen.getByLabelText("成果与影响力评分依据").parentElement,
     ).toHaveClass("space-y-3");
     expect(screen.getByText("优先补强成果证据。").parentElement).toHaveClass(
-      "max-h-60",
+      "max-h-72",
       "overflow-y-auto",
     );
   });
@@ -105,9 +105,8 @@ describe("ScorePanel", () => {
   it("shows ATS status, every localized severity, and linked source excerpts", () => {
     render(createElement(ScorePanel, { scorecard, atsAudit, sourceBlocks }));
 
-    expect(screen.getByText("63 / 100")).toBeInTheDocument();
-    expect(screen.getByText("需处理")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /评分依据/ }));
+    expect(screen.getByText("ATS 63 分 · 需处理")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /诊断/ }));
 
     expect(
       screen.getByText(
@@ -140,7 +139,7 @@ describe("ScorePanel", () => {
     render(createElement(ScorePanel, { scorecard }));
 
     expect(
-      screen.getByText("ATS 专项审计：旧记录未包含此结果"),
+      screen.getByText("旧记录暂无 ATS 审计"),
     ).toBeInTheDocument();
   });
 });

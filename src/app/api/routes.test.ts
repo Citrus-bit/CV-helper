@@ -1062,7 +1062,7 @@ describe.sequential("API routes", () => {
     );
   });
 
-  it("serves a demo with a real original PDF", async () => {
+  it("serves an isolated local-template demo with a real original PDF", async () => {
     const response = await demo(new Request("http://localhost/api/demo"));
     expect(response.status).toBe(200);
     const result = AnalysisBundleSchema.parse(await response.json());
@@ -1072,10 +1072,12 @@ describe.sequential("API routes", () => {
         .toString("ascii"),
     ).toBe("%PDF-");
     expect(result).not.toHaveProperty("pagePreviews");
+    expect(result.processing.analysisSource).toBe("demo-template");
     expect(result.processing.aiAnalysis).toMatchObject({
-      status: "fresh",
-      scoreSourceVersion: "resume.score@2.0.0",
-      suggestionSourceVersion: "resume.suggest@2.0.0",
+      status: "failed",
+      scoreSourceVersion: "resume.score@1.0.0",
+      suggestionSourceVersion: "resume.suggest@1.0.0",
     });
+    expect(requiredAiMocks.invokeRequiredAiCapability).not.toHaveBeenCalled();
   });
 });

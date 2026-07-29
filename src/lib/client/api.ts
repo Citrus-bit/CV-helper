@@ -41,6 +41,7 @@ import {
 } from "./runtime-resources";
 import {
   hasFreshRequiredAiAnalysis,
+  isDemoTemplateAnalysis,
   isRequiredAiSource,
 } from "./ai-analysis";
 
@@ -203,9 +204,16 @@ export async function loadDemoAnalysis(
     signal,
   });
   if (!response.ok) throw await apiError(response);
-  return assertFreshAiAnalysis(
-    AnalysisBundleSchema.parse(await response.json()),
-  );
+  const analysis = AnalysisBundleSchema.parse(await response.json());
+  if (!isDemoTemplateAnalysis(analysis)) {
+    throw new ApiError(
+      "体验示例来源校验失败，请刷新后重试。",
+      502,
+      "INVALID_DEMO_ANALYSIS",
+      true,
+    );
+  }
+  return analysis;
 }
 
 export async function matchJob(input: {

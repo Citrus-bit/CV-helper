@@ -22,6 +22,7 @@ import {
   type SuggestionKind,
 } from "@/lib/domain";
 import { useAppStore } from "@/lib/client/store";
+import { isDemoTemplateAnalysis } from "@/lib/client/ai-analysis";
 import { generateEvidenceRewrite, renderResume } from "@/lib/client/api";
 import { safeAiRewriteSuggestions } from "@/lib/client/suggestions";
 import { resumeTextSafetyError } from "@/lib/resume-text-safety";
@@ -126,6 +127,8 @@ export function suggestionStatusMessage(suggestion: Suggestion) {
 }
 
 function EvidenceDialog({ suggestion }: { suggestion: Suggestion }) {
+  const analysis = useAppStore((state) => state.analysis);
+  const demoTemplate = isDemoTemplateAnalysis(analysis);
   const claims = useAppStore((state) => state.analysis?.claims ?? []);
   const resume = useAppStore((state) => state.analysis?.resume);
   const stageEvidenceRewrite = useAppStore(
@@ -142,7 +145,14 @@ function EvidenceDialog({ suggestion }: { suggestion: Suggestion }) {
   );
 
   async function generateRewrite() {
-    if (!resume || !validAnswer || generating) return;
+    if (
+      !resume ||
+      !validAnswer ||
+      generating ||
+      isDemoTemplateAnalysis(analysis)
+    ) {
+      return;
+    }
     setGenerating(true);
     setGenerationError("");
     try {
@@ -188,6 +198,7 @@ function EvidenceDialog({ suggestion }: { suggestion: Suggestion }) {
       <Dialog.Trigger asChild>
         <button
           type="button"
+          disabled={demoTemplate}
           className="inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-warning px-4 text-sm font-medium text-white hover:bg-[#7d5400]"
         >
           <ShieldAlert aria-hidden="true" size={17} />
@@ -248,7 +259,7 @@ function EvidenceDialog({ suggestion }: { suggestion: Suggestion }) {
             </Dialog.Close>
             <button
               type="button"
-              disabled={!resume || !validAnswer || generating}
+              disabled={!resume || !validAnswer || generating || demoTemplate}
               onClick={() => void generateRewrite()}
               className="inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white hover:bg-[#075bbf] disabled:opacity-40"
             >
@@ -294,6 +305,7 @@ export function SuggestionReview() {
   const meta = suggestion ? kindMeta[suggestion.kind] : null;
   const Icon = meta?.icon ?? Pencil;
   const aiStatus = analysis.processing.aiAnalysis?.status ?? "failed";
+  const demoTemplate = isDemoTemplateAnalysis(analysis);
   const reviewingStaleBatch =
     aiStatus === "stale" && analysis.suggestions.length > 0;
   const automaticSuggestions = useMemo(
@@ -324,7 +336,7 @@ export function SuggestionReview() {
     return `第 ${first.pageIndex + 1} 页 · ${extractionLabel}`;
   }, [sourceBlocks]);
 
-  if (aiStatus !== "fresh" && !reviewingStaleBatch) {
+  if (!demoTemplate && aiStatus !== "fresh" && !reviewingStaleBatch) {
     return (
       <div className="p-6 text-sm leading-6 text-muted" role="status">
         <p>
@@ -496,13 +508,6 @@ export function SuggestionReview() {
           </p>
         ) : null}
       </div>
-
-      <p
-        className="border-b border-line bg-[#f3f8ff] px-5 py-2 text-xs leading-5 text-[#174f8f]"
-        role="status"
-      >
-        可直接改写的内容支持一键应用；涉及新增数字、职责或结果时，仍需要你补充真实信息。修改后 AI 会重新检查当前版本。
-      </p>
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
         <div className="flex flex-wrap items-center gap-2">

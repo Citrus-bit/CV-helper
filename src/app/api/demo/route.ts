@@ -1,5 +1,4 @@
 import { analyzeParsedResume, DEMO_RESUME_AST } from "@/lib/server/analysis";
-import { enforceAiRateLimit } from "@/lib/server/ai-rate-limit";
 import { toRenderableResume } from "@/lib/server/export";
 import { jsonResponse, routeErrorResponse } from "@/lib/server/http";
 import { parsePdf } from "@/lib/server/pdf";
@@ -16,13 +15,12 @@ async function buildDemo(signal?: AbortSignal) {
     resumeId: "demo-product-manager-v1",
     signal,
     originalPdfBase64: pdf.toString("base64"),
-    requireAi: true,
+    analysisSource: "demo-template",
   });
 }
 
 export async function GET(request: Request) {
   try {
-    await enforceAiRateLimit(request, "analysis");
     return jsonResponse(await buildDemo(request.signal));
   } catch (error) {
     return routeErrorResponse(error);

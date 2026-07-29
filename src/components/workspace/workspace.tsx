@@ -13,6 +13,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { useEffect, useRef, useState } from "react";
 import { useAppStore, type WorkspaceModule } from "@/lib/client/store";
+import { isDemoTemplateAnalysis } from "@/lib/client/ai-analysis";
 import {
   EstimatedProgressText,
   estimatedDurations,
@@ -83,6 +84,7 @@ export function Workspace() {
   const pendingSuggestionCount = analysis.suggestions.filter(
     (suggestion) => suggestion.status === "pending",
   ).length;
+  const demoTemplate = isDemoTemplateAnalysis(analysis);
   const aiReady = Boolean(
     analysis.processing.aiAnalysis?.status === "fresh" &&
       analysis.processing.aiAnalysis.analyzedRevision ===
@@ -154,8 +156,12 @@ export function Workspace() {
               <Tooltip.Trigger asChild>
                 <button
                   type="button"
-                  onClick={() => void goHome()}
-                  aria-label="返回首页并保存当前分析"
+                  onClick={() =>
+                    void (demoTemplate ? goHomeWithoutArchive() : goHome())
+                  }
+                  aria-label={
+                    demoTemplate ? "退出体验示例" : "返回首页并保存当前分析"
+                  }
                   disabled={homeNavigationPending}
                   className="grid size-11 shrink-0 place-items-center rounded-[8px] text-muted transition-colors hover:bg-[#f0f1f3] hover:text-ink"
                 >
@@ -168,7 +174,7 @@ export function Workspace() {
                   sideOffset={6}
                   className="z-50 rounded-[6px] bg-ink px-2.5 py-1.5 text-xs text-white shadow-panel"
                 >
-                  返回首页（自动保存）
+                  {demoTemplate ? "退出体验示例" : "返回首页（自动保存）"}
                 </Tooltip.Content>
               </Tooltip.Portal>
             </Tooltip.Root>
@@ -177,14 +183,15 @@ export function Workspace() {
                 {analysis.resume.originalFileName}
               </p>
               <p className="text-xs text-muted">
-                版本 {analysis.resume.revision + 1} ·{" "}
-                {analysis.resume.pageCount} 页
+                {demoTemplate
+                  ? `本地模板示例 · ${analysis.resume.pageCount} 页`
+                  : `版本 ${analysis.resume.revision + 1} · ${analysis.resume.pageCount} 页`}
               </p>
             </div>
           </div>
           <Navigation
             pendingSuggestionCount={pendingSuggestionCount}
-            aiReady={aiReady}
+            aiReady={aiReady && !demoTemplate}
           />
           <div className="flex items-center justify-end gap-1">
             <button
