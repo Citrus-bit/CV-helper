@@ -15,7 +15,7 @@
 #set document(title: value(profile, "name"), author: value(profile, "name"))
 #set page(
   paper: "a4",
-  margin: (x: 14mm, top: 10mm, bottom: 10mm),
+  margin: (x: 11mm, top: 8mm, bottom: 8mm),
   footer: context {
     let total = counter(page).final().at(0)
     if total > 1 {
@@ -29,67 +29,67 @@
   font: ("Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", "Arial"),
   fallback: true,
   lang: "zh",
-  size: 8.4pt,
+  size: 7.8pt,
   fill: ink,
 )
-#set par(justify: false, leading: 0.4em)
+#set par(justify: false, leading: 0.25em)
 
 #grid(
   columns: (1fr, auto),
   gutter: 12pt,
   align: bottom,
   [
-    #text(size: 20pt, weight: "bold")[#value(profile, "name")]
+    #text(size: 17pt, weight: "bold")[#value(profile, "name")]
     #if present(value(profile, "headline")) [
       #h(7pt)
-      #text(size: 9.3pt, weight: "medium", fill: accent)[#value(profile, "headline")]
+      #text(size: 8.6pt, weight: "medium", fill: accent)[#value(profile, "headline")]
     ]
   ],
   align(right)[
-    #text(size: 7.6pt, fill: muted)[#contacts.join("  |  ")]
+    #text(size: 7.2pt, fill: muted)[#contacts.join("  |  ")]
   ],
 )
-#v(5pt)
-#line(length: 100%, stroke: 1pt + accent)
+#v(3pt)
+#line(length: 100%, stroke: 0.8pt + accent)
 
 #if present(value(profile, "summary")) [
-  #v(5pt)
-  #text(size: 8.2pt)[#value(profile, "summary")]
+  #v(3pt)
+  #text(size: 7.6pt)[#value(profile, "summary")]
 ]
 
 #for section in sections [
-  #v(6pt)
+  #v(4pt)
   #block(sticky: true)[
     #grid(
-      columns: (24mm, 1fr),
-      gutter: 5pt,
+      columns: (20mm, 1fr),
+      gutter: 4pt,
       align: horizon,
-      text(size: 9.4pt, weight: "bold", fill: accent)[#value(section, "title")],
+      text(size: 8.6pt, weight: "bold", fill: accent)[#value(section, "title")],
       line(length: 100%, stroke: 0.5pt + rgb("#C7CCCF")),
     )
   ]
   #for item in section.at("items", default: ()) [
-    #v(3pt)
+    #v(1.5pt)
     #block(sticky: true)[
       #grid(
         columns: (1fr, auto),
-        gutter: 8pt,
+        gutter: 5pt,
         [
-          #text(size: 8.8pt, weight: "semibold")[#value(item, "title")]
+          #text(size: 8pt, weight: "semibold")[#value(item, "title")]
           #if present(value(item, "subtitle")) [
-            #h(4pt)
-            #text(size: 7.8pt, fill: muted)[#value(item, "subtitle")]
+            #h(3pt)
+            #text(size: 7.2pt, fill: muted)[#value(item, "subtitle")]
           ]
         ],
-        text(size: 7.5pt, fill: muted)[#value(item, "date")],
+        text(size: 7.1pt, fill: muted)[#value(item, "date")],
       )
     ]
     #for bullet in item.at("bullets", default: ()) [
       #if present(bullet) [
-        #v(1.3pt)
+        #v(0.4pt)
         #grid(
-          columns: (6pt, 1fr),
-          gutter: 2pt,
+          columns: (5pt, 1fr),
+          gutter: 1pt,
           align: top,
           text(size: 7pt, fill: accent)[•],
           [#bullet],

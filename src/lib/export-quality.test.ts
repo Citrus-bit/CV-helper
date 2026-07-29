@@ -50,17 +50,17 @@ describe("export quality policy", () => {
     ]);
   });
 
-  it("requires a single page for Compact exports", () => {
+  it("keeps a multi-page Compact export downloadable with a clear warning", () => {
     expect(onePagePreferenceCheck(1)).toEqual({
       id: "pagination",
-      label: "单页长度",
+      label: "页面长度",
       status: "pass",
-      details: "当前为 1 页，符合 Compact 单页导出要求。",
+      details: "当前为 1 页，符合 Compact 单页目标。",
     });
 
     const longerResume = onePagePreferenceCheck(2);
-    expect(longerResume.status).toBe("fail");
-    expect(longerResume.details).toContain("未达到 Compact 单页导出要求");
-    expect(exportBlockingCheckIds([longerResume])).toEqual(["pagination"]);
+    expect(longerResume.status).toBe("warn");
+    expect(longerResume.details).toContain("不影响下载");
+    expect(exportBlockingCheckIds([longerResume])).toEqual([]);
   });
 });
