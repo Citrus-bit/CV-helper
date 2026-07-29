@@ -70,6 +70,14 @@ output/
 tmp/
 uploads/
 recordings/
+
+# Local industry/resume rewrite corpora (keep private)
+docs/行业黑话语料_游戏运营发行(1).json
+docs/行业黑话语料-云商务GTM.json
+docs/游戏音频商务拓展岗简历行业化改写指南(1).json
+docs/运营岗简历经历行业化改写指南(1).md
+docs/运营与产品运营简历修改指南(1).md
+docs/Global_Communications_Resume_Guide(1).json
 *.pdf
 *.wav
 *.mp3

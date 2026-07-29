@@ -50,17 +50,17 @@ describe("export quality policy", () => {
     ]);
   });
 
-  it("treats one page as the preferred non-blocking length target", () => {
+  it("requires a single page for Compact exports", () => {
     expect(onePagePreferenceCheck(1)).toEqual({
       id: "pagination",
-      label: "页面长度",
+      label: "单页长度",
       status: "pass",
-      details: "当前为 1 页，符合一页优先目标。",
+      details: "当前为 1 页，符合 Compact 单页导出要求。",
     });
 
     const longerResume = onePagePreferenceCheck(2);
-    expect(longerResume.status).toBe("warn");
-    expect(longerResume.details).toContain("未达到一页优先目标");
-    expect(exportBlockingCheckIds([longerResume])).toEqual([]);
+    expect(longerResume.status).toBe("fail");
+    expect(longerResume.details).toContain("未达到 Compact 单页导出要求");
+    expect(exportBlockingCheckIds([longerResume])).toEqual(["pagination"]);
   });
 });

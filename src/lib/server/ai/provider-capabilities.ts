@@ -15,6 +15,8 @@ import {
   JdParseOutputSchema,
   JobMatchInputSchema,
   JobMatchOutputSchema,
+  LayoutRecommendInputSchema,
+  LayoutRecommendOutputSchema,
   ResumeScoreInputSchema,
   ResumeScoreOutputSchema,
   ResumeChatInputSchema,
@@ -486,6 +488,49 @@ function projectInput<K extends ProviderGatewayCapabilityId>(
       return {
         text: sanitize(rewriteInput.text),
         preserveTerms: rewriteInput.preserveTerms.map(sanitize),
+      };
+    }
+    case "layout.recommend": {
+      const layoutInput = input as GatewayInputMap["layout.recommend"];
+      const textValues = [
+        layoutInput.ast.contact.name,
+        layoutInput.ast.contact.headline,
+        layoutInput.ast.summary,
+        ...layoutInput.ast.sections.flatMap((section) => [
+          section.title,
+          section.text,
+          ...section.entries.flatMap((entry) => [
+            entry.title,
+            entry.subtitle,
+            entry.organization,
+            entry.summary,
+            ...entry.bullets,
+          ]),
+        ]),
+      ].filter((value): value is string => Boolean(value));
+      const entries = layoutInput.ast.sections.flatMap(
+        (section) => section.entries,
+      );
+      return {
+        locale: layoutInput.ast.locale,
+        targetPages: layoutInput.targetPages,
+        preferredTemplate: layoutInput.preferredTemplate,
+        contentMetrics: {
+          characters: textValues.reduce((total, value) => total + value.length, 0),
+          sections: layoutInput.ast.sections.length,
+          entries: entries.length,
+          bullets: entries.reduce(
+            (total, entry) => total + entry.bullets.length,
+            0,
+          ),
+          longestBulletCharacters: entries.reduce(
+            (longest, entry) =>
+              Math.max(longest, ...entry.bullets.map((bullet) => bullet.length)),
+            0,
+          ),
+        },
+        failedAudit: layoutInput.failedAudit,
+        availableTemplates: ["professional", "minimal", "compact"],
       };
     }
     case "interview.plan": {
@@ -1295,6 +1340,29 @@ function validateOutput<K extends ProviderGatewayCapabilityId>(
     throw error;
   }
   switch (id) {
+    case "layout.recommend": {
+      const layoutInput = input as GatewayInputMap["layout.recommend"];
+      const recommendation = output as GatewayOutputMap["layout.recommend"];
+      const rankedTemplates = recommendation.rankings.map(
+        (ranking) => ranking.template,
+      );
+      const expectedTemplates = ["professional", "minimal", "compact"] as const;
+      const uniqueTemplates = new Set(rankedTemplates);
+      const untriedTemplates = expectedTemplates.filter(
+        (template) =>
+          !layoutInput.failedAudit?.triedTemplates.includes(template),
+      );
+      if (
+        uniqueTemplates.size !== expectedTemplates.length ||
+        expectedTemplates.some((template) => !uniqueTemplates.has(template)) ||
+        recommendation.recommendedTemplate !== rankedTemplates[0] ||
+        (untriedTemplates.length > 0 &&
+          !untriedTemplates.includes(recommendation.recommendedTemplate))
+      ) {
+        throw new ProviderGatewayError("INVALID_RESPONSE");
+      }
+      return recommendation as GatewayOutputMap[K];
+    }
     case "resume.score": {
       const scoreInput = input as GatewayInputMap["resume.score"];
       const score = output as GatewayOutputMap["resume.score"];
@@ -1797,6 +1865,12 @@ export const providerInstructions: Record<ProviderGatewayCapabilityId, string> =
   "job.match": "Map every supplied requirement exactly once. Decide met, partial, gap, or conflict from the supplied requirement and claims. For each requirement, claimIds must be a subset of that requirement eligibleClaimIds: cite at most three, cite none and use gap when the list is empty or no eligible claim supports coverage, and use conflict only when the cited eligible claim status is conflicting. Never cite a claim based only on broad semantic similarity without the server-computed lexical evidence. Leave evidenceAssetIds empty. Write a concise requirement-specific explanation for every mapping and a concrete requirement-specific suggestedAction when useful. Do not reuse stock explanations across unrelated requirements, do not invent facts or numbers, and do not mention evidence outside the cited claims.",
   "copy.rewrite.zh": "Rewrite the supplied Chinese text as one concise, coherent resume paragraph in professional language. When the input contains multiple fragments, combine them and remove conversational filler while preserving every explicit fact. Preserve every preserveTerms value exactly, keep all numbers unchanged, and do not add achievements, scope, credentials, rankings, or any other facts. Use export-safe plain text only: no placeholder squares, replacement characters, private-use glyphs, emoji, or invisible control and formatting characters. Set original to the supplied text and addedFacts to false.",
   "copy.rewrite.en": "Rewrite the supplied English text as one concise, coherent resume paragraph in professional language. When the input contains multiple fragments, combine them and remove conversational filler while preserving every explicit fact. Preserve every preserveTerms value exactly, keep all numbers unchanged, and do not add achievements, scope, credentials, rankings, or any other facts. Use export-safe plain text only: no placeholder squares, replacement characters, private-use glyphs, emoji, or invisible control and formatting characters. Set original to the supplied text and addedFacts to false.",
+  "layout.recommend": [
+    "Choose the next PDF layout after a failed deterministic export audit.",
+    "Use only the supplied anonymous contentMetrics, failedAudit, targetPages, and availableTemplates; never infer or output candidate facts or personal data.",
+    "Return all three available templates exactly once in rankings, ordered from most likely to resolve the blocking checks to least likely.",
+    "Set recommendedTemplate to rankings[0].template, keep reasons concise and specific to the supplied audit IDs, and do not claim that a layout passed because the server will independently render and audit it.",
+  ].join(" "),
   "interview.plan": [
     "Task: generate the final interview plan. The supplied referenceQuestions, role, skills, and jobRequirements are context only; never return a reference question as the final question.",
     "Create exactly questionCount newly worded questions in the supplied locale. Every final question must have a unique new id that is not any reference id, generated true, source interview.plan@2.0.0, and one to eight referenceQuestionIds chosen only from supplied reference question ids.",
@@ -1840,6 +1914,7 @@ const schemas = {
   "job.match": [JobMatchInputSchema, JobMatchOutputSchema],
   "copy.rewrite.zh": [CopyRewriteInputSchema, CopyRewriteOutputSchema],
   "copy.rewrite.en": [CopyRewriteInputSchema, CopyRewriteOutputSchema],
+  "layout.recommend": [LayoutRecommendInputSchema, LayoutRecommendOutputSchema],
   "interview.plan": [InterviewPlanInputSchema, InterviewPlanOutputSchema],
   "answer.evaluate": [AnswerEvaluateInputSchema, AnswerEvaluateOutputSchema],
   "answer.coach": [AnswerCoachInputSchema, AnswerCoachOutputSchema],

@@ -290,8 +290,25 @@ export const RenderResponseSchema = z
     astContentCovered: z.boolean(),
     hardGate: ExportHardGateSchema,
     report: ExportQualityReportSchema,
+    generation: z
+      .object({
+        attempts: z.union([z.literal(1), z.literal(2)]),
+        aiRepairApplied: z.boolean(),
+        aiRepairSourceVersion: z.string().min(1).optional(),
+      })
+      .optional(),
   })
   .superRefine((render, context) => {
+    if (
+      render.generation &&
+      render.generation.aiRepairApplied !==
+        Boolean(render.generation.aiRepairSourceVersion)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "AI repair state must match its source version.",
+      });
+    }
     if (render.sha256 !== render.report.artifactSha256) {
       context.addIssue({
         code: "custom",

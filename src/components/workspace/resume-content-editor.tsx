@@ -15,6 +15,7 @@ import { useMemo, useState } from "react";
 
 import { renderResume } from "@/lib/client/api";
 import { useAppStore } from "@/lib/client/store";
+import { FIXED_RESUME_TEMPLATE } from "@/lib/resume-layout";
 import {
   ResumeASTSchema,
   type ResumeAST,
@@ -589,7 +590,6 @@ function SectionEditor({
 
 export function ResumeContentEditor() {
   const analysis = useAppStore((state) => state.analysis)!;
-  const selectedTemplate = useAppStore((state) => state.selectedTemplate);
   const applyManualResumeAst = useAppStore(
     (state) => state.applyManualResumeAst,
   );
@@ -669,7 +669,7 @@ export function ResumeContentEditor() {
         resumeId: analysis.resume.id,
         revision,
         ast: normalized,
-        template: selectedTemplate,
+        template: FIXED_RESUME_TEMPLATE,
         sourcePageCount: analysis.resume.pageCount,
       });
       setRender(rendered);

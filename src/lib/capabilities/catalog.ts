@@ -28,7 +28,7 @@ const seeds: Record<CapabilityId, CatalogSeed> = {
   "copy.rewrite.zh": { name: "中文改写", description: "在不增加事实的前提下改善中文表达。", dataScopes: ["resume_ast"], timeoutMs: AI_CAPABILITY_TIMEOUT_MS },
   "copy.rewrite.en": { name: "英文改写", description: "在不增加事实的前提下改善英文表达。", dataScopes: ["resume_ast"], timeoutMs: AI_CAPABILITY_TIMEOUT_MS },
   "copy.consistency": { name: "文案一致性", description: "检查时态、标点和术语一致性。", dataScopes: ["resume_ast"] },
-  "layout.recommend": { name: "模板推荐", description: "根据内容密度推荐排版模板。", dataScopes: ["resume_ast"] },
+  "layout.recommend": { name: "模板推荐与修复", description: "根据内容密度和导出失败摘要推荐下一轮排版。", dataScopes: ["resume_ast"], timeoutMs: AI_CAPABILITY_TIMEOUT_MS },
   "resume.render": { name: "简历渲染", description: "将 Resume AST 编译为可预览文档。", dataScopes: ["resume_ast"] },
   "export.audit": { name: "导出质检", description: "独立检查最终文档版面与可读取性。", dataScopes: ["rendered_document", "resume_ast"] },
   "question.retrieve": { name: "面试题检索", description: "从受控题库检索相关面试题。", dataScopes: ["anonymous_metadata"] },

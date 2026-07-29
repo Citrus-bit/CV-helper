@@ -187,13 +187,13 @@ describe("evidence rewrite dialog", () => {
       },
     ];
     mocks.renderResume.mockResolvedValue({
-      template: "professional",
+      template: "compact",
       pdfBase64: "JVBERi0xLjQK",
       sha256: "rendered-safe-batch",
       report: {
         resumeId: analysis.resume.id,
         resumeRevision: 1,
-        template: "professional",
+        template: "compact",
         artifactSha256: "rendered-safe-batch",
         downloadable: true,
         score: 100,
@@ -222,12 +222,12 @@ describe("evidence rewrite dialog", () => {
       await screen.findByText(/已应用 1 处安全改写并生成新版 PDF/),
     ).toBeVisible();
     expect(mocks.renderResume).toHaveBeenCalledWith(
-      expect.objectContaining({ revision: 1, template: "professional" }),
+      expect.objectContaining({ revision: 1, template: "compact" }),
     );
     expect(useAppStore.getState()).toMatchObject({
       previewMode: "current",
       resumePanel: "templates",
-      renders: { professional: { sha256: "rendered-safe-batch" } },
+      renders: { compact: { sha256: "rendered-safe-batch" } },
     });
     expect(useAppStore.getState().analysis?.scorecard.total).toBe(70);
     expect(useAppStore.getState().analysis?.processing.aiAnalysis?.status).not.toBe(

@@ -59,6 +59,7 @@ import {
   hasRequiredAiProvenance,
   isDemoTemplateAnalysis,
 } from "./ai-analysis";
+import { FIXED_RESUME_TEMPLATE } from "@/lib/resume-layout";
 import { applySuggestion, suggestionBeforeHashMatches } from "./resume";
 import {
   ensureSuggestionScoreGains,
@@ -295,7 +296,7 @@ function emptySessionState(
     selectedSuggestionId: null,
     activeResumeVariantId: null,
     resumePanel: "suggestions" as const,
-    selectedTemplate: "professional" as const,
+    selectedTemplate: FIXED_RESUME_TEMPLATE,
     previewMode: "original" as const,
     previewedRenderHashes: [],
     renders: {},
@@ -1022,6 +1023,7 @@ export function mergePersistedSessionState(
     interviewProgress,
     resumeChat,
     archiveSuppressedForResumeId,
+    selectedTemplate: FIXED_RESUME_TEMPLATE,
   };
 }
 
@@ -1091,6 +1093,8 @@ function restoredRenderMap(
     const parsed = RenderResponseSchema.safeParse(candidate);
     if (
       !parsed.success ||
+      template !== FIXED_RESUME_TEMPLATE ||
+      parsed.data.template !== FIXED_RESUME_TEMPLATE ||
       targets.get(parsed.data.report.resumeId) !==
         parsed.data.report.resumeRevision
     ) {
@@ -1375,7 +1379,7 @@ export const useAppStore = create<AppState>()(
       selectedSuggestionId: null,
       activeResumeVariantId: null,
       resumePanel: "suggestions",
-      selectedTemplate: "professional",
+      selectedTemplate: FIXED_RESUME_TEMPLATE,
       previewMode: "original",
       previewedRenderHashes: [],
       renders: {},
@@ -2438,9 +2442,11 @@ export const useAppStore = create<AppState>()(
         });
         if (changed) scheduleCurrentSessionArchive();
       },
-      setTemplate: (selectedTemplate) =>
+      setTemplate: () =>
         set((state) =>
-          state.homeNavigationPending ? state : { selectedTemplate },
+          state.homeNavigationPending
+            ? state
+            : { selectedTemplate: FIXED_RESUME_TEMPLATE },
         ),
       setPreviewMode: (previewMode) =>
         set((state) => (state.homeNavigationPending ? state : { previewMode })),
@@ -2463,13 +2469,16 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           if (state.homeNavigationPending || state.stage !== "workspace")
             return state;
-          if (!isRenderForActiveResume(state, render)) return state;
+          if (
+            render.template !== FIXED_RESUME_TEMPLATE ||
+            !isRenderForActiveResume(state, render)
+          ) {
+            return state;
+          }
           accepted = true;
           return {
             renders: { ...state.renders, [render.template]: render },
-            // The server owns layout fallback; keep preview and download bound
-            // to the artifact that actually passed export verification.
-            selectedTemplate: render.template,
+            selectedTemplate: FIXED_RESUME_TEMPLATE,
             previewMode: "current",
           };
         });
@@ -2710,7 +2719,7 @@ export const useAppStore = create<AppState>()(
           selectedSuggestionId,
           activeResumeVariantId,
           resumePanel,
-          selectedTemplate: record.payload.selectedTemplate,
+          selectedTemplate: FIXED_RESUME_TEMPLATE,
           previewMode:
             activeResumeVariantId || hasCachedRender ? "current" : "original",
           previewedRenderHashes: [],
@@ -2744,7 +2753,7 @@ export const useAppStore = create<AppState>()(
                 selectedSuggestionId: null,
                 activeResumeVariantId: null,
                 resumePanel: "suggestions",
-                selectedTemplate: "professional",
+                selectedTemplate: FIXED_RESUME_TEMPLATE,
                 previewMode: "original",
                 previewedRenderHashes: [],
                 renders: {},

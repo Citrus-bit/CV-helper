@@ -10,6 +10,7 @@ const BLOCKING_EXPORT_CHECK_IDS = new Set([
   "overlap",
   "missing-glyphs",
   "sha256",
+  "pagination",
 ]);
 
 export function normalizeExportCheckSeverity(check: AuditCheck): AuditCheck {
@@ -47,10 +48,10 @@ export function onePagePreferenceCheck(pageCount: number): AuditCheck {
   const isOnePage = pageCount === 1;
   return {
     id: "pagination",
-    label: "页面长度",
-    status: isOnePage ? "pass" : "warn",
+    label: "单页长度",
+    status: isOnePage ? "pass" : "fail",
     details: isOnePage
-      ? "当前为 1 页，符合一页优先目标。"
-      : `当前为 ${pageCount} 页，未达到一页优先目标；建议精简重复内容或改用 Compact 模板。`,
+      ? "当前为 1 页，符合 Compact 单页导出要求。"
+      : `当前为 ${pageCount} 页，未达到 Compact 单页导出要求；请精简重复内容后重新生成。`,
   };
 }

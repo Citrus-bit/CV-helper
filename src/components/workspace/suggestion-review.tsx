@@ -25,6 +25,7 @@ import { useAppStore } from "@/lib/client/store";
 import { isDemoTemplateAnalysis } from "@/lib/client/ai-analysis";
 import { generateEvidenceRewrite, renderResume } from "@/lib/client/api";
 import { safeAiRewriteSuggestions } from "@/lib/client/suggestions";
+import { FIXED_RESUME_TEMPLATE } from "@/lib/resume-layout";
 import { resumeTextSafetyError } from "@/lib/resume-text-safety";
 import {
   EstimatedProgressText,
@@ -391,7 +392,7 @@ export function SuggestionReview() {
           resumeId: resume.id,
           revision: resume.revision,
           ast: resume.ast,
-          template: current.selectedTemplate,
+          template: FIXED_RESUME_TEMPLATE,
           sourcePageCount: resume.pageCount,
         });
         current.setRender(rendered);

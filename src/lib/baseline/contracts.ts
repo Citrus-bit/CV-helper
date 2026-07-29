@@ -88,6 +88,25 @@ export const LayoutRecommendInputSchema = z.object({
   ast: ResumeASTSchema,
   targetPages: z.number().int().min(1).max(2).default(1),
   preferredTemplate: ResumeTemplateSchema.optional(),
+  failedAudit: z
+    .object({
+      attempt: z.literal(1),
+      triedTemplates: z.array(ResumeTemplateSchema).min(1).max(3),
+      pageCount: z.number().int().nonnegative(),
+      overallScore: z.number().min(0).max(100),
+      blockingCheckIds: z.array(z.string().min(1).max(120)).min(1).max(18),
+      checks: z
+        .array(
+          z.object({
+            id: z.string().min(1).max(120),
+            label: z.string().min(1).max(200),
+            status: z.enum(["warn", "fail"]),
+          }),
+        )
+        .min(1)
+        .max(18),
+    })
+    .optional(),
 });
 export const LayoutRecommendOutputSchema = z.object({
   recommendedTemplate: ResumeTemplateSchema,

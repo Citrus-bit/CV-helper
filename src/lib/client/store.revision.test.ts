@@ -257,7 +257,7 @@ function seedDerived(revision: number) {
     jobMatch: jobMatchFixture(revision),
     interviewPlan: interviewPlanFixture(revision),
     evaluations: [evaluationFixture(revision)],
-    renders: { professional: { template: "professional" } as RenderResponse },
+    renders: { compact: { template: "compact" } as RenderResponse },
     previewedRenderHashes: ["previewed"],
     previewMode: "current",
   });
@@ -457,17 +457,17 @@ describe("resume-derived state revisions", () => {
     );
 
     const variantRender = {
-      template: "professional",
+      template: "compact",
       sha256: "a".repeat(64),
       report: {
         resumeId: variant.id,
         resumeRevision: variant.revision,
-        template: "professional",
+        template: "compact",
         artifactSha256: "a".repeat(64),
       },
     } as RenderResponse;
     useAppStore.getState().setRender(variantRender);
-    expect(useAppStore.getState().renders.professional).toBe(variantRender);
+    expect(useAppStore.getState().renders.compact).toBe(variantRender);
 
     useAppStore.getState().setResumePanel("suggestions");
     expect(useAppStore.getState()).toMatchObject({
@@ -498,16 +498,16 @@ describe("resume-derived state revisions", () => {
     expect(useAppStore.getState().renders).toEqual({});
   });
 
-  it("selects the layout that the server actually verified", () => {
+  it("accepts only the fixed Compact layout", () => {
     useAppStore.getState().setAnalysis(analysisFixture(2));
     useAppStore.setState({ selectedTemplate: "compact" });
     const verifiedRender = {
-      template: "minimal",
+      template: "compact",
       sha256: "c".repeat(64),
       report: {
         resumeId: "resume-1",
         resumeRevision: 2,
-        template: "minimal",
+        template: "compact",
         artifactSha256: "c".repeat(64),
       },
     } as RenderResponse;
@@ -515,8 +515,8 @@ describe("resume-derived state revisions", () => {
     useAppStore.getState().setRender(verifiedRender);
 
     expect(useAppStore.getState()).toMatchObject({
-      selectedTemplate: "minimal",
-      renders: { minimal: verifiedRender },
+      selectedTemplate: "compact",
+      renders: { compact: verifiedRender },
       previewMode: "current",
     });
   });
@@ -532,7 +532,7 @@ describe("resume-derived state revisions", () => {
     expect(state.jobMatch?.sourceResumeRevision).toBe(0);
     expect(state.interviewPlan?.sourceResumeRevision).toBe(0);
     expect(state.evaluations).toHaveLength(1);
-    expect(state.renders).toHaveProperty("professional");
+    expect(state.renders).toHaveProperty("compact");
   });
 
   it("marks a suggestion stale when its declared resume revision is no longer current", () => {

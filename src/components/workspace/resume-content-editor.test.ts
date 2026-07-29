@@ -201,7 +201,7 @@ describe("ResumeContentEditor", () => {
 
     await waitFor(() => expect(api.renderResume).toHaveBeenCalledTimes(1));
     expect(api.renderResume).toHaveBeenCalledWith(
-      expect.objectContaining({ revision: 1, template: "professional" }),
+      expect.objectContaining({ revision: 1, template: "compact" }),
     );
     await waitFor(() => {
       expect(useAppStore.getState().analysis?.resume.revision).toBe(1);

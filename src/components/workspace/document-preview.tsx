@@ -21,6 +21,7 @@ import {
 } from "@/lib/domain";
 import { pdfDataUrl } from "@/lib/client/api";
 import { useAppStore } from "@/lib/client/store";
+import { FIXED_RESUME_TEMPLATE } from "@/lib/resume-layout";
 import { ClientPdfPreview } from "./client-pdf-preview";
 import { OriginalPdfPage } from "./original-pdf-page";
 
@@ -113,8 +114,7 @@ export function DocumentPreview() {
   const selectedSuggestionId = useAppStore(
     (state) => state.selectedSuggestionId,
   );
-  const selectedTemplate = useAppStore((state) => state.selectedTemplate);
-  const render = useAppStore((state) => state.renders[selectedTemplate]);
+  const render = useAppStore((state) => state.renders[FIXED_RESUME_TEMPLATE]);
   const mode = useAppStore((state) => state.previewMode);
   const setMode = useAppStore((state) => state.setPreviewMode);
   const markRenderPreviewed = useAppStore((state) => state.markRenderPreviewed);
@@ -318,7 +318,7 @@ export function DocumentPreview() {
             <ClientPdfPreview
               key={render.sha256}
               artifactSha256={render.sha256}
-              title={`${activeResumeName} ${selectedTemplate} 模板预览`}
+              title={`${activeResumeName} Compact 模板预览`}
               iframeSrc={currentPdf ?? ""}
               pdfBase64={render.pdfBase64}
               onVerified={handleVerifiedPreview}
@@ -334,7 +334,7 @@ export function DocumentPreview() {
               />
               <p className="mt-3 text-sm font-medium">尚未生成当前版本</p>
               <p className="mt-1 text-xs text-muted">
-                在右侧“排版预览”中选择模板。
+                在右侧导出固定的 Compact 单页简历。
               </p>
             </div>
           </div>

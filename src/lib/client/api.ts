@@ -46,6 +46,7 @@ import {
   isDemoTemplateAnalysis,
   isRequiredAiSource,
 } from "./ai-analysis";
+import { FIXED_RESUME_TEMPLATE } from "@/lib/resume-layout";
 
 export class ApiError extends Error {
   constructor(
@@ -357,16 +358,23 @@ export async function renderResume(input: {
   resumeId: string;
   revision: number;
   ast: ResumeAST;
-  template: ResumeTemplateId;
+  template?: ResumeTemplateId;
   sourcePageCount?: number;
 }): Promise<RenderResponse> {
   const response = await trackedFetch("/api/render", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, template: FIXED_RESUME_TEMPLATE }),
   });
   if (!response.ok) throw await apiError(response);
-  return RenderResponseSchema.parse(await response.json());
+  const render = RenderResponseSchema.parse(await response.json());
+  if (
+    render.template !== FIXED_RESUME_TEMPLATE ||
+    render.report.template !== FIXED_RESUME_TEMPLATE
+  ) {
+    throw new Error("服务端未按 Compact 模板生成 PDF，请重新生成。");
+  }
+  return render;
 }
 
 export async function recommendLayout(input: {

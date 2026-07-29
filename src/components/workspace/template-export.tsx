@@ -17,6 +17,7 @@ import {
 import { downloadVerifiedResume, renderResume } from "@/lib/client/api";
 import { useAppStore, type TemplateId } from "@/lib/client/store";
 import type { AuditCheck } from "@/lib/domain";
+import { FIXED_RESUME_TEMPLATE } from "@/lib/resume-layout";
 
 const auditStatusLabel = {
   pass: "通过",
@@ -30,6 +31,7 @@ export function exportConfirmationBlocker(input: {
   downloadable: boolean;
   astContentCovered: boolean;
   previewed: boolean;
+  repairAttempts?: 1 | 2;
   blockingChecks?: readonly AuditCheck[];
 }) {
   if (!input.hasOriginalPdf) return "请先重新附加原 PDF，再进行最终对照确认。";
@@ -37,8 +39,12 @@ export function exportConfirmationBlocker(input: {
     const blockingCheck = input.blockingChecks?.find(
       (check) => check.status === "fail",
     );
+    if (blockingCheck && input.repairAttempts === 2)
+      return `已自动修复 2 轮，仍未通过“${blockingCheck.label}”，请检查原文后再生成。`;
     if (blockingCheck)
       return `后台自动排版未通过“${blockingCheck.label}”，请重新生成。`;
+    if (input.repairAttempts === 2)
+      return "已自动修复 2 轮，后台质量门仍未通过，请检查原文后再生成。";
     return "后台未能生成通过完整性检查的 PDF，请重新生成。";
   }
   if (!input.previewed) return "等待新版 PDF 预览完成像素验证后确认。";
@@ -51,7 +57,6 @@ export function TemplateExport() {
   const activeResumeVariantId = useAppStore(
     (state) => state.activeResumeVariantId,
   );
-  const selectedTemplate = useAppStore((state) => state.selectedTemplate);
   const renders = useAppStore((state) => state.renders);
   const previewedRenderHashes = useAppStore(
     (state) => state.previewedRenderHashes,
@@ -77,12 +82,12 @@ export function TemplateExport() {
       };
 
   const mutation = useMutation({
-    mutationFn: (template: TemplateId) =>
+    mutationFn: () =>
       renderResume({
         resumeId: target.id,
         revision: target.revision,
         ast: target.ast,
-        template,
+        template: FIXED_RESUME_TEMPLATE,
       }),
     onSuccess: setRender,
   });
@@ -98,9 +103,9 @@ export function TemplateExport() {
       : undefined;
   }
 
-  const current = renderForTarget(selectedTemplate);
+  const current = renderForTarget(FIXED_RESUME_TEMPLATE);
   const renderKey = current
-    ? `${current.report.resumeId}:${current.report.resumeRevision}:${selectedTemplate}:${current.sha256}`
+    ? `${current.report.resumeId}:${current.report.resumeRevision}:${FIXED_RESUME_TEMPLATE}:${current.sha256}`
     : null;
   const confirmed = renderKey !== null && confirmedRenderKey === renderKey;
   const previewed = current
@@ -113,6 +118,7 @@ export function TemplateExport() {
         downloadable: current.report.downloadable,
         astContentCovered: current.astContentCovered,
         previewed,
+        repairAttempts: current.generation?.attempts,
         blockingChecks: current.report.checks.filter((check) =>
           current.hardGate.blockingCheckIds.includes(check.id),
         ),
@@ -128,13 +134,20 @@ export function TemplateExport() {
   const warningCount = current
     ? current.report.checks.filter((check) => check.status === "warn").length
     : 0;
+  const generationStatus = current?.generation
+    ? current.generation.attempts === 2
+      ? current.report.downloadable
+        ? "第 2 轮 · AI 修复通过"
+        : "第 2 轮 · AI 修复未通过"
+      : "第 1 轮通过"
+    : "Compact 单页排版";
 
   const downloadMutation = useMutation({
     mutationFn: () => {
       if (!current) throw new Error("当前没有可下载的 PDF。");
       return downloadVerifiedResume({
         revision: current.report.resumeRevision,
-        template: selectedTemplate,
+        template: FIXED_RESUME_TEMPLATE,
         render: current,
       });
     },
@@ -156,7 +169,7 @@ export function TemplateExport() {
             {target.name} · 版本 {target.revision + 1}
           </p>
         </div>
-        <span className="shrink-0 text-xs text-muted">自动排版</span>
+        <span className="shrink-0 text-xs text-muted">{generationStatus}</span>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
@@ -170,7 +183,7 @@ export function TemplateExport() {
               <strong className="font-medium text-ink">
                 最终 PDF 尚未生成
               </strong>
-              <span className="block">生成时会自动完成排版与导出检查。</span>
+              <span className="block">固定使用 Compact 模板，并检查单页导出要求。</span>
             </p>
           </div>
         ) : (
@@ -197,7 +210,7 @@ export function TemplateExport() {
               <button
                 type="button"
                 aria-label="重新生成最终 PDF"
-                onClick={() => mutation.mutate(selectedTemplate)}
+                onClick={() => mutation.mutate()}
                 disabled={templateSelectionLocked}
                 className="grid size-11 place-items-center rounded-[8px] text-muted hover:bg-[#f0f1f3] disabled:opacity-40"
               >
@@ -210,7 +223,7 @@ export function TemplateExport() {
             </div>
             {mutation.isPending ? (
               <p className="mt-2 flex items-center justify-end gap-2 text-xs text-muted">
-                <span>正在重新生成</span>
+                <span>正在生成与质检</span>
                 <EstimatedProgressText
                   expectedDurationMs={estimatedDurations.pdfGeneration}
                   label="PDF 重新生成预估进度"
@@ -337,7 +350,7 @@ export function TemplateExport() {
           <button
             type="button"
             disabled={mutation.isPending}
-            onClick={() => mutation.mutate(selectedTemplate)}
+            onClick={() => mutation.mutate()}
             className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-[#075bbf] disabled:cursor-wait disabled:opacity-55"
           >
             {mutation.isPending ? (
@@ -351,7 +364,7 @@ export function TemplateExport() {
             )}
             {mutation.isPending ? (
               <>
-                <span>正在自动排版</span>
+                <span>正在生成与质检</span>
                 <EstimatedProgressText
                   expectedDurationMs={estimatedDurations.pdfGeneration}
                   label="PDF 生成预估进度"

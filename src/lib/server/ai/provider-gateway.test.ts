@@ -231,6 +231,64 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(instruction).toContain("refer only to the resume or candidate generically");
   });
 
+  it("repairs failed layout through an anonymous audit summary", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      completionResponse({
+        recommendedTemplate: "minimal",
+        estimatedPages: 2,
+        density: "dense",
+        reasons: ["The first layout failed text visibility."],
+        rankings: [
+          { template: "minimal", score: 92, estimatedPages: 2 },
+          { template: "professional", score: 76, estimatedPages: 2 },
+          { template: "compact", score: 60, estimatedPages: 1 },
+        ],
+      }),
+    );
+    const registry = createServerCapabilityRegistry({
+      environment: providerEnvironment,
+      fetchImpl: fetchMock,
+      logger: () => undefined,
+    });
+
+    const result = await registry.invoke(
+      "layout.recommend",
+      {
+        ast: resume.ast,
+        targetPages: 1,
+        preferredTemplate: "compact",
+        failedAudit: {
+          attempt: 1,
+          triedTemplates: ["compact"],
+          pageCount: 2,
+          overallScore: 56,
+          blockingCheckIds: ["text-visibility"],
+          checks: [
+            {
+              id: "text-visibility",
+              label: "文字视觉可读性",
+              status: "fail",
+            },
+          ],
+        },
+      },
+      context(),
+      { fallbackPolicy: "forbid" },
+    );
+
+    expect(result).toMatchObject({
+      usedFallback: false,
+      sourceVersion: "layout.recommend@2.0.0",
+      data: { recommendedTemplate: "minimal" },
+    });
+    const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const providerInput = request.messages[1].content;
+    expect(providerInput).toContain("text-visibility");
+    expect(providerInput).not.toContain("Alice Zhang");
+    expect(providerInput).not.toContain("alice@example.com");
+    expect(providerInput).not.toContain("交付周期缩短 20%");
+  });
+
   it("keeps valid AI findings when a sibling is invalid and replaces provider source IDs", async () => {
     const localOriginalText = resume.ast.sections[0].entries[0].bullets[0];
     const originalText = localOriginalText.normalize("NFKC");

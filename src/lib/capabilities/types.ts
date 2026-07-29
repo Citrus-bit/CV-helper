@@ -44,6 +44,7 @@ export const PROVIDER_GATEWAY_CAPABILITY_IDS = [
   "job.match",
   "copy.rewrite.zh",
   "copy.rewrite.en",
+  "layout.recommend",
   "interview.plan",
   "answer.evaluate",
   "answer.coach",

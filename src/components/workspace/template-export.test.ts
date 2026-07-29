@@ -82,7 +82,7 @@ function downloadableRenderFixture(): RenderResponse {
   const sha256 = "a".repeat(64);
   const hardGate = { passed: true, blockingCheckIds: [] };
   return {
-    template: "professional",
+    template: "compact",
     pdfBase64: "JVBERi0=",
     sha256,
     byteLength: 8,
@@ -92,7 +92,7 @@ function downloadableRenderFixture(): RenderResponse {
     report: {
       resumeId: "resume-download",
       resumeRevision: 2,
-      template: "professional",
+      template: "compact",
       artifactSha256: sha256,
       sourcePageCount: 1,
       pageCount: 1,
@@ -147,6 +147,20 @@ describe("exportConfirmationBlocker", () => {
         ],
       }),
     ).toBe("后台自动排版未通过“字形完整性”，请重新生成。");
+    expect(
+      exportConfirmationBlocker({
+        ...valid,
+        hardGatePassed: false,
+        repairAttempts: 2,
+        blockingChecks: [
+          {
+            id: "text-visibility",
+            label: "文字视觉可读性",
+            status: "fail",
+          },
+        ],
+      }),
+    ).toBe("已自动修复 2 轮，仍未通过“文字视觉可读性”，请检查原文后再生成。");
   });
 });
 
@@ -264,7 +278,7 @@ describe("TemplateExport resume target", () => {
       jobMatch,
       activeResumeVariantId: "variant-export",
       resumePanel: "templates",
-      selectedTemplate: "professional",
+      selectedTemplate: "compact",
       renders: {},
     });
     api.renderResume.mockReturnValue(new Promise(() => undefined));
@@ -284,7 +298,7 @@ describe("TemplateExport resume target", () => {
       ),
     );
     expect(screen.getByText("产品经理定制版 · 版本 1")).toBeInTheDocument();
-    expect(screen.getByText("自动排版")).toBeInTheDocument();
+    expect(screen.getByText("Compact 单页排版")).toBeInTheDocument();
     expect(screen.queryByText("排版模板")).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: "生成最终 PDF" }),
@@ -316,8 +330,8 @@ describe("TemplateExport resume target", () => {
       jobMatch: null,
       activeResumeVariantId: null,
       resumePanel: "templates",
-      selectedTemplate: "professional",
-      renders: { professional: renderResult },
+      selectedTemplate: "compact",
+      renders: { compact: renderResult },
       previewedRenderHashes: [renderResult.sha256],
     });
     api.downloadVerifiedResume.mockReturnValue(new Promise(() => undefined));
@@ -355,5 +369,41 @@ describe("TemplateExport resume target", () => {
         name: /已对照原版，确认下载当前最终版本/,
       }),
     ).toBeDisabled();
+  });
+
+  it("shows when the downloadable artifact passed after AI repair", () => {
+    const analysis = downloadableAnalysisFixture();
+    const renderResult = downloadableRenderFixture();
+    renderResult.generation = {
+      attempts: 2,
+      aiRepairApplied: true,
+      aiRepairSourceVersion: "layout.recommend@2.0.0",
+    };
+    useAppStore.setState({
+      stage: "workspace",
+      analysis,
+      jobMatch: null,
+      activeResumeVariantId: null,
+      resumePanel: "templates",
+      selectedTemplate: "compact",
+      renders: { compact: renderResult },
+      previewedRenderHashes: [renderResult.sha256],
+    });
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+
+    render(
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement(TemplateExport),
+      ),
+    );
+
+    expect(screen.getByText("第 2 轮 · AI 修复通过")).toBeInTheDocument();
   });
 });

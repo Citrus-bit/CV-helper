@@ -17,6 +17,7 @@ const JSON_OBJECT_PREFERRED_CAPABILITIES = new Set<ProviderGatewayCapabilityId>(
   "resume.chat",
   "jd.parse",
   "job.match",
+  "layout.recommend",
   "interview.plan",
   "answer.evaluate",
   "answer.coach",

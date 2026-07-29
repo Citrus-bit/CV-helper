@@ -2,10 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   invokeBaselineCapability: vi.fn(),
+  invokeRequiredAiCapability: vi.fn(),
 }));
 
 vi.mock("@/lib/baseline", () => ({
   invokeBaselineCapability: mocks.invokeBaselineCapability,
+}));
+
+vi.mock("@/lib/server/capability-runtime", () => ({
+  invokeRequiredAiCapability: mocks.invokeRequiredAiCapability,
 }));
 
 import { POST } from "./route";
@@ -65,51 +70,30 @@ function auditResult(
   };
 }
 
-describe("POST /api/render automatic layout fallback", () => {
+describe("POST /api/render Compact export", () => {
   beforeEach(() => {
     mocks.invokeBaselineCapability.mockReset();
+    mocks.invokeRequiredAiCapability.mockReset();
   });
 
-  it("returns the next verified layout when the first candidate fails", async () => {
+  it("always renders Compact even when a stale client requests another template", async () => {
     mocks.invokeBaselineCapability.mockImplementation(
       async (id: string, input: { template?: string }) => {
-        if (id === "layout.recommend") {
-          return capabilityResult(
-            {
-              recommendedTemplate: "compact",
-              estimatedPages: 1,
-              density: "dense",
-              reasons: ["内容密度较高。"],
-              rankings: [
-                { template: "compact", score: 94, estimatedPages: 1 },
-                { template: "professional", score: 80, estimatedPages: 2 },
-                { template: "minimal", score: 68, estimatedPages: 2 },
-              ],
-            },
-            "layout.recommend@1.0.0",
-          );
-        }
         if (id === "resume.render") {
-          const template = input.template as "professional" | "compact";
-          const sha256 =
-            template === "compact" ? "a".repeat(64) : "b".repeat(64);
           return capabilityResult(
             {
               mimeType: "application/pdf",
-              pdfBase64: template === "compact" ? "Y29tcGFjdA==" : "cHJv",
-              sha256,
+              pdfBase64: "Y29tcGFjdA==",
+              sha256: "a".repeat(64),
               byteLength: 8,
               pageCount: 1,
-              template,
+              template: input.template,
             },
             "resume.render@1.0.0",
           );
         }
         return capabilityResult(
-          auditResult(
-            input.template as "professional" | "minimal" | "compact",
-            input.template === "professional",
-          ),
+          auditResult(input.template as "compact", true),
           "export.audit@1.0.0",
         );
       },
@@ -132,23 +116,66 @@ describe("POST /api/render automatic layout fallback", () => {
     expect(response.status, await response.clone().text()).toBe(200);
     const result = RenderResponseSchema.parse(await response.json());
     expect(result).toMatchObject({
-      template: "professional",
+      template: "compact",
       hardGate: { passed: true, blockingCheckIds: [] },
-      report: { downloadable: true, template: "professional" },
+      report: { downloadable: true, template: "compact" },
+      generation: {
+        attempts: 1,
+        aiRepairApplied: false,
+      },
     });
     expect(
       mocks.invokeBaselineCapability.mock.calls.map(
         ([id, input]) => `${id}:${input.template ?? "-"}`,
       ),
     ).toEqual([
-      "layout.recommend:-",
       "resume.render:compact",
       "export.audit:compact",
-      "resume.render:professional",
-      "export.audit:professional",
     ]);
-    expect(response.headers.get("x-capability-trace")).toContain(
-      "layout.recommend@1.0.0",
+    expect(mocks.invokeRequiredAiCapability).not.toHaveBeenCalled();
+  });
+
+  it("returns the failed Compact candidate for client-side review", async () => {
+    mocks.invokeBaselineCapability.mockImplementation(
+      async (id: string, input: { template?: string }) => {
+        if (id === "resume.render") {
+          return capabilityResult(
+            {
+              mimeType: "application/pdf",
+              pdfBase64: "Y29tcGFjdA==",
+              sha256: "a".repeat(64),
+              byteLength: 8,
+              pageCount: 1,
+              template: input.template,
+            },
+            "resume.render@1.0.0",
+          );
+        }
+        return capabilityResult(
+          auditResult("compact", false),
+          "export.audit@1.0.0",
+        );
+      },
     );
+
+    const response = await POST(
+      new Request("http://localhost/api/render", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          resumeId: "resume-auto-layout",
+          revision: 3,
+          ast,
+          template: "professional",
+        }),
+      }),
+    );
+    const result = RenderResponseSchema.parse(await response.json());
+
+    expect(result).toMatchObject({
+      template: "compact",
+      hardGate: { passed: false, blockingCheckIds: ["text-visibility"] },
+      report: { downloadable: false, template: "compact" },
+    });
   });
 });
