@@ -19,6 +19,7 @@ import {
   hasMeaningfulPageVisuals,
   type PdfVisualMetrics,
 } from "@/lib/pdf-visual-audit";
+import { normalizeResumeTextForExport } from "@/lib/resume-text-safety";
 import { createCanvas } from "@napi-rs/canvas";
 import { createHash } from "node:crypto";
 import { loadPdfJs } from "@/lib/server/pdfjs";
@@ -301,9 +302,16 @@ function entryDate(startDate?: string, endDate?: string, current?: boolean) {
     .join(" - ");
 }
 
+function exportText(value?: string) {
+  return value ? normalizeResumeTextForExport(value) : "";
+}
+
 export function toRenderableResume(ast: ResumeAST): RenderableResume {
-  const links = ast.contact.links.map((link) => `${link.label}: ${link.url}`);
-  const locationAndLinks = [ast.contact.location, ...links]
+  const links = ast.contact.links
+    .map((link) => [exportText(link.label), exportText(link.url)] as const)
+    .filter(([, url]) => Boolean(url))
+    .map(([label, url]) => (label ? `${label}: ${url}` : url));
+  const locationAndLinks = [exportText(ast.contact.location), ...links]
     .filter(Boolean)
     .join(" | ");
   const summaries = [
@@ -313,37 +321,42 @@ export function toRenderableResume(ast: ResumeAST): RenderableResume {
         ...ast.sections
           .filter((section) => section.type === "summary")
           .map((section) => section.text),
-      ].filter((value): value is string => Boolean(value?.trim())),
+      ]
+        .map(exportText)
+        .filter(Boolean),
     ),
   ];
   return {
     profile: {
-      name: ast.contact.name,
-      headline: ast.contact.headline,
-      email: ast.contact.email,
-      phone: ast.contact.phone,
+      name: exportText(ast.contact.name),
+      headline: exportText(ast.contact.headline) || undefined,
+      email: exportText(ast.contact.email) || undefined,
+      phone: exportText(ast.contact.phone) || undefined,
       location: locationAndLinks || undefined,
       summary: summaries.join("\n") || undefined,
     },
     sections: ast.sections
       .map((section) => ({
-        title: section.title,
+        title: exportText(section.title),
         items: [
-          ...(section.type !== "summary" && section.text
-            ? [{ title: "", bullets: [section.text] }]
+          ...(section.type !== "summary" && exportText(section.text)
+            ? [{ title: "", bullets: [exportText(section.text)] }]
             : []),
           ...section.entries.map((entry) => ({
-            title: entry.title,
+            title: exportText(entry.title),
             subtitle:
               [entry.organization, entry.subtitle, entry.location]
+                .map(exportText)
                 .filter(Boolean)
                 .join(" · ") || undefined,
             date:
-              entryDate(entry.startDate, entry.endDate, entry.current) ||
+              exportText(
+                entryDate(entry.startDate, entry.endDate, entry.current),
+              ) ||
               undefined,
-            bullets: [entry.summary, ...entry.bullets].filter(
-              (value): value is string => Boolean(value?.trim()),
-            ),
+            bullets: [entry.summary, ...entry.bullets]
+              .map(exportText)
+              .filter(Boolean),
           })),
         ],
       }))
@@ -361,7 +374,12 @@ export function astContentFragments(ast: ResumeAST) {
     ...ast.contact.links.flatMap((link) => [link.label, link.url]),
     ast.summary,
     ...ast.sections.flatMap((section) => [
-      ...(section.type === "summary" ? [] : [section.title]),
+      // The renderer intentionally drops empty structural sections. Requiring
+      // their headings here would make every template fail the same hard gate.
+      ...(section.type === "summary" ||
+      (!exportText(section.text) && section.entries.length === 0)
+        ? []
+        : [section.title]),
       section.text,
       ...section.entries.flatMap((entry) => [
         entry.title,
@@ -374,7 +392,9 @@ export function astContentFragments(ast: ResumeAST) {
         ...entry.bullets,
       ]),
     ]),
-  ].filter((value): value is string => Boolean(value?.trim()));
+  ]
+    .map(exportText)
+    .filter(Boolean);
 }
 
 function expectedFragments(resume: RenderableResume) {

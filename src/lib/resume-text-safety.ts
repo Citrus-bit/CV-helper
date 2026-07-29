@@ -66,6 +66,26 @@ export function unsupportedResumeCharacters(
   return [...unique.values()];
 }
 
+const OMITTABLE_EXPORT_CHARACTER_LABELS = new Set([
+  "不可见控制字符",
+  "不可见格式字符",
+  "私用字形",
+  "表情或图标字符",
+]);
+
+export function normalizeResumeTextForExport(value: string): string {
+  return Array.from(value, (character) => {
+    const issue = characterIssue(character);
+    return issue && OMITTABLE_EXPORT_CHARACTER_LABELS.has(issue.label)
+      ? " "
+      : character;
+  })
+    .join("")
+    .replace(/[\t\u00a0 ]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .trim();
+}
+
 export function resumeTextSafetyError(value: string): string | null {
   const issues = unsupportedResumeCharacters(value);
   if (issues.length === 0) return null;

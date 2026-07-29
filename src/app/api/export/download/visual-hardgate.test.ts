@@ -93,6 +93,28 @@ const EXPECTED_SQUARE_AST = ResumeASTSchema.parse({
   ],
 });
 
+const EMPTY_SECTION_AST = ResumeASTSchema.parse({
+  ...DEMO_RESUME_AST,
+  sections: [
+    ...DEMO_RESUME_AST.sections,
+    {
+      id: "empty-custom-section",
+      type: "custom",
+      title: "空白附录",
+      entries: [],
+      sourceBlockIds: [],
+    },
+  ],
+});
+
+const DECORATIVE_ICON_AST = ResumeASTSchema.parse({
+  ...DEMO_RESUME_AST,
+  contact: {
+    ...DEMO_RESUME_AST.contact,
+    headline: "\uE600 年龄：19 岁 \uE601 性别：男",
+  },
+});
+
 async function whiteTextPdf() {
   const document = await PDFDocument.create();
   const page = document.addPage([595, 842]);
@@ -471,6 +493,38 @@ describe.sequential("export visual hard gate", () => {
       report.checks.find((check) => check.id === "missing-glyphs")?.status,
     ).toBe("pass");
     expect(report.downloadable).toBe(true);
+  });
+
+  it("does not block download for an intentionally omitted empty section heading", async () => {
+    const fragments = astContentFragments(EMPTY_SECTION_AST);
+    expect(fragments).toContain("工作经历");
+    expect(fragments).not.toContain("空白附录");
+
+    const pdf = await renderResumePdf(
+      toRenderableResume(EMPTY_SECTION_AST),
+      "professional",
+    );
+    const response = await requestDownload(
+      pdf,
+      EMPTY_SECTION_AST,
+      "professional",
+    );
+
+    expect(response.status, await response.clone().text()).toBe(200);
+  });
+
+  it("keeps parsed header text downloadable after removing decorative private-use icons", async () => {
+    const pdf = await renderResumePdf(
+      toRenderableResume(DECORATIVE_ICON_AST),
+      "professional",
+    );
+    const response = await requestDownload(
+      pdf,
+      DECORATIVE_ICON_AST,
+      "professional",
+    );
+
+    expect(response.status, await response.clone().text()).toBe(200);
   });
 
   it("rejects PDFs whose trusted page tree exceeds five pages", async () => {

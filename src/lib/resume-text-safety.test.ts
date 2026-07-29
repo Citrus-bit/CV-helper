@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  normalizeResumeTextForExport,
   resumeTextSafetyError,
   unsupportedResumeCharacters,
 } from "./resume-text-safety";
@@ -26,5 +27,16 @@ describe("resume export text safety", () => {
     ]);
     expect(resumeTextSafetyError("正常文字□")).toContain("U+25A1");
     expect(resumeTextSafetyError("无效\uD800")).toContain("U+D800");
+  });
+
+  it("removes decorative glyphs without hiding broken replacement markers", () => {
+    expect(
+      normalizeResumeTextForExport(
+        "\uE600 年龄：19 岁 \uE601 性别：男 \u{1F680}",
+      ),
+    ).toBe("年龄：19 岁 性别：男");
+    expect(normalizeResumeTextForExport("正文□替代\uFFFD")).toBe(
+      "正文□替代\uFFFD",
+    );
   });
 });
