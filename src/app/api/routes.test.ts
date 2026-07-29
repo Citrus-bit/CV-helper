@@ -27,6 +27,7 @@ import { POST as downloadExport } from "@/app/api/export/download/route";
 import {
   AnalysisBundleSchema,
   EvaluationResponseSchema,
+  InitialAnalysisBundleSchema,
   InterviewPlanSchema,
   JobMatchBundleSchema,
   RenderResponseSchema,
@@ -293,6 +294,41 @@ describe.sequential("API routes", () => {
     });
   });
 
+  it("analyzes the uploaded resume and optional JD in one atomic request", async () => {
+    const bytes = await syntheticResumePdf();
+    const fileBuffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(fileBuffer).set(bytes);
+    const jdText =
+      "Senior Product Manager responsible for B2B strategy, SQL experimentation, user research, and cross-functional delivery.";
+    const form = new FormData();
+    form.set(
+      "file",
+      new File([fileBuffer], "alex-chen-resume.pdf", {
+        type: "application/pdf",
+      }),
+    );
+    form.set("jdText", jdText);
+
+    const response = await analyze(
+      new Request("http://localhost/api/analyze", {
+        method: "POST",
+        body: form,
+      }),
+    );
+
+    expect(response.status, await response.clone().text()).toBe(200);
+    const result = InitialAnalysisBundleSchema.parse(await response.json());
+    expect(result.jobMatch).toMatchObject({
+      sourceResumeId: result.resume.id,
+      sourceResumeRevision: result.resume.revision,
+      capabilityVersions: {
+        "jd.parse": "jd.parse@2.0.0",
+        "job.match": "job.match@2.0.0",
+      },
+    });
+    expect(result.jobMatch?.job.rawText).toBe(jdText);
+  });
+
   it("returns no baseline bundle when required AI analysis is unavailable", async () => {
     requiredAiMocks.invokeRequiredAiCapability.mockRejectedValue(
       new AiAnalysisUnavailableError(
@@ -371,7 +407,7 @@ describe.sequential("API routes", () => {
       headers: {
         "content-type": "multipart/form-data; boundary=bounded-fixture",
       },
-      body: new Uint8Array(MAX_PDF_BYTES + 512 * 1_024 + 1),
+      body: new Uint8Array(MAX_PDF_BYTES + 640 * 1_024 + 1),
     });
     expect(request.headers.get("content-length")).toBeNull();
 

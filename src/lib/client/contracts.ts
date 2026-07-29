@@ -143,6 +143,25 @@ export const JobMatchBundleSchema = z
   });
 export type JobMatchBundle = z.infer<typeof JobMatchBundleSchema>;
 
+export const InitialAnalysisBundleSchema = AnalysisBundleSchema.extend({
+  jobMatch: JobMatchBundleSchema.optional(),
+}).superRefine((bundle, context) => {
+  if (
+    bundle.jobMatch &&
+    (bundle.jobMatch.sourceResumeId !== bundle.resume.id ||
+      bundle.jobMatch.sourceResumeRevision !== bundle.resume.revision)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["jobMatch"],
+      message: "The initial job match must target the analyzed resume revision.",
+    });
+  }
+});
+export type InitialAnalysisBundle = z.infer<
+  typeof InitialAnalysisBundleSchema
+>;
+
 export const JobDraftSchema = z
   .object({
     jdText: z.string().max(60_000),

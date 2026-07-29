@@ -3,6 +3,7 @@ import {
   EvidenceRewriteResponseSchema,
   EvaluationResponseSchema,
   InterviewPlanSchema,
+  InitialAnalysisBundleSchema,
   JobMatchBundleSchema,
   LayoutRecommendationSchema,
   RenderResponseSchema,
@@ -13,6 +14,7 @@ import {
   type EvidenceRewriteResponse,
   type EvaluationResponse,
   type InterviewPlan,
+  type InitialAnalysisBundle,
   type JobMatchBundle,
   type LayoutRecommendation,
   type RenderResponse,
@@ -81,7 +83,7 @@ async function apiError(response: Response) {
   }
 }
 
-function assertFreshAiAnalysis(analysis: AnalysisBundle): AnalysisBundle {
+function assertFreshAiAnalysis<T extends AnalysisBundle>(analysis: T): T {
   if (!hasFreshRequiredAiAnalysis(analysis)) {
     throw new ApiError(
       "AI 分析来源校验失败，未载入本地模板结果，请重新进行 AI 分析。",
@@ -110,10 +112,12 @@ export async function aiAnalysisAvailable(signal?: AbortSignal) {
 
 export async function analyzeResume(
   file: File,
+  jdText?: string,
   signal?: AbortSignal,
-): Promise<AnalysisBundle> {
+): Promise<InitialAnalysisBundle> {
   const form = new FormData();
   form.append("file", file);
+  if (jdText?.trim()) form.append("jdText", jdText.trim());
   const response = await trackedFetch("/api/analyze", {
     method: "POST",
     body: form,
@@ -121,7 +125,7 @@ export async function analyzeResume(
   });
   if (!response.ok) throw await apiError(response);
   return assertFreshAiAnalysis(
-    AnalysisBundleSchema.parse(await response.json()),
+    InitialAnalysisBundleSchema.parse(await response.json()),
   );
 }
 

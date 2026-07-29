@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 
 import type { RenderResponse } from "./contracts";
 import {
+  analyzeResume,
   createInterviewPlan,
   downloadVerifiedResume,
   evaluateAnswer,
@@ -41,6 +42,33 @@ afterEach(() => {
 });
 
 describe("version-bound client requests", () => {
+  it("sends the PDF and optional JD in the same analysis request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "stop after request capture" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File(["pdf bytes"], "candidate.pdf", {
+      type: "application/pdf",
+    });
+    const jdText = "这是一个长度足够的岗位描述，用于验证简历和岗位信息只发送一次请求。";
+
+    await expect(analyzeResume(file, jdText)).rejects.toThrow(
+      "stop after request capture",
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/analyze");
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(request.method).toBe("POST");
+    expect(request.body).toBeInstanceOf(FormData);
+    const form = request.body as FormData;
+    expect(form.get("file")).toBe(file);
+    expect(form.get("jdText")).toBe(jdText);
+  });
+
   it("accepts only an evidence rewrite bound to the requested suggestion revision", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       Response.json({

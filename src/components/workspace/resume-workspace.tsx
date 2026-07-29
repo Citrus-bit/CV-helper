@@ -63,7 +63,7 @@ export function ResumeWorkspace() {
   }
 
   return (
-    <div className="absolute inset-0 grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(400px,34vw)] xl:grid-cols-[minmax(0,1fr)_minmax(440px,30vw)]">
+    <div className="absolute inset-0 grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(400px,34vw)] xl:grid-cols-[minmax(0,1fr)_minmax(460px,35vw)]">
       <h1 data-module-heading tabIndex={-1} className="sr-only">
         简历优化
       </h1>

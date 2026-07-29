@@ -151,7 +151,11 @@ export type AppState = {
   setStage: (stage: WorkspaceStage) => void;
   setError: (error: string | null) => void;
   setModule: (module: WorkspaceModule) => void;
-  setAnalysis: (analysis: AnalysisBundle, sourcePdfBlob?: Blob | null) => void;
+  setAnalysis: (
+    analysis: AnalysisBundle,
+    sourcePdfBlob?: Blob | null,
+    initialJobMatch?: JobMatchBundle,
+  ) => void;
   selectSuggestion: (id: string | null) => void;
   decideSuggestion: (
     id: string,
@@ -1404,7 +1408,7 @@ export const useAppStore = create<AppState>()(
         });
         if (changed) scheduleCurrentSessionArchive();
       },
-      setAnalysis: (analysis, suppliedPdfBlob) => {
+      setAnalysis: (analysis, suppliedPdfBlob, suppliedJobMatch) => {
         const normalizedAnalysis = {
           ...analysis,
           suggestions: ensureSuggestionScoreGains(
@@ -1417,14 +1421,22 @@ export const useAppStore = create<AppState>()(
           (normalizedAnalysis.originalPdfBase64
             ? base64ToPdfBlob(normalizedAnalysis.originalPdfBase64)
             : null);
+        const initialJobMatch =
+          suppliedJobMatch &&
+          isJobMatchForAnalysis(normalizedAnalysis, suppliedJobMatch)
+          ? suppliedJobMatch
+          : null;
         set((state) => ({
           ...invalidatedDerivedState(),
           analysis: normalizedAnalysis,
+          jobMatch: initialJobMatch,
           resumeChat: emptyResumeChatContext(
             normalizedAnalysis.resume.id,
             normalizedAnalysis.resume.revision,
           ),
-          jobDraft: defaultJobDraft(normalizedAnalysis.resume.locale),
+          jobDraft: initialJobMatch
+            ? normalizeJobDraft(null, normalizedAnalysis, initialJobMatch)
+            : defaultJobDraft(normalizedAnalysis.resume.locale),
           sourcePdfBlob,
           interviewSessionVersion: state.interviewSessionVersion + 1,
           expiresAt: sessionExpiry(normalizedAnalysis),

@@ -73,7 +73,13 @@ describe("ResumeWorkspace layout", () => {
     const exportTab = screen.getByRole("tab", { name: "导出" });
     expect(screen.getByRole("tab", { name: "问 AI" })).toBeVisible();
 
-    expect(workspace).toHaveClass("absolute", "inset-0", "min-h-0");
+    expect(workspace).toHaveClass(
+      "absolute",
+      "inset-0",
+      "min-h-0",
+      "grid-cols-[minmax(0,1fr)_minmax(400px,34vw)]",
+      "xl:grid-cols-[minmax(0,1fr)_minmax(460px,35vw)]",
+    );
     expect(suggestionPanel).toHaveClass("hidden", "data-[state=active]:flex");
     expect(suggestionPanel).not.toHaveAttribute("hidden");
     expect(suggestionPanel).toHaveStyle({ display: "flex" });

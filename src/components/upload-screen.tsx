@@ -2,6 +2,8 @@
 
 import {
   ArrowRight,
+  BriefcaseBusiness,
+  ChevronLeft,
   Clock3,
   FileSearch,
   FileText,
@@ -77,6 +79,8 @@ export function UploadScreen() {
   const [retryFile, setRetryFile] = useState<File | null>(() =>
     getRetainedUploadFile(),
   );
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [jdText, setJdText] = useState("");
   const [aiAvailable, setAiAvailable] = useState<boolean | null>(null);
   const [initialRecentLoadPending, setInitialRecentLoadPending] =
     useState(true);
@@ -242,7 +246,7 @@ export function UploadScreen() {
     setDragging(false);
   }
 
-  async function submit(file: File) {
+  function prepare(file: File) {
     setError(null);
     retainUploadFile(file);
     setRetryFile(file);
@@ -261,15 +265,29 @@ export function UploadScreen() {
       setError("文件超过 10 MB，请压缩后重试。");
       return;
     }
+    setJdText("");
+    setPendingFile(file);
+  }
+
+  async function submit(file: File, selectedJdText = "") {
+    setError(null);
+    retainUploadFile(file);
+    setRetryFile(file);
     const request = beginAnalysisRequest();
     setBusy(true);
     setStage("analyzing");
     try {
-      const analysis = await analyzeResume(file, request.signal);
+      const initial = await analyzeResume(
+        file,
+        selectedJdText || undefined,
+        request.signal,
+      );
       if (!request.settle()) return;
+      const { jobMatch, ...analysis } = initial;
       retainUploadFile(null);
       setRetryFile(null);
-      setAnalysis(analysis, file);
+      setPendingFile(null);
+      setAnalysis(analysis, file, jobMatch);
     } catch (requestError) {
       if (!request.settle()) return;
       if (isAbortError(requestError)) {
@@ -307,7 +325,7 @@ export function UploadScreen() {
       const file = new File([record.pdfBlob], record.originalFileName, {
         type: "application/pdf",
       });
-      await submit(file);
+      prepare(file);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -328,7 +346,7 @@ export function UploadScreen() {
     const file = new File([sourcePdfBlob], analysis.resume.originalFileName, {
       type: "application/pdf",
     });
-    void submit(file);
+    prepare(file);
   }
 
   async function restoreRecent(id: string) {
@@ -403,6 +421,99 @@ export function UploadScreen() {
     }
   }
 
+  if (pendingFile) {
+    const normalizedJd = jdText.trim();
+    return (
+      <main className="min-h-dvh bg-canvas px-8 py-8">
+        <div className="mx-auto w-full max-w-3xl">
+          <div className="flex items-center gap-3">
+            <span className="grid size-11 shrink-0 place-items-center rounded-[8px] bg-ink text-white shadow-panel">
+              <BriefcaseBusiness aria-hidden="true" size={22} />
+            </span>
+            <div>
+              <p className="text-sm font-medium text-ink">简历已就绪</p>
+              <p className="text-sm text-muted">{pendingFile.name}</p>
+            </div>
+          </div>
+
+          <section className="mt-16" aria-labelledby="jd-preflight-title">
+            <button
+              type="button"
+              onClick={() => {
+                retainUploadFile(null);
+                setRetryFile(null);
+                setPendingFile(null);
+                setJdText("");
+              }}
+              className="inline-flex min-h-10 items-center gap-1 rounded-[8px] pr-3 text-sm font-medium text-muted transition-colors hover:bg-[#f0f1f3] hover:text-ink"
+            >
+              <ChevronLeft aria-hidden="true" size={18} />
+              重新选择简历
+            </button>
+            <h1
+              id="jd-preflight-title"
+              data-page-heading
+              tabIndex={-1}
+              className="mt-5 text-[32px] font-semibold leading-tight outline-none"
+            >
+              有目标岗位吗？
+            </h1>
+            <p className="mt-3 text-base leading-7 text-muted">
+              粘贴岗位 JD，我们会同时分析简历质量和岗位匹配度。
+            </p>
+
+            <label
+              htmlFor="initial-jd"
+              className="mt-8 block text-sm font-medium text-ink"
+            >
+              岗位 JD
+              <span className="ml-2 font-normal text-muted">选填</span>
+            </label>
+            <textarea
+              id="initial-jd"
+              value={jdText}
+              onChange={(event) => setJdText(event.target.value)}
+              maxLength={60_000}
+              rows={10}
+              autoFocus
+              placeholder="粘贴完整岗位描述，包括职责、要求和加分项"
+              className="mt-2 w-full resize-y rounded-[8px] border border-line bg-white p-4 text-sm leading-6 shadow-sm outline-none transition-colors placeholder:text-muted focus:border-brand"
+            />
+            <div className="mt-2 flex min-h-5 items-center justify-between gap-4 text-xs">
+              <p className="text-danger">
+                {normalizedJd.length > 0 && normalizedJd.length < 30
+                  ? "岗位描述至少需要 30 个字符"
+                  : ""}
+              </p>
+              <span className="tabular-nums text-muted">
+                {jdText.length}/60000
+              </span>
+            </div>
+
+            <div className="mt-7 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                disabled={normalizedJd.length < 30}
+                onClick={() => void submit(pendingFile, normalizedJd)}
+                className="inline-flex min-h-11 items-center gap-2 rounded-[8px] bg-brand px-5 text-sm font-medium text-white transition-colors hover:bg-[#075bbf] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                带 JD 分析
+                <ArrowRight aria-hidden="true" size={17} />
+              </button>
+              <button
+                type="button"
+                onClick={() => void submit(pendingFile)}
+                className="min-h-11 rounded-[8px] px-4 text-sm font-medium text-muted transition-colors hover:bg-[#f0f1f3] hover:text-ink"
+              >
+                暂不提供，直接分析
+              </button>
+            </div>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-dvh bg-canvas px-8 pb-12 pt-8">
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between">
@@ -462,7 +573,7 @@ export function UploadScreen() {
             event.preventDefault();
             resetDragState();
             const file = event.dataTransfer.files.item(0);
-            if (file && aiAvailable === true) void submit(file);
+            if (file && aiAvailable === true) prepare(file);
           }}
         >
           <input
@@ -474,7 +585,7 @@ export function UploadScreen() {
             aria-label="选择 PDF 简历"
             onChange={(event) => {
               const file = event.target.files?.[0];
-              if (file && aiAvailable === true) void submit(file);
+              if (file && aiAvailable === true) prepare(file);
               event.target.value = "";
             }}
           />
@@ -518,10 +629,10 @@ export function UploadScreen() {
               <button
                 type="button"
                 disabled={busy || aiAvailable !== true}
-                onClick={() => void submit(retryFile)}
+                onClick={() => prepare(retryFile)}
                 className="mt-3 min-h-11 rounded-[8px] bg-brand px-4 text-sm font-medium text-white disabled:opacity-45"
               >
-                重新使用 AI 分析
+                调整信息后重试
               </button>
             ) : null}
           </div>

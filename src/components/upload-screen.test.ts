@@ -573,7 +573,7 @@ describe("UploadScreen file drag state", () => {
     expect(screen.getByText("把 PDF 简历拖到这里")).toBeInTheDocument();
   });
 
-  it("submits the first PDF once and clears the active state", async () => {
+  it("waits for the JD choice before submitting a newly uploaded PDF", async () => {
     useAppStore.setState({
       refreshRecentSessions: vi.fn(async () => undefined),
     });
@@ -597,12 +597,51 @@ describe("UploadScreen file drag state", () => {
     fireEvent.dragEnter(dropZone, { dataTransfer });
     fireEvent.drop(dropZone, { dataTransfer });
 
-    expect(screen.getByText("把 PDF 简历拖到这里")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "有目标岗位吗？" })).toBeInTheDocument();
+    expect(apiMocks.analyzeResume).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "暂不提供，直接分析" }),
+    );
     await waitFor(() =>
       expect(apiMocks.analyzeResume).toHaveBeenCalledTimes(1),
     );
     expect(apiMocks.analyzeResume.mock.calls[0]?.[0]).toBe(file);
+    expect(apiMocks.analyzeResume.mock.calls[0]?.[1]).toBeUndefined();
     await waitFor(() => expect(useAppStore.getState().stage).toBe("workspace"));
+  });
+
+  it("submits the resume and JD together after the user confirms it", async () => {
+    useAppStore.setState({
+      refreshRecentSessions: vi.fn(async () => undefined),
+    });
+    apiMocks.analyzeResume.mockReturnValue(new Promise(() => undefined));
+    const file = new File(["%PDF-1.7"], "resume.pdf", {
+      type: "application/pdf",
+    });
+    const dataTransfer = {
+      types: ["Files"],
+      files: { item: (index: number) => (index === 0 ? file : null) },
+      dropEffect: "none",
+    };
+    render(createElement(UploadScreen));
+    const dropZone = screen.getByRole("region", {
+      name: "PDF 简历上传区",
+    });
+    await waitFor(() =>
+      expect(dropZone).toHaveAttribute("data-ai-available", "true"),
+    );
+
+    fireEvent.drop(dropZone, { dataTransfer });
+    const jd = "负责后端服务开发，要求熟悉 TypeScript、Node.js、数据库和接口设计。";
+    fireEvent.change(screen.getByRole("textbox", { name: /岗位 JD/ }), {
+      target: { value: jd },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "带 JD 分析" }));
+
+    await waitFor(() => expect(apiMocks.analyzeResume).toHaveBeenCalledOnce());
+    expect(apiMocks.analyzeResume.mock.calls[0]?.[0]).toBe(file);
+    expect(apiMocks.analyzeResume.mock.calls[0]?.[1]).toBe(jd);
+    expect(useAppStore.getState().stage).toBe("analyzing");
   });
 
   it("prevents browser navigation for files dropped outside without blocking text drags", () => {

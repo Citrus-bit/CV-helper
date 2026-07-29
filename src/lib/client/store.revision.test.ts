@@ -276,6 +276,33 @@ afterEach(() => {
 });
 
 describe("resume-derived state revisions", () => {
+  it("publishes an initial resume and matching JD result atomically", () => {
+    useAppStore
+      .getState()
+      .setAnalysis(analysisFixture(0), null, jobMatchFixture(0));
+
+    const state = useAppStore.getState();
+    expect(state.stage).toBe("workspace");
+    expect(state.jobMatch?.sourceResumeId).toBe(state.analysis?.resume.id);
+    expect(state.jobMatch?.sourceResumeRevision).toBe(
+      state.analysis?.resume.revision,
+    );
+    expect(state.jobDraft).toMatchObject({
+      jdText: "工程师岗位描述",
+      jobTitle: "工程师",
+    });
+  });
+
+  it("does not attach an initial JD result from another resume revision", () => {
+    useAppStore
+      .getState()
+      .setAnalysis(analysisFixture(1), null, jobMatchFixture(0));
+
+    const state = useAppStore.getState();
+    expect(state.analysis?.resume.revision).toBe(1);
+    expect(state.jobMatch).toBeNull();
+  });
+
   it("applies a complete manual edit in one local revision and one undo snapshot", () => {
     useAppStore.getState().setAnalysis(analysisFixture());
     seedDerived(0);

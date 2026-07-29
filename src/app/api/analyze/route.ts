@@ -14,6 +14,8 @@ import {
   parseWithDocumentWorker,
 } from "@/lib/server/document-worker";
 import { enforceAiRateLimit } from "@/lib/server/ai-rate-limit";
+import { InitialAnalysisBundleSchema } from "@/lib/client/contracts";
+import { analyzeJobMatch } from "@/lib/server/job-match";
 import { selectOcrBlocksForPage } from "@/lib/server/ocr-merge";
 import {
   MAX_PDF_BYTES,
@@ -24,7 +26,7 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_MULTIPART_BYTES = MAX_PDF_BYTES + 512 * 1_024;
+const MAX_MULTIPART_BYTES = MAX_PDF_BYTES + 640 * 1_024;
 const DOCUMENT_WORKER_FALLBACK_WARNING =
   "隔离文档服务暂时不可用，已切换到本机基线解析。";
 
@@ -37,6 +39,14 @@ export async function POST(request: Request) {
     }
     const form = await parseFormDataBodyLimited(request, MAX_MULTIPART_BYTES);
     const value = form.get("file");
+    const jdValue = form.get("jdText");
+    const jdText = typeof jdValue === "string" ? jdValue.trim() : "";
+    if (jdText && jdText.length < 30) {
+      throw new RequestInputError("岗位描述至少需要 30 个字符。");
+    }
+    if (jdText.length > 60_000) {
+      throw new RequestInputError("岗位描述不能超过 60000 个字符。", 413);
+    }
     if (!(value instanceof File))
       throw new RequestInputError("请选择一份 PDF 简历。");
     if (
@@ -50,6 +60,7 @@ export async function POST(request: Request) {
       throw new RequestInputError("PDF 超过 10 MB，请压缩后重试。", 413);
     }
     await enforceAiRateLimit(request, "analysis");
+    if (jdText) await enforceAiRateLimit(request, "jd");
     const bytes = new Uint8Array(await value.arrayBuffer());
     if (bytes.byteLength > MAX_PDF_BYTES) {
       throw new RequestInputError("PDF 超过 10 MB，请压缩后重试。", 413);
@@ -214,8 +225,30 @@ export async function POST(request: Request) {
       documentCapabilityVersions: documentVersions,
       requireAi: true,
     });
+    const jobMatch = jdText
+      ? (
+          await analyzeJobMatch(
+            {
+              jdText,
+              language: result.resume.locale.toLowerCase().startsWith("en")
+                ? "en-US"
+                : "zh-CN",
+              resumeId: result.resume.id,
+              revision: result.resume.revision,
+              ast: result.resume.ast,
+              claims: result.claims,
+              evidence: result.evidence,
+            },
+            request.signal,
+          )
+        ).bundle
+      : undefined;
     result.processing.durationMs = performance.now() - startedAt;
-    return jsonResponse(result);
+    return jsonResponse(
+      jobMatch
+        ? InitialAnalysisBundleSchema.parse({ ...result, jobMatch })
+        : result,
+    );
   } catch (error) {
     return routeErrorResponse(error);
   }
