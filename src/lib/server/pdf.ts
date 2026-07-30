@@ -85,6 +85,100 @@ function normalizeText(text: string) {
     .trim();
 }
 
+type PdfTextGeometry = {
+  transform: number[];
+  width: number;
+  height: number;
+};
+
+type PdfTextStyle = {
+  ascent?: number;
+  descent?: number;
+  vertical?: boolean;
+};
+
+type PdfViewportGeometry = {
+  width: number;
+  height: number;
+  transform: number[];
+};
+
+function normalizedTextBoundingBox(
+  item: PdfTextGeometry,
+  style: PdfTextStyle | undefined,
+  viewport: PdfViewportGeometry,
+) {
+  const [a, b, c, d, e, f] = viewport.transform;
+  const [ta, tb, tc, td, te, tf] = item.transform;
+  const transformed = [
+    a * ta + c * tb,
+    b * ta + d * tb,
+    a * tc + c * td,
+    b * tc + d * td,
+    a * te + c * tf + e,
+    b * te + d * tf + f,
+  ];
+  let angle = Math.atan2(transformed[1], transformed[0]);
+  if (style?.vertical) angle += Math.PI / 2;
+
+  const fontHeight = Math.hypot(transformed[2], transformed[3]);
+  const ascentRatio = Math.max(
+    0,
+    Math.min(
+      1,
+      style?.ascent && style.ascent > 0
+        ? style.ascent
+        : style?.descent && style.descent < 0
+          ? 1 + style.descent
+          : 0.8,
+    ),
+  );
+  const ascent = fontHeight * ascentRatio;
+  const viewportScale = Math.hypot(a, b);
+  const advance = Math.max(
+    0,
+    (style?.vertical ? item.height : item.width) * viewportScale,
+  );
+  const sin = Math.sin(angle);
+  const cos = Math.cos(angle);
+  const topLeft = {
+    x: transformed[4] + ascent * sin,
+    y: transformed[5] - ascent * cos,
+  };
+  const corners = [
+    topLeft,
+    { x: topLeft.x + advance * cos, y: topLeft.y + advance * sin },
+    { x: topLeft.x - fontHeight * sin, y: topLeft.y + fontHeight * cos },
+    {
+      x: topLeft.x + advance * cos - fontHeight * sin,
+      y: topLeft.y + advance * sin + fontHeight * cos,
+    },
+  ];
+  const left = Math.max(
+    0,
+    Math.min(viewport.width, ...corners.map(({ x }) => x)),
+  );
+  const top = Math.max(
+    0,
+    Math.min(viewport.height, ...corners.map(({ y }) => y)),
+  );
+  const right = Math.min(
+    viewport.width,
+    Math.max(0, ...corners.map(({ x }) => x)),
+  );
+  const bottom = Math.min(
+    viewport.height,
+    Math.max(0, ...corners.map(({ y }) => y)),
+  );
+
+  return {
+    x: left / viewport.width,
+    y: top / viewport.height,
+    width: Math.max(0, right - left) / viewport.width,
+    height: Math.max(0, bottom - top) / viewport.height,
+  };
+}
+
 function pageKind(characterCount: number): ParsedPageSource {
   if (characterCount < 20) return "scan";
   if (characterCount < 100) return "mixed";
@@ -245,12 +339,11 @@ export async function parsePdf(
           text,
           source: "pdf",
           confidence: 1,
-          bbox: {
-            x: Math.max(0, transform[4] / viewport.width),
-            y: Math.max(0, 1 - transform[5] / viewport.height),
-            width: Math.min(1, width / viewport.width),
-            height: Math.min(1, height / viewport.height),
-          },
+          bbox: normalizedTextBoundingBox(
+            { transform, width, height },
+            textContent.styles[item.fontName],
+            viewport,
+          ),
         });
         order += 1;
       }

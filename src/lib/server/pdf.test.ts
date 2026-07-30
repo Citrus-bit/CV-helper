@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts } from "pdf-lib";
 import { MAX_PDF_BYTES, parsePdf, PdfInputError } from "./pdf";
 
 describe("parsePdf input safety", () => {
@@ -25,6 +25,34 @@ describe("parsePdf input safety", () => {
     expect(parsed.pages[0].previewWidth).toBe(1120);
     expect(parsed.pages[0].previewHeight).toBeGreaterThan(1500);
     expect(parsed.pages[0].previewWidth).not.toBe(parsed.pages[0].width);
+  });
+
+  it("maps native text boxes from the baseline and CropBox into viewport coordinates", async () => {
+    const document = await PDFDocument.create();
+    const page = document.addPage([600, 800]);
+    page.setCropBox(50, 100, 500, 600);
+    const font = await document.embedFont(StandardFonts.Helvetica);
+    page.drawText("Viewport aligned text", {
+      x: 100,
+      y: 600,
+      size: 20,
+      font,
+    });
+
+    const parsed = await parsePdf(
+      new Uint8Array(await document.save()),
+      "cropped.pdf",
+    );
+    const block = parsed.blocks.find((candidate) =>
+      candidate.text.includes("Viewport aligned text"),
+    );
+
+    expect(parsed.pages[0]).toMatchObject({ width: 500, height: 600 });
+    expect(block).toBeDefined();
+    expect(block!.bbox.x).toBeCloseTo(0.1, 3);
+    expect(block!.bbox.y).toBeLessThan(100 / 600);
+    expect(block!.bbox.y + block!.bbox.height).toBeGreaterThan(100 / 600);
+    expect(block!.bbox.height).toBeCloseTo(20 / 600, 3);
   });
 
   it("rejects pages whose logical dimensions exceed the render safety limit", async () => {
