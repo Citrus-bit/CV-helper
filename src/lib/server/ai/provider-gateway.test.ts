@@ -24,7 +24,7 @@ import { providerInstructions } from "./provider-capabilities";
 
 const providerEnvironment = {
   AI_PROVIDER: "provider_gateway",
-  AI_API_BASE: "https://yunwu.ai/v1",
+  AI_API_BASE: "https://xingjiabiapi.org/v1",
   AI_API_KEY: "test-secret-key",
   AI_MODEL: "test-model",
 } as const;
@@ -693,7 +693,7 @@ describe("OpenAI-compatible provider gateway", () => {
       expect.objectContaining({ code: "INVALID_PROVIDER" }),
     );
     expect(loadProviderGatewayConfig(providerEnvironment)).toMatchObject({
-      baseUrl: "https://yunwu.ai/v1",
+      baseUrl: "https://xingjiabiapi.org/v1",
       model: "test-model",
     });
     let error: unknown;
@@ -727,7 +727,7 @@ describe("OpenAI-compatible provider gateway", () => {
     expect(result.sourceVersion).toBe("resume.score@2.0.0");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://yunwu.ai/v1/chat/completions");
+    expect(url).toBe("https://xingjiabiapi.org/v1/chat/completions");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer test-secret-key");
     const requestBody = JSON.parse(String(init.body));
     expect(requestBody.response_format).toEqual({ type: "json_object" });
@@ -2236,7 +2236,7 @@ describe("OpenAI-compatible provider gateway", () => {
       available: true,
       fallbackAvailable: true,
     });
-    expect(JSON.stringify(registry.getFeatureAvailability())).not.toMatch(/yunwu|test-model|test-secret-key/i);
+    expect(JSON.stringify(registry.getFeatureAvailability())).not.toMatch(/xingjiabiapi|test-model|test-secret-key/i);
 
     const clientFiles = [
       "src/lib/client/api.ts",

@@ -26,7 +26,7 @@ describe("local health route", () => {
       environment: {
         DOCUMENT_WORKER_URL: "http://worker.internal:8000/",
         AI_PROVIDER: "provider_gateway",
-        AI_API_BASE: "https://yunwu.ai/v1",
+        AI_API_BASE: "https://xingjiabiapi.org/v1",
         AI_API_KEY: "test-secret-key",
         AI_MODEL: "test-model",
       },
@@ -43,7 +43,7 @@ describe("local health route", () => {
       },
     });
     expect(JSON.stringify(health)).not.toMatch(
-      /yunwu|test-model|test-secret-key|worker\.internal/i,
+      /xingjiabiapi|test-model|test-secret-key|worker\.internal/i,
     );
   });
 

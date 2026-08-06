@@ -55,7 +55,7 @@
    test -f .env.local || cp .env.example .env.local
    ```
 
-   真实上传分析必须在 `.env.local` 中增加 `AI_API_KEY`，并保留 `AI_PROVIDER=provider_gateway`、代码允许的 `AI_API_BASE=https://yunwu.ai/v1` 与可用模型名。不要要求用户把 Key 粘贴到聊天中，不要读出、回显、记录或提交 Key；如果 Key 未配置，完成其余步骤后明确告知用户只剩这一项人工操作。
+   真实上传分析必须在 `.env.local` 中增加 `AI_API_KEY`，并保留 `AI_PROVIDER=provider_gateway`、代码允许的 `AI_API_BASE=https://xingjiabiapi.org/v1` 与可用模型名。不要要求用户把 Key 粘贴到聊天中，不要读出、回显、记录或提交 Key；如果 Key 未配置，完成其余步骤后明确告知用户只剩这一项人工操作。
 5. 安装锁定依赖、Typst 和中英文 OCR 模型：
 
    ```bash
@@ -117,7 +117,7 @@ docker compose -f infra/docker-compose.yml up --build
 
 ```dotenv
 AI_PROVIDER=provider_gateway
-AI_API_BASE=https://yunwu.ai/v1
+AI_API_BASE=https://xingjiabiapi.org/v1
 AI_API_KEY=<rotated-server-only-key>
 AI_MODEL=gpt-5.5
 ```

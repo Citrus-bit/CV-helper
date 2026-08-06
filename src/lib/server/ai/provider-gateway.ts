@@ -6,7 +6,7 @@ import type { CapabilityContext, ProviderGatewayCapabilityId } from "@/lib/capab
 
 import { PiiProjector } from "./pii-projection";
 
-const DEFAULT_PROVIDER_ALLOWLIST = ["https://yunwu.ai/v1"] as const;
+const DEFAULT_PROVIDER_ALLOWLIST = ["https://xingjiabiapi.org/v1"] as const;
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_PROVIDER_INPUT_BYTES = 256 * 1024;
 const NETWORK_RETRY_DELAY_MS = 1_000;
